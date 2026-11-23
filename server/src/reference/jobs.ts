@@ -46,8 +46,8 @@ interface Download {
 /**
  * GETs `url` through `ctx.upstream` and streams the body, capped at `max` bytes. The body must keep
  * flowing: after `DOWNLOAD_IDLE_MS` without data the request is aborted with a retryable
- * `UpstreamError('network')`. Cancelling the job aborts it too. `open` runs on the response first
- * (status checks) and may return a replacement error.
+ * `UpstreamError('network')`, which the workers retry with backoff. Cancelling the job aborts it too.
+ * The caller checks `res` (allowed statuses, redirects) before reading `chunks`.
  */
 async function download(
   ctx: JobContext,

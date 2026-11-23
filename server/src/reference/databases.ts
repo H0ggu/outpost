@@ -3,7 +3,7 @@
  * databases the admin creates by importing a PGN, their `DatabaseInfo` and attribution — PLAN §0.5,
  * §5 (Ultra/Masters DB), §6 `GET /api/reference`.
  */
-import type { DatabaseInfo, Id, JobKind } from '@outpost/shared/api';
+import type { DatabaseInfo, Id } from '@outpost/shared/api';
 import type { Db } from '../db/index.ts';
 import { badRequest, notFound } from '../http/errors.ts';
 import { JOB_COLUMNS, toJobInfo, type JobRow } from '../jobs/index.ts';
@@ -23,9 +23,6 @@ export const LICHESS_BROADCAST_ATTRIBUTION =
   'Broadcast games from the Lichess broadcast database (https://database.lichess.org/#broadcasts) by lichess.org, ' +
   'licensed under CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). ' +
   'Anything derived from them must be shared under the same licence.';
-
-/** Job kinds that write into a reference database (their payload carries `databaseId`). */
-export const REFERENCE_JOB_KINDS: readonly JobKind[] = ['referenceImport', 'broadcastMonth', 'broadcastRound'];
 
 /** Longest database name / label / licence accepted from the admin. */
 export const MAX_NAME_LENGTH = 120;
@@ -153,16 +150,14 @@ export function recountDatabaseGames(db: Db, id: Id): number {
 
 /** The latest import job of a reference database while queued/running, or when it failed. */
 function latestImportJob(db: Db, databaseId: Id): DatabaseInfo['importJob'] {
-  const row = db.get<JobRow>(
-    `SELECT ${JOB_COLUMNS} FROM jobs
-      WHERE kind IN ('referenceImport', 'broadcastMonth', 'broadcastRound')
-        AND json_extract(payload_json, '$.databaseId') = ?
-      ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, id DESC
-      LIMIT 1`,
+  const kinds = "kind IN ('referenceImport', 'broadcastMonth', 'broadcastRound') AND json_extract(payload_json, '$.databaseId') = ?";
+  const active = db.get<JobRow>(
+    `SELECT ${JOB_COLUMNS} FROM jobs WHERE status IN ('running', 'queued') AND ${kinds}
+      ORDER BY status = 'running' DESC, priority DESC, created_at, id LIMIT 1`,
     [databaseId],
   );
-  if (!row || (row.status !== 'queued' && row.status !== 'running' && row.status !== 'error')) return null;
-  return toJobInfo(db, row);
+  const row = active ?? db.get<JobRow>(`SELECT ${JOB_COLUMNS} FROM jobs WHERE ${kinds} ORDER BY id DESC LIMIT 1`, [databaseId]);
+  return row && (row === active || row.status === 'error') ? toJobInfo(db, row) : null;
 }
 
 function toDatabaseInfo(db: Db, r: DatabaseRow, isAdmin: boolean): DatabaseInfo {
@@ -206,14 +201,12 @@ export function referenceAttribution(db: Db): string[] {
   const lines: string[] = [];
   let broadcast = false;
   for (const r of db.all<DatabaseRow>(`${DATABASE_SELECT} WHERE d.kind = 'reference' ORDER BY d.id`)) {
-    if (hasBroadcastData(db, r.id, r.builtin)) {
-      broadcast = true;
-      if (r.builtin === BROADCAST_BUILTIN) continue;
-    }
-    if (r.licence && !(r.builtin === null && r.licence === BROADCAST_DATABASE.licence && hasBroadcastData(db, r.id, null))) {
-      const source = r.source_label && r.source_label !== r.name ? ` (${r.source_label})` : '';
-      lines.push(`${r.name}${source}: ${r.licence}`);
-    }
+    const isBroadcast = hasBroadcastData(db, r.id, r.builtin);
+    broadcast ||= isBroadcast;
+    // Broadcast data under its own licence is covered by the Lichess line.
+    if (!r.licence || (isBroadcast && r.licence === BROADCAST_DATABASE.licence)) continue;
+    const source = r.source_label && r.source_label !== r.name ? ` (${r.source_label})` : '';
+    lines.push(`${r.name}${source}: ${r.licence}`);
   }
   if (broadcast) lines.unshift(LICHESS_BROADCAST_ATTRIBUTION);
   return [...new Set(lines)];
