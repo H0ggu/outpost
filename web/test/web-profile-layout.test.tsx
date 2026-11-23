@@ -103,6 +103,19 @@ describe('ProfileLayout header', () => {
     expect(screen.getByText(/updating · 312/)).toBeTruthy();
   });
 
+  it('shows a failed sync with its error', async () => {
+    const base = profileHeader();
+    renderProfile(SLUG, {
+      header: {
+        sources: base.sources.map((s, i) =>
+          i === 1 ? { ...s, sync: { ...s.sync, state: 'error', lastError: 'Chess.com answered 410 Gone' } } : s,
+        ),
+      },
+    });
+    expect(await screen.findByText(/sync failed · \d+ games/)).toBeTruthy();
+    expect(screen.getByText('Chess.com answered 410 Gone')).toBeTruthy();
+  });
+
   it('counts down a cooldown from the server', async () => {
     const until = Date.now() + 125_000;
     renderProfile(SLUG, { header: { queue: { busy: false, cooldownUntil: until, queuePosition: null } } });

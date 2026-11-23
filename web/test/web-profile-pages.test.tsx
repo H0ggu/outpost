@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeFiltersSegment } from '@outpost/shared/filters';
-import { ALL_GAMES, filterGames, gamesPage, overview } from './web-profile-fixtures.ts';
+import { ALL_GAMES, filterGames, gamesPage, overview, profileHeader } from './web-profile-fixtures.ts';
 import { renderProfile, searchOf } from './web-profile-render.tsx';
 
 // pgn-viewer's dist uses extensionless ESM imports that Node can't load outside Vite; stand in
@@ -16,6 +16,8 @@ vi.mock('../src/app/components/PgnViewer.tsx', () => ({
   ),
 }));
 
+// Note: happy-dom never loads iframe pages and logs a NotSupportedError for each Studio embed;
+// that output is expected.
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -182,6 +184,23 @@ describe('Games tab', () => {
   });
 });
 
+describe('time control chips', () => {
+  it('offers “Unknown” only to profiles with PGN or reference games', async () => {
+    renderProfile(`${SLUG}/games`);
+    const group = await screen.findByRole('group', { name: 'Time control' });
+    expect(within(group).queryByRole('button', { name: /Unknown/ })).toBeNull();
+    expect(within(group).getAllByRole('button').length).toBe(5);
+    cleanup();
+    vi.unstubAllGlobals();
+    const base = profileHeader();
+    renderProfile(`${SLUG}/games`, {
+      header: { sources: [...base.sources, { ...base.sources[0]!, id: 13, kind: 'pgn', key: '3:club player', displayName: 'Club Player', url: null, databaseId: 3 }] },
+    });
+    const group2 = await screen.findByRole('group', { name: 'Time control' });
+    expect(within(group2).getByRole('button', { name: /Unknown/ })).toBeTruthy();
+  });
+});
+
 describe('opponent name suggestions', () => {
   it('loads the most played opponents once the field is focused', async () => {
     const { requests } = renderProfile(`${SLUG}/games`);
@@ -221,6 +240,16 @@ describe('Explorer tab', () => {
     const bar = screen.getByRole('region', { name: 'Filters' });
     expect(within(bar).queryByRole('radiogroup', { name: 'Colour' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Open in Studio' }).getAttribute('href')).not.toContain('embed=');
+  });
+
+  it('keeps the side when the filters are reset', async () => {
+    const { location } = renderProfile(`${SLUG}/explorer?color=black&tc=blitz`);
+    await screen.findByTitle('Opening explorer');
+    // The side is not one of the bar's filters here.
+    expect(screen.getByRole('button', { name: 'Filters (1)' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    await waitFor(() => expect(location().search).toBe('?color=black'));
+    expect(screen.queryByRole('button', { name: 'Reset' })).toBeNull();
   });
 
   it('switches sides and opens a line on the board', async () => {

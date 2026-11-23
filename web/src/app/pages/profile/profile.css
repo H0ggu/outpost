@@ -787,6 +787,17 @@ html[data-theme='light'] {
   color: var(--c-bad);
 }
 
+.profile-page .psource__error {
+  flex: 1 0 100%;
+  min-width: 0;
+  max-width: 40rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8em;
+  color: var(--c-bad);
+}
+
 .profile-page .psource__sync i::before {
   font-size: 1em;
   margin-inline-end: 0.25em;

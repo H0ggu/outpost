@@ -213,6 +213,11 @@ function SourceItem({ source, sync, now }: { source: SourceSummary; sync: Source
         {sync.state === 'error' && <i data-icon={licon.CautionTriangle} aria-hidden />}
         {syncLabel(sync, now)} · {fmtInt(source.gameCount)} games
       </span>
+      {sync.state === 'error' && sync.lastError && (
+        <span className="psource__error" title={sync.lastError}>
+          {sync.lastError}
+        </span>
+      )}
     </li>
   );
 }
