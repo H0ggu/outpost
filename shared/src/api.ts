@@ -900,10 +900,20 @@ export interface ActivityParams {
 /** `GET /api/profiles/:slug/activity` query. */
 export type ActivityQuery = ProfileFilters & ActivityParams;
 
-/** `GET /api/profiles/:slug/activity`. */
+/**
+ * `GET /api/profiles/:slug/activity`. Games dated before 1400 or after tomorrow (typos and
+ * placeholder dates in PGNs) are left out. Games whose time of day is unknown (date-only PGN and
+ * reference games) count in `days` and `byWeekday` but not in `byHour` and `grid`, so those totals
+ * can be smaller.
+ */
 export interface ActivityStats {
+  /** The zone used, in one canonical spelling (`asia/kolkata` → `Asia/Kolkata`). */
   tz: string;
-  /** Every day from the first to the last game in range, oldest first. */
+  /**
+   * Every day from the first to the last game in range, oldest first, zeros included. At most
+   * 14,610 days (40 years): when the games span more, the days start at the first game of the
+   * last 40 years.
+   */
   days: ActivityDay[];
   /** 24 entries, local hour 0–23. */
   byHour: ActivityCell[];

@@ -2,6 +2,7 @@ import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { API_ROUTES } from '@outpost/shared/api';
 import { insertGame, parsePgnGames, type PgnGame } from '../src/chess/index.ts';
+import { pgnSourceKey } from '../src/chess/store.ts';
 import { gameToPgn, pgnMovetext, terminationTag, type PgnGameRecord } from '../src/stats/pgnWriter.ts';
 import { prepareProfilePgnExport } from '../src/stats/pgnExport.ts';
 import { createSource, createUserSession, makeTestApp, testGame, type TestApp } from './helpers.ts';
@@ -105,7 +106,7 @@ describe('GET /api/profiles/:slug/games.pgn', () => {
   });
   afterAll(async () => t.close());
 
-  it('streams the filtered games newest first with the profile name normalised', async () => {
+  it('streams the filtered games newest first with the profile side under its account name', async () => {
     const res = await get(t, API_ROUTES.stats.gamesPgn('alice'), w.users.other.cookie);
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toBe('application/x-chess-pgn; charset=utf-8');
@@ -114,41 +115,84 @@ describe('GET /api/profiles/:slug/games.pgn', () => {
     expect(res.headers['x-outpost-exported']).toBe('6');
     const list = await games(res.text);
     expect(list).toHaveLength(6);
+    // Lichess `alice` is displayed as "Alice"; chesscom `alice_cc` as itself.
     expect(list.map(g => `${tag(g, 'White')} - ${tag(g, 'Black')}`)).toEqual([
-      'Alice Liddell - alice_alt', // the hidden account keeps its name for other viewers
-      'Alice Liddell - bob',
-      'carol - Alice Liddell',
-      'Alice Liddell - dave',
-      'bob - Alice Liddell',
-      'Alice Liddell - carol',
+      'Alice - alice_alt', // the hidden account is an ordinary opponent for other viewers
+      'Alice - bob',
+      'carol - Alice',
+      'alice_cc - dave',
+      'bob - alice_cc',
+      'Alice - carol',
     ]);
     expect([...list[1]!.moves.mainline()].map(n => n.san)).toEqual(RUY);
     expect(tag(list[3]!, 'Event')).toBe('Casual Bullet game');
     expect(tag(list[4]!, 'Event')).toBe('Titled Tuesday');
   });
 
-  it('writes a game between two of the profile accounts once, both sides normalised', async () => {
+  it('writes a game between two of the profile accounts once, each side under its account', async () => {
     const from = new Date(w.now - 86_400_000).toISOString().slice(0, 10);
     const res = await get(t, `${API_ROUTES.stats.gamesPgn('alice')}?from=${from}`, w.users.owner.cookie);
     const list = await games(res.text);
     expect(res.headers['x-outpost-total']).toBe('2');
-    expect(list.map(g => `${tag(g, 'White')} - ${tag(g, 'Black')}`)).toEqual(['Alice Liddell - Alice Liddell', 'Alice Liddell - bob']);
+    expect(list.map(g => `${tag(g, 'White')} - ${tag(g, 'Black')}`)).toEqual(['Alice - alice_alt', 'Alice - bob']);
   });
 
   it('applies filters and access rules', async () => {
     const black = await games((await get(t, `${API_ROUTES.stats.gamesPgn('alice')}?color=black`, w.users.other.cookie)).text);
-    expect(black.map(g => tag(g, 'Black'))).toEqual(['Alice Liddell', 'Alice Liddell']);
+    expect(black.map(g => tag(g, 'Black'))).toEqual(['Alice', 'alice_cc']);
     expect((await get(t, API_ROUTES.stats.gamesPgn('private-p'), w.users.other.cookie)).status).toBe(404);
     expect((await get(t, API_ROUTES.stats.gamesPgn('alice'))).status).toBe(401);
     expect((await get(t, `${API_ROUTES.stats.gamesPgn('alice')}?outcome=x`, w.users.other.cookie)).status).toBe(400);
   });
 
   it('stops at the export limit, keeping the newest games', () => {
-    const exp = prepareProfilePgnExport({ db: t.db, sourceIds: [w.src.A, w.src.C], filters: {} }, 'Alice', 3);
+    const exp = prepareProfilePgnExport({ db: t.db, sourceIds: [w.src.A, w.src.C], filters: {} }, 3);
     expect(exp).toMatchObject({ total: 6, exported: 3 });
     const text = [...exp.chunks()].join('');
     expect(text.match(/^\[Event /gm)).toHaveLength(3);
     expect(text.indexOf('Black "alice_alt"')).toBeLessThan(text.indexOf('Black "bob"'));
+  });
+});
+
+describe('PGN export of OTB games', () => {
+  let t: TestApp;
+  let cookie: string;
+
+  beforeAll(async () => {
+    t = await makeTestApp();
+    cookie = createUserSession(t.db, { username: 'otb-viewer' }).cookie;
+    const dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('Club', 'games', 0)").lastInsertRowid;
+    // A FIDE player and the spelling of their name in a club database: both match some games.
+    const fide = createSource(t.db, { kind: 'fide', key: '999001', displayName: 'Testplayer, Anna' });
+    const pgn = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(dbId, 'Testplayer, A'), displayName: 'Testplayer, A', databaseId: dbId });
+    createProfile(t.db, { slug: 'anna', displayName: 'Anna T.', ownerUserId: null, sources: [{ id: pgn }, { id: fide }] });
+    const otb = (n: number, white: { name: string; fideId?: string }, black: { name: string; fideId?: string }) =>
+      insertGame(
+        t.db,
+        testGame({
+          origin: 'pgn',
+          originId: `${dbId}:g${n}`,
+          databaseId: dbId,
+          white: { name: white.name, fideId: white.fideId ?? null },
+          black: { name: black.name, fideId: black.fideId ?? null },
+          endedAt: Date.UTC(2024, 0, n),
+          startedAt: Date.UTC(2024, 0, n),
+          timeClass: 'classical',
+        }),
+      );
+    otb(1, { name: 'Testplayer, A' }, { name: 'Rival, R' }); // the PGN spelling only
+    otb(2, { name: 'Testplayer,Anna', fideId: '999001' }, { name: 'Other, O' }); // FIDE id, another spelling
+    otb(3, { name: 'Club, C' }, { name: 'Testplayer, A', fideId: '999001' }); // both sources: FIDE wins
+  });
+  afterAll(async () => t.close());
+
+  it('writes the profile side under the FIDE name, else the PGN player name', async () => {
+    const list = await games((await get(t, API_ROUTES.stats.gamesPgn('anna'), cookie)).text);
+    expect(list.map(g => `${tag(g, 'White')} - ${tag(g, 'Black')}`)).toEqual([
+      'Club, C - Testplayer, Anna',
+      'Testplayer, Anna - Other, O',
+      'Testplayer, A - Rival, R',
+    ]);
   });
 });
 
@@ -157,7 +201,7 @@ describe('PGN export in batches', () => {
 
   beforeAll(async () => {
     t = await makeTestApp();
-    const src = createSource(t.db, { kind: 'lichess', key: 'bulk' });
+    const src = createSource(t.db, { kind: 'lichess', key: 'bulk', displayName: 'Bulk' });
     createProfile(t.db, { slug: 'bulk', displayName: 'Bulk Player', ownerUserId: null, sources: [{ id: src }] });
     t.db.tx(() => {
       for (let i = 0; i < 620; i++) {
@@ -168,13 +212,13 @@ describe('PGN export in batches', () => {
   afterAll(async () => t.close());
 
   it('streams several chunks that parse back to every game', async () => {
-    const exp = prepareProfilePgnExport({ db: t.db, sourceIds: [1], filters: {} }, 'Bulk Player');
+    const exp = prepareProfilePgnExport({ db: t.db, sourceIds: [1], filters: {} });
     expect([...exp.chunks()].length).toBe(3);
     const cookie = createUserSession(t.db, { username: 'v' }).cookie;
     const res = await get(t, API_ROUTES.stats.gamesPgn('bulk'), cookie);
     const list = await games(res.text);
     expect(list).toHaveLength(620);
-    expect(list.every(g => tag(g, 'White') === 'Bulk Player' || tag(g, 'Black') === 'Bulk Player')).toBe(true);
+    expect(list.every(g => tag(g, 'White') === 'Bulk' || tag(g, 'Black') === 'Bulk')).toBe(true);
     expect(tag(list[0]!, 'Black')).toBe('opp619');
     expect(tag(list.at(-1)!, 'White')).toBe('opp0');
   });
@@ -186,7 +230,7 @@ describe('PGN export transport', () => {
 
   beforeAll(async () => {
     t = await makeTestApp();
-    const src = createSource(t.db, { kind: 'lichess', key: 'zipper' });
+    const src = createSource(t.db, { kind: 'lichess', key: 'zipper', displayName: 'Zipper' });
     createProfile(t.db, { slug: 'zipper', displayName: 'Zip Player', ownerUserId: null, sources: [{ id: src }] });
     t.db.tx(() => {
       for (let i = 0; i < 300; i++) {
@@ -208,7 +252,7 @@ describe('PGN export transport', () => {
     expect(res.rawPayload.length).toBeLessThan(text.length / 4);
     const list = await games(text);
     expect(list).toHaveLength(300);
-    expect(list.every(g => tag(g, 'White') === 'Zip Player')).toBe(true);
+    expect(list.every(g => tag(g, 'White') === 'Zipper')).toBe(true);
   });
 
   it('sends plain text to clients without compression', async () => {

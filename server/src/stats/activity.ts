@@ -9,6 +9,11 @@
  * instant (tz.ts). So DST, historical offsets and half-hour zones are exact, and the work in
  * JavaScript is per bucket rather than per game.
  *
+ * Bounds: one PGN game with a typo'd date (year 1000 or 9999) must not make every request slow
+ * and huge, so games dated before 1400 or after tomorrow are left out, offsets are precomputed
+ * for at most the 40 years before the last game (older games get an exact per-instant lookup),
+ * and `days` covers at most the last `ACTIVITY_MAX_DAYS`.
+ *
  * Date-only games: a PGN or reference game whose headers give a date but no time is stored at
  * 00:00 UTC of that date (chess/pgn.ts). Its calendar date is the one written in the PGN, so it
  * counts on that day and weekday in every zone, and it is left out of `byHour` and `grid`, which
@@ -25,6 +30,7 @@ import {
   HOUR_MS,
   isoDateOfDay,
   mod,
+  offsetAt,
   offsetSegments,
   offsetSweeper,
   weekdayOfDay,
@@ -58,11 +64,28 @@ export interface LocalActivity {
 }
 
 /**
+ * Earliest game date activity considers: the oldest recorded games are from the late 15th
+ * century, so anything older is a typo or a placeholder date in a PGN.
+ */
+export const ACTIVITY_MIN_MS = Date.UTC(1400, 0, 1);
+/** Games ending later than this after "now" (a clock-skew margin) are typos and left out too. */
+export const ACTIVITY_FUTURE_MARGIN_MS = DAY_MS;
+/**
+ * Most entries in `ActivityStats.days` (40 years, ending at the last game; `activityDays`).
+ * Offsets come from precomputed segments over the same span before the last game; older games
+ * (historical PGN collections) cost one `offsetAt` per distinct instant instead, so the work
+ * grows with the number of games and never with the span of their dates.
+ */
+export const ACTIVITY_MAX_DAYS = 14_610;
+const SEGMENT_SPAN_MS = ACTIVITY_MAX_DAYS * DAY_MS;
+
+/**
  * Aggregates the games of `where` (over `player_games pg`) in zone `tz`; `range` optionally bounds
- * `ended_at` (inclusive epoch ms). `tz` must already be valid (`resolveTimeZone`).
+ * `ended_at` (inclusive epoch ms). `tz` must already be valid (`resolveTimeZone`). Games dated
+ * before `ACTIVITY_MIN_MS` or more than `ACTIVITY_FUTURE_MARGIN_MS` after `scope.now` are left out.
  */
 export function localActivity(
-  scope: Pick<StatsScope, 'db'>,
+  scope: Pick<StatsScope, 'db' | 'now'>,
   where: SqlFragment,
   tz: string,
   range: { from?: number; to?: number } = {},
@@ -75,16 +98,11 @@ export function localActivity(
     byWeekday: Array.from({ length: 7 }, counter),
     grid: Array.from({ length: 7 }, () => Array.from({ length: 24 }, counter)),
   };
-  let cond = `${where.sql} AND pg.ended_at IS NOT NULL`;
-  const params = [...where.params];
-  if (range.from !== undefined) {
-    cond += ' AND pg.ended_at >= ?';
-    params.push(range.from);
-  }
-  if (range.to !== undefined) {
-    cond += ' AND pg.ended_at <= ?';
-    params.push(range.to);
-  }
+  const from = Math.max(range.from ?? ACTIVITY_MIN_MS, ACTIVITY_MIN_MS);
+  const to = Math.min(range.to ?? Infinity, (scope.now ?? Date.now()) + ACTIVITY_FUTURE_MARGIN_MS);
+  if (from > to) return out;
+  const cond = `${where.sql} AND pg.ended_at BETWEEN ? AND ?`;
+  const params = [...where.params, from, to];
 
   const span = scope.db.get<{ lo: number | null; hi: number | null }>(
     `SELECT MIN(pg.ended_at) AS lo, MAX(pg.ended_at) AS hi FROM ${PLAYER_GAMES_BY_PK} WHERE ${cond}`,
@@ -92,30 +110,7 @@ export function localActivity(
   );
   if (!span || span.lo === null || span.hi === null) return out;
 
-  const segs = offsetSegments(tz, span.lo, span.hi);
-  const width = bucketSizeFor(segs);
-  const bucket = floorToSql('pg.ended_at', width);
-  // A date-only game sits at a UTC midnight, which every bucket width divides: its bucket `b` is
-  // that midnight.
-  const rows = scope.db.all<{ b: number; dateOnly: number; games: number; w: number; d: number }>(
-    `SELECT ${bucket.sql} AS b, ${DATE_ONLY_SQL} AS dateOnly, COUNT(*) AS games, SUM(pg.outcome = 'w') AS w,
-            SUM(pg.outcome = 'd') AS d
-       FROM ${PLAYER_GAMES_BY_PK} WHERE ${cond}
-      GROUP BY 1, 2 ORDER BY 1, 2`,
-    [...bucket.params, ...params],
-  );
-
-  const offsetOf = offsetSweeper(tz, segs, span.hi);
-  for (const r of rows) {
-    let day: number;
-    let hour: number | null = null;
-    if (r.dateOnly) day = floorDiv(r.b, DAY_MS);
-    else {
-      // The first bucket may start before the first game: take the offset where its games are.
-      const local = r.b + offsetOf(Math.max(r.b, span.lo));
-      day = floorDiv(local, DAY_MS);
-      hour = Math.floor(mod(local, DAY_MS) / HOUR_MS);
-    }
+  const add = (day: number, hour: number | null, r: Counter): void => {
     const weekday = weekdayOfDay(day);
     let c = out.days.get(day);
     if (!c) {
@@ -130,6 +125,41 @@ export function localActivity(
     }
     if (out.minDay === null || day < out.minDay) out.minDay = day;
     if (out.maxDay === null || day > out.maxDay) out.maxDay = day;
+  };
+  /** Adds the games of UTC instant `t` (a bucket start or a game end) whose zone offset is `offset`. */
+  const addAt = (t: number, offset: number, dateOnly: number, r: Counter): void => {
+    // A date-only game sits at a UTC midnight, which every bucket width divides: `t` is that midnight.
+    if (dateOnly) return add(floorDiv(t, DAY_MS), null, r);
+    const local = t + offset;
+    add(floorDiv(local, DAY_MS), Math.floor(mod(local, DAY_MS) / HOUR_MS), r);
+  };
+
+  // Recent games (the last SEGMENT_SPAN_MS before the last one): bucketed in SQL.
+  const segFrom = Math.max(span.lo, span.hi - SEGMENT_SPAN_MS);
+  const segs = offsetSegments(tz, segFrom, span.hi);
+  const width = bucketSizeFor(segs);
+  const bucket = floorToSql('pg.ended_at', width);
+  const rows = scope.db.all<{ b: number; dateOnly: number } & Counter>(
+    `SELECT ${bucket.sql} AS b, ${DATE_ONLY_SQL} AS dateOnly, COUNT(*) AS games, SUM(pg.outcome = 'w') AS w,
+            SUM(pg.outcome = 'd') AS d
+       FROM ${PLAYER_GAMES_BY_PK} WHERE ${cond} AND pg.ended_at >= ?
+      GROUP BY 1, 2 ORDER BY 1, 2`,
+    [...bucket.params, ...params, segFrom],
+  );
+  const offsetOf = offsetSweeper(tz, segs, span.hi);
+  // The first bucket may start before `segFrom`: take the offset where its games are.
+  for (const r of rows) addAt(r.b, r.dateOnly ? 0 : offsetOf(Math.max(r.b, segFrom)), r.dateOnly, r);
+
+  // Older games: exact offsets per distinct end instant.
+  if (span.lo < segFrom) {
+    const old = scope.db.all<{ t: number; dateOnly: number } & Counter>(
+      `SELECT pg.ended_at AS t, ${DATE_ONLY_SQL} AS dateOnly, COUNT(*) AS games, SUM(pg.outcome = 'w') AS w,
+              SUM(pg.outcome = 'd') AS d
+         FROM ${PLAYER_GAMES_BY_PK} WHERE ${cond} AND pg.ended_at < ?
+        GROUP BY 1, 2`,
+      [...params, segFrom],
+    );
+    for (const r of old) addAt(r.t, r.dateOnly ? 0 : offsetAt(tz, r.t), r.dateOnly, r);
   }
   return out;
 }
@@ -144,12 +174,26 @@ export function dayRange(days: Map<number, Counter>, first: number, last: number
   return out;
 }
 
+/**
+ * The days of `ActivityStats.days`: from the first to the last day with games, or, when that is
+ * more than `ACTIVITY_MAX_DAYS`, from the first day with games among the last `ACTIVITY_MAX_DAYS`.
+ */
+export function activityDays(a: LocalActivity): ActivityDay[] {
+  if (a.minDay === null || a.maxDay === null) return [];
+  let first = a.minDay;
+  if (a.maxDay - first >= ACTIVITY_MAX_DAYS) {
+    first = a.maxDay;
+    for (const day of a.days.keys()) if (day < first && a.maxDay - day < ACTIVITY_MAX_DAYS) first = day;
+  }
+  return dayRange(a.days, first, a.maxDay);
+}
+
 /** Activity stats of a scope in zone `tz` (already validated). */
 export function activityStats(scope: StatsScope, tz: string): ActivityStats {
   const a = localActivity(scope, scopeWhere(scope), tz);
   return {
     tz,
-    days: a.minDay !== null && a.maxDay !== null ? dayRange(a.days, a.minDay, a.maxDay) : [],
+    days: activityDays(a),
     byHour: a.byHour.map(toCell),
     byWeekday: a.byWeekday.map(toCell),
     grid: a.grid.map(row => row.map(toCell)),

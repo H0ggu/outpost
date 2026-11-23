@@ -362,6 +362,9 @@ describe('stats endpoints on a seeded profile', () => {
     expect(tz.tz).toBe('Europe/Oslo');
     expect((await get<ActivityStats>(t, url('activity', 'tz='), cookie)).body.tz).toBe('UTC');
     expect((await get<ActivityStats>(t, url('activity', 'tz=%20Asia/Tokyo%20'), cookie)).body.tz).toBe('Asia/Tokyo');
+    for (const alias of ['asia/kolkata', 'ASIA/KOLKATA']) {
+      expect((await get<ActivityStats>(t, url('activity', `tz=${encodeURIComponent(alias)}`), cookie)).body.tz, alias).toBe('Asia/Kolkata');
+    }
   });
 
   it('rating history and averages', async () => {

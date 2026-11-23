@@ -120,7 +120,7 @@ const statsRoutes: FastifyPluginAsync = async app => {
   };
   app.get(API_ROUTES.stats.gamesPgn(':slug'), pgnOpts, async (req, reply) => {
     const { profile, scope } = scopeOf(req);
-    const exp = prepareProfilePgnExport(scope, profile.displayName);
+    const exp = prepareProfilePgnExport(scope);
     return reply
       .type('application/x-chess-pgn; charset=utf-8')
       .header('content-disposition', `attachment; filename="${profile.slug}.pgn"`)

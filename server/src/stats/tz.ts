@@ -44,19 +44,59 @@ const MAX_TZ_LENGTH = 64;
 const TZ_RE = /^[A-Za-z][A-Za-z0-9_+\-/]*$/;
 
 /**
- * The zone name to use for `tz`, or null when it is not an IANA zone this runtime knows.
- * Casing is normalised (`europe/oslo` → `Europe/Oslo`) but aliases are kept as given
- * (`Asia/Kolkata` stays, although ICU calls it `Asia/Calcutta`). Raw offsets (`+05:30`) are
+ * Current IANA names that ICU still treats as aliases of an older spelling (its canonical
+ * `Asia/Calcutta` for `Asia/Kolkata`), so `Intl.supportedValuesOf` does not list them. Browsers
+ * report these names, so they keep their own spelling.
+ */
+const CURRENT_IANA_NAMES = [
+  'Africa/Asmara',
+  'America/Argentina/Buenos_Aires',
+  'America/Argentina/Catamarca',
+  'America/Argentina/Cordoba',
+  'America/Argentina/Jujuy',
+  'America/Argentina/Mendoza',
+  'America/Atikokan',
+  'America/Indiana/Indianapolis',
+  'America/Kentucky/Louisville',
+  'America/Nuuk',
+  'Asia/Ho_Chi_Minh',
+  'Asia/Kathmandu',
+  'Asia/Kolkata',
+  'Asia/Yangon',
+  'Atlantic/Faroe',
+  'Europe/Kyiv',
+  'Pacific/Chuuk',
+  'Pacific/Kanton',
+  'Pacific/Pohnpei',
+] as const;
+
+/** Lowercase zone name → its one spelling (built on first use). */
+let zoneSpellings: Map<string, string> | null = null;
+
+function spellingOf(lower: string): string | undefined {
+  if (!zoneSpellings) {
+    zoneSpellings = new Map();
+    for (const name of [...Intl.supportedValuesOf('timeZone'), ...CURRENT_IANA_NAMES, 'UTC']) zoneSpellings.set(name.toLowerCase(), name);
+  }
+  return zoneSpellings.get(lower);
+}
+
+/**
+ * The zone name to use for `tz`, or null when it is not an IANA zone this runtime knows. Every
+ * casing of a name gives the same spelling: zones the runtime lists and current IANA names keep
+ * their own (`europe/oslo` → `Europe/Oslo`, `ASIA/KOLKATA` → `Asia/Kolkata`); other aliases become
+ * the zone ICU resolves them to (`us/eastern` → `America/New_York`). Raw offsets (`+05:30`) are
  * refused: the contract asks for an IANA zone.
  */
 export function resolveTimeZone(tz: string): string | null {
   if (tz.length === 0 || tz.length > MAX_TZ_LENGTH || !TZ_RE.test(tz)) return null;
+  let resolved: string;
   try {
-    const resolved = new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
-    return resolved.toLowerCase() === tz.toLowerCase() ? resolved : tz;
+    resolved = new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
   } catch {
     return null;
   }
+  return spellingOf(tz.toLowerCase()) ?? resolved;
 }
 
 /** UTC offset (ms, local − UTC) of `tz` at instant `t`. */

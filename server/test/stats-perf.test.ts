@@ -107,7 +107,7 @@ describe(`stats performance on a ${GAMES / 1000}k-game profile`, () => {
         worldMapStats(s);
         activityStats(s, 'Europe/Oslo');
         ratingStats(s);
-        [...prepareProfilePgnExport(s, 'x', 10).chunks()];
+        [...prepareProfilePgnExport(s, 10).chunks()];
       }
     });
     expect(plans.length).toBeGreaterThan(30);

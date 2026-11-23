@@ -45,7 +45,7 @@ export interface PgnGameRecord {
 
 /** Options of `gameToPgn`. */
 export interface PgnWriteOptions {
-  /** Replacement player names (the bulk export writes the profile name for the profile's side). */
+  /** Replacement player names (the bulk export writes the account name for the profile's side). */
   names?: { white?: string; black?: string };
 }
 
