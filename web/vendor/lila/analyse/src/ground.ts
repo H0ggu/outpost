@@ -68,8 +68,17 @@ export function makeConfig(ctrl: AnalyseCtrl): CgConfig {
     },
     drawable: {
       enabled: true,
-      eraseOnMovablePieceClick: !ctrl.opts.study || !!ctrl.opts.practice,
+      eraseOnMovablePieceClick: (!ctrl.opts.study || !!ctrl.opts.practice) && !ctrl.opts.outpost,
       defaultSnapToValidMove: storage.boolean('arrow.snap').getOrDefault(true),
+      // outpost: keep drawn arrows and circles on the move, like a study chapter, so they reach the PGN
+      onChange: ctrl.opts.outpost
+        ? shapes => {
+            ctrl.tree.setShapes(
+              shapes.map(({ orig, dest, brush }) => ({ orig, dest, brush })),
+              ctrl.path,
+            );
+          }
+        : undefined,
     },
     highlight: {
       lastMove: pref.highlight,

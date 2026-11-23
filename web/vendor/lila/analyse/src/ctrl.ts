@@ -520,6 +520,7 @@ export default class AnalyseCtrl implements CevalHandler {
   }
 
   changeFen(fen: FEN): void {
+    if (this.opts.outpost) return this.opts.outpost.changeFen(fen);
     this.redirecting = true;
     window.location.href =
       '/analysis/' +

@@ -264,7 +264,9 @@ function helpHtml() {
 // iOS Safari has trouble rendering HTMLDialogElement content with replaced elements (i.e. <video>). It
 // can't do flex without glitching, it treats block as inline, hence the <br> after videoHtml and imageHtml
 
+// outpost: site.asset.url gives '' for help media that is not shipped; show no media then
 function videoHtml(path: string) {
+  if (!site.asset.url('video/' + path + '.webm')) return '';
   return $html`
     <video autoplay loop muted playsinline preload="auto">
       <source src="${site.asset.url('video/' + path + '.webm')}" type="video/webm">
@@ -273,6 +275,7 @@ function videoHtml(path: string) {
 }
 
 function imageHtml(path: string) {
+  if (!site.asset.url('images/help/' + path + '.webp')) return '';
   return `<img src="${site.asset.url('images/help/' + path + '.webp')}" alt=""><br>`;
 }
 

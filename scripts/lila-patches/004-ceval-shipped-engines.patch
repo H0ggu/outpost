@@ -1,0 +1,115 @@
+diff --git a/lib/src/ceval/engines/engines.ts b/lib/src/ceval/engines/engines.ts
+index 598d08f..8f5d816 100644
+--- a/lib/src/ceval/engines/engines.ts
++++ b/lib/src/ceval/engines/engines.ts
+@@ -12,7 +12,6 @@ import type { NodeEfficiencyVsFishnet } from '../types';
+ import { ExternalEngine } from './externalEngine';
+ import { SimpleEngine } from './simpleEngine';
+ import { StockfishWebEngine } from './stockfishWebEngine';
+-import { ThreadedEngine } from './threadedEngine';
+ 
+ // These comments can be deleted after at least one other person scrolls past them
+ //
+@@ -68,6 +67,8 @@ export class Engines {
+       { ...base, info: { ...base.info, obsoletedBy: 'relaxedSimd' } },
+     ];
+     // list engines in decreasing order of strength
++    // outpost: only engines whose files Outpost ships (stockfish-web, stockfish.js); variant NNUE nets,
++    // stockfish-nnue.wasm, stockfish.wasm and stockfish-mv.wasm are not served
+     const browserEngines: WithMake[] = [
+       ...relaxedSimdPair({
+         info: {
+@@ -107,46 +108,6 @@ export class Engines {
+         },
+         make: (e: BrowserEngineInfo) => new StockfishWebEngine(e, this.statusCallback),
+       }),
+-      ...variants.map(({ key, nnue }: Variant): WithMake => ({
+-        info: {
+-          id: `__fsfnnue-${key}`,
+-          name: 'Fairy Stockfish 14+ NNUE',
+-          short: 'FSF 14+',
+-          url: 'https://github.com/lichess-org/stockfish-web#fsf_14-fairy-stockfish-14',
+-          tech: 'NNUE',
+-          nodeEfficiencyVsFishnet: { chess: 0.005, variant: 3 }, // 3 is a compromise.
+-          // Depending on variant, NNUE can add anywhere from +200 to +1000 ELO according to download page.
+-          requires: ['sharedMem', 'simd', 'dynamicImportFromWorker'],
+-          variants: [key],
+-          supportsCloudEval: true,
+-          assets: {
+-            root: 'npm/stockfish-web',
+-            nnue: [`${nnue}.nnue`],
+-            js: 'fsf_14.js',
+-          },
+-        },
+-        make: (e: BrowserEngineInfo) => new StockfishWebEngine(e, this.statusCallback),
+-      })),
+-      {
+-        info: {
+-          id: '__sf14nnue',
+-          name: 'Stockfish 14 NNUE',
+-          short: 'SF 14',
+-          url: 'https://github.com/lichess-org/stockfish-nnue.wasm',
+-          tech: 'NNUE',
+-          nodeEfficiencyVsFishnet: { chess: 0.05 },
+-          obsoletedBy: 'dynamicImportFromWorker',
+-          requires: ['sharedMem', 'simd'],
+-          minMem: 2048,
+-          assets: {
+-            version: 'b6939d',
+-            root: 'npm/stockfish-nnue.wasm',
+-            js: 'stockfish.js',
+-            wasm: 'stockfish.wasm',
+-          },
+-        },
+-        make: (e: BrowserEngineInfo) => new ThreadedEngine(e, this.statusCallback),
+-      },
+       {
+         info: {
+           id: '__fsfhce',
+@@ -165,46 +126,6 @@ export class Engines {
+         },
+         make: (e: BrowserEngineInfo) => new StockfishWebEngine(e, this.statusCallback),
+       },
+-      {
+-        info: {
+-          id: '__sf11hce',
+-          name: 'Stockfish 11 HCE',
+-          short: 'SF 11',
+-          url: 'https://github.com/lichess-org/stockfish.wasm',
+-          tech: 'HCE',
+-          nodeEfficiencyVsFishnet: { chess: 0.005 },
+-          requires: ['sharedMem'],
+-          minThreads: 1,
+-          assets: {
+-            version: 'a022fa',
+-            root: 'npm/stockfish.wasm',
+-            js: 'stockfish.js',
+-            wasm: 'stockfish.wasm',
+-          },
+-        },
+-        make: (e: BrowserEngineInfo) => new ThreadedEngine(e, undefined),
+-      },
+-      {
+-        info: {
+-          id: '__sf11mv',
+-          name: 'Stockfish 11 Multi-Variant',
+-          short: 'SF 11 MV',
+-          tech: 'HCE',
+-          nodeEfficiencyVsFishnet: { chess: 0.005, variant: 0.5 },
+-          requires: ['sharedMem'],
+-          minThreads: 1,
+-          variants: ['chess', ...variants.map(v => v.key)],
+-          supportsNonStandardMaterial: true,
+-          assets: {
+-            version: 'a022fa',
+-            root: 'npm/stockfish-mv.wasm',
+-            js: 'stockfish.js',
+-            wasm: 'stockfish.wasm',
+-          },
+-        },
+-        make: (e: BrowserEngineInfo) =>
+-          new ThreadedEngine(e, undefined, (v: Rules) => (v === 'antichess' ? 'giveaway' : v)),
+-      },
+       {
+         info: {
+           id: '__sfwasm',

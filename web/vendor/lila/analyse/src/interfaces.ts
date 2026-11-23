@@ -180,6 +180,16 @@ export interface AnalyseOpts {
   embed?: boolean;
   socketUrl?: string;
   socketVersion?: number;
+  outpost?: OutpostHooks;
+}
+
+// Outpost (self-hosted, no lila server): behaviour that lila delegates to its server. Present only
+// when the board runs inside Outpost's Studio; every use falls back to lila's own behaviour.
+export interface OutpostHooks {
+  // set up a position in place (lila navigates to /analysis/<variant>/<fen>)
+  changeFen(fen: FEN): void;
+  // keyboard help dialog content (lila fetches /analysis/help)
+  keyboardHelpHtml(): string;
 }
 
 export interface JustCaptured extends Piece {

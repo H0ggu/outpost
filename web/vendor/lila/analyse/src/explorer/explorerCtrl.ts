@@ -71,7 +71,8 @@ export default class ExplorerCtrl {
     const parts = location.hash.split('/');
     if (parts[0] === '#explorer' || parts[0] === '#opening') {
       this.enabled(true);
-      if (parts[1] === 'lichess' || parts[1] === 'masters') this.config.data.db(parts[1]);
+      if (parts[1] === 'lichess' || parts[1] === 'masters' || parts[1] === 'reference')
+        this.config.data.db(parts[1]);
       else if (parts[1]?.match(/[A-Za-z0-9_-]{2,30}/)) {
         this.config.selectPlayer(parts[1]);
         this.config.data.color(parts[2] === 'black' ? 'black' : 'white');
@@ -82,7 +83,8 @@ export default class ExplorerCtrl {
 
   isAuth = () => defined(myUserId());
 
-  requiresAuth = () => this.config.data.db() !== 'masters' && !this.isAuth();
+  requiresAuth = () =>
+    this.opts.outpost ? this.opts.outpost.requiresAuth() : this.config.data.db() !== 'masters' && !this.isAuth();
 
   reload = () => {
     this.directInteraction = true;
@@ -93,6 +95,7 @@ export default class ExplorerCtrl {
 
   private readonly baseXhrOpening = () => ({
     endpoint: this.opts.endpoint,
+    playerEndpoint: this.opts.outpost?.playerEndpoint(this.config.data.playerName.value()),
     config: this.config.data,
   });
 
