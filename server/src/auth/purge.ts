@@ -7,7 +7,10 @@
  * Deleting that in one transaction would block the event loop (node:sqlite is synchronous) and hold
  * the write lock for many seconds, so this purger removes it in batches of `PURGE_BATCH_GAMES`
  * games, one short transaction each, yielding to the event loop between batches. The user row is
- * deleted last (its remaining FKs cascade or SET NULL as documented in admin.ts).
+ * deleted last (its remaining FKs cascade or SET NULL as documented in admin.ts). Then the orphan
+ * policy (decision 3, `sweepOrphans` from the profiles module) runs at once: the Lichess, Chess.com
+ * and FIDE accounts only their profiles tracked, and those accounts' games, go now instead of at the
+ * next periodic sweep (which only runs where the workers do). Accounts other profiles still use stay.
  *
  * One user is purged at a time. A purge interrupted by a shutdown or an error resumes on the next
  * start (`resumePending`, from the admin plugin's onReady) or when an admin deletes the user again.
@@ -15,6 +18,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { Id } from '@outpost/shared/api';
 import type { Db } from '../db/index.ts';
+import { sweepOrphans } from '../profiles/service.ts';
 
 /** Games deleted per transaction (each with up to 51 positions and its player_games rows). */
 export const PURGE_BATCH_GAMES = 200;
@@ -53,6 +57,8 @@ export function createUserPurger(deps: {
   const pending = new Map<Id, Promise<boolean>>();
   let chain: Promise<unknown> = Promise.resolve();
   let closed = false;
+  /** Aborted by `close`, so an orphan sweep stops between batches at shutdown. */
+  const stop = new AbortController();
   let wake: (() => void) | null = null;
 
   const sleep = (ms: number): Promise<void> =>
@@ -101,6 +107,14 @@ export function createUserPurger(deps: {
     }
     if (closed) return false;
     db.tx(() => db.run('DELETE FROM users WHERE id = ? AND deleting_at IS NOT NULL', [userId]));
+    // Their profiles went in beginUserDeletion: drop the accounts nobody tracks any more and their
+    // games. A sweep cut short by a shutdown is finished by the next periodic one.
+    try {
+      const swept = await sweepOrphans(db, { signal: stop.signal });
+      if (swept.sources) log.info({ userId, ...swept }, 'dropped the accounts only the deleted user tracked');
+    } catch (err) {
+      log.warn({ err, userId }, 'could not sweep the accounts of a deleted user; the periodic sweep will');
+    }
     return true;
   };
 
@@ -139,6 +153,7 @@ export function createUserPurger(deps: {
     },
     async close() {
       closed = true;
+      stop.abort();
       wake?.();
       await Promise.allSettled([...pending.values()]);
     },

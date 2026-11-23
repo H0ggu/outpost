@@ -5,7 +5,7 @@ import { createUserPurger } from '../src/auth/purge.ts';
 import { insertGame } from '../src/chess/store.ts';
 import { openDb, type Db } from '../src/db/index.ts';
 import { migrate } from '../src/db/migrate.ts';
-import { createUserSession, testGame } from './helpers.ts';
+import { createSource, createUserSession, testGame } from './helpers.ts';
 
 let db: Db;
 beforeEach(() => {
@@ -127,6 +127,32 @@ describe('user purger', () => {
     expect(count('SELECT COUNT(*) FROM games WHERE database_id IN (?, ?)', carol.dbs)).toBe(6);
     expect(count('SELECT COUNT(*) FROM users WHERE id = ?', [carol.userId])).toBe(1);
     expect(log.info).toHaveBeenCalledWith({ userId: bob.userId }, 'deleted user purged');
+    await purger.close();
+  });
+
+  it("drops the accounts only the deleted user's profiles tracked, with their games (orphan policy)", async () => {
+    const { userId: adminId } = createUserSession(db, { username: 'root', role: 'admin' });
+    const bob = seedUser('bob', 1);
+    const carol = seedUser('carol', 1);
+    const onlyBob = createSource(db, { kind: 'lichess', key: 'onlybob' });
+    const shared = createSource(db, { kind: 'lichess', key: 'shared' });
+    const profileOf = (userId: number, slug: string, sources: number[]) => {
+      const id = db.run("INSERT INTO profiles (slug, display_name, owner_user_id, created_at, updated_at) VALUES (?, 'P', ?, 0, 0)", [slug, userId]).lastInsertRowid;
+      for (const src of sources) db.run('INSERT INTO profile_sources (profile_id, source_id) VALUES (?, ?)', [id, src]);
+    };
+    profileOf(bob.userId, 'bob-tracks', [onlyBob, shared]);
+    profileOf(carol.userId, 'carol-tracks', [shared]);
+    insertGame(db, testGame({ white: { name: 'onlybob' }, black: { name: 'someone' } }));
+    insertGame(db, testGame({ white: { name: 'shared' }, black: { name: 'someone' } }));
+    expect(count("SELECT COUNT(*) FROM games WHERE origin = 'lichess'")).toBe(2);
+
+    beginUserDeletion(db, adminId, bob.userId);
+    const { logger } = fakeLog();
+    const purger = createUserPurger({ db, log: logger });
+    expect(await purger.schedule(bob.userId)).toBe(true);
+    expect(count('SELECT COUNT(*) FROM sources WHERE id = ?', [onlyBob])).toBe(0);
+    expect(count('SELECT COUNT(*) FROM sources WHERE id = ?', [shared])).toBe(1);
+    expect(db.all<{ white: string }>("SELECT white FROM games WHERE origin = 'lichess'")).toEqual([{ white: 'shared' }]);
     await purger.close();
   });
 
