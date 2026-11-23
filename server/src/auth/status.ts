@@ -5,8 +5,9 @@
  * - Token check: `GET https://lichess.org/api/account` through `app.upstream` with `auth: 'required'`
  *   (no token → `missing`, nothing is sent). 200 → `valid` with the account id and the scopes from
  *   Lichess's `X-OAuth-Scopes` header; 401/403 → `invalid`; anything else → `unknown` with the reason.
- * - Probes: one small request per upstream host, in parallel, each with a short timeout. `ok` means
- *   the host answered with a 2xx/3xx. A host in a 429 cool-down is reported without being contacted.
+ * - Probes: one small request per upstream host, each with a short timeout; hosts are probed in
+ *   parallel, requests to one host one at a time (Lichess asks for that). `ok` means the host
+ *   answered with a 2xx/3xx. A host in a 429 cool-down is reported without being contacted.
  * - The token check, the probes and the expensive row counts (games, positions) are cached for
  *   `STATUS_CACHE_MS` and shared by concurrent requests; changing the token in the admin settings
  *   (or `?refresh=1`) runs them again. Cheap counts and job counts are always fresh.
@@ -166,30 +167,60 @@ export interface StatusService {
 export function createStatusService(deps: { db: Db; config: Config; upstream: Upstream; now?: () => number }): StatusService {
   const { db, config, upstream } = deps;
   const now = deps.now ?? Date.now;
-  let cache: { at: number; value: Promise<Probed> } | null = null;
+  let cache: { at: number; value: Promise<Probed>; settled: boolean } | null = null;
+
+  /** The token check and every probe: hosts in parallel, one request at a time per host. */
+  const runChecks = async (): Promise<Pick<Probed, 'lichessToken' | 'upstream'>> => {
+    let lichessToken: AdminStatus['lichessToken'] | null = null;
+    const results = new Map<ProbeDef, UpstreamStatus>();
+    const queues = new Map<string, Array<() => Promise<void>>>();
+    const enqueue = (url: string, task: () => Promise<void>): void => {
+      const host = new URL(url).host;
+      queues.set(host, [...(queues.get(host) ?? []), task]);
+    };
+    enqueue(UPSTREAM.lichess, async () => {
+      lichessToken = await checkLichessToken(upstream, db, config);
+    });
+    for (const def of UPSTREAM_PROBES) {
+      enqueue(def.url, async () => {
+        results.set(def, await probeUpstream(upstream, def));
+      });
+    }
+    await Promise.all(
+      [...queues.values()].map(async tasks => {
+        for (const task of tasks) await task();
+      }),
+    );
+    return { lichessToken: lichessToken!, upstream: UPSTREAM_PROBES.map(d => results.get(d)!) };
+  };
 
   const probe = async (): Promise<Probed> => {
     // Expensive counts are taken with the probes and cached with them.
     const games = db.value<number>("SELECT COUNT(*) FROM games WHERE origin IN ('lichess', 'chesscom', 'pgn')") ?? 0;
     const referenceGames = db.value<number>("SELECT COUNT(*) FROM games WHERE origin = 'reference'") ?? 0;
     const positions = db.value<number>('SELECT COUNT(*) FROM positions') ?? 0;
-    const [lichessToken, ...probes] = await Promise.all([
-      checkLichessToken(upstream, db, config),
-      ...UPSTREAM_PROBES.map(p => probeUpstream(upstream, p)),
-    ]);
-    return { checkedAt: now(), lichessToken, upstream: probes, games, referenceGames, positions };
+    const checks = await runChecks();
+    return { checkedAt: now(), ...checks, games, referenceGames, positions };
   };
 
   const probed = (refresh: boolean): Promise<Probed> => {
     const t = now();
-    if (refresh || !cache || t - cache.at >= STATUS_CACHE_MS) {
-      const entry = { at: t, value: probe() };
+    // A refresh joins a run that is still in flight instead of starting another one.
+    const stale = !cache || t - cache.at >= STATUS_CACHE_MS || (refresh && cache.settled);
+    if (stale) {
+      const entry = { at: t, value: probe(), settled: false };
       cache = entry;
-      entry.value.catch(() => {
-        if (cache === entry) cache = null;
-      });
+      entry.value.then(
+        () => {
+          entry.settled = true;
+        },
+        () => {
+          if (cache === entry) cache = null;
+        },
+      );
+      return entry.value;
     }
-    return cache.value;
+    return cache!.value;
   };
 
   return {

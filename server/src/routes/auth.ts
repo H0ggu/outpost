@@ -113,6 +113,8 @@ const authRoutes: FastifyPluginAsync = async app => {
 
   app.addHook('onReady', async () => {
     setup.ensure();
+    // Computed once per process, so the first login of an unknown user is not slower than the rest.
+    await dummyPasswordHash();
     purge();
     purgeTimer = setInterval(purge, SESSION_PURGE_INTERVAL_MS);
     purgeTimer.unref();
