@@ -3,19 +3,26 @@
  * the one-time setup token (SETUP_TOKEN, or the one Outpost printed to its log). Once an admin
  * exists the page only points to sign-in. Success signs the admin in and opens the instance
  * settings.
+ *
+ * The mutation lives in the page, not in the form: a successful setup updates the session
+ * (`setupRequired` false) before its refetch finishes, which would replace the form — and with it
+ * any per-call `onSuccess` — by the "already set up" card. The page keeps the form while the
+ * request is in flight and redirects once it succeeded.
  */
 import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router';
+import { Link, Navigate } from 'react-router';
 import { ApiError } from '../api/client.ts';
 import { useSession } from '../api/hooks.ts';
 import { Button, ButtonLink, EmptyState, ErrorBox, licon, Spinner } from '../components/index.ts';
 import { paths } from '../paths.ts';
 import { useSetup } from './account-hooks.ts';
 import { Flash, formErrors, newPasswordProblems, PASSWORD_MIN_LENGTH, PasswordField, TextField } from './components/account/forms.tsx';
-import { AuthCard, useGoTo } from './components/account/misc.tsx';
+import { AuthCard } from './components/account/misc.tsx';
 
 export default function SetupPage() {
   const session = useSession();
+  const setup = useSetup();
+  if (setup.isSuccess) return <Navigate to={paths.admin.settings} replace />;
   if (session.isPending) return <Spinner center />;
   if (session.isError) {
     return (
@@ -24,7 +31,7 @@ export default function SetupPage() {
       </AuthCard>
     );
   }
-  if (!session.data.setupRequired) {
+  if (!session.data.setupRequired && !setup.isPending) {
     const user = session.data.user;
     return (
       <AuthCard title="Set up Outpost">
@@ -43,12 +50,10 @@ export default function SetupPage() {
       </AuthCard>
     );
   }
-  return <SetupForm />;
+  return <SetupForm setup={setup} />;
 }
 
-function SetupForm() {
-  const setup = useSetup();
-  const goTo = useGoTo();
+function SetupForm({ setup }: { setup: ReturnType<typeof useSetup> }) {
   const [token, setToken] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -70,7 +75,8 @@ function SetupForm() {
     Object.assign(p, newPasswordProblems(password, confirm));
     setProblems(p);
     if (Object.keys(p).length) return;
-    setup.mutate({ token: token.trim(), username: username.trim(), password }, { onSuccess: () => goTo(paths.admin.settings) });
+    // On success the page redirects (see SetupPage).
+    setup.mutate({ token: token.trim(), username: username.trim(), password });
   };
 
   return (

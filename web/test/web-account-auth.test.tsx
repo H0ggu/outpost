@@ -4,7 +4,7 @@ import { queryKeys } from '../src/app/api/hooks.ts';
 import LoginPage from '../src/app/pages/LoginPage.tsx';
 import SetupPage from '../src/app/pages/SetupPage.tsx';
 import SignupPage from '../src/app/pages/SignupPage.tsx';
-import { ADMIN, apiError, renderAt, session, user, withFakeApi } from './web-account-helpers.tsx';
+import { ADMIN, apiError, later, renderAt, session, user, withFakeApi } from './web-account-helpers.tsx';
 
 const api = withFakeApi();
 
@@ -213,7 +213,8 @@ describe('SetupPage', () => {
   it('creates the first admin and opens the instance settings', async () => {
     let done = false;
     api()
-      .on('GET', '/api/session', () => (done ? session(ADMIN) : session(null, { setupRequired: true })))
+      // The refetch after setup is slow, as over a network: the form is gone by the time it answers.
+      .on('GET', '/api/session', () => (done ? later(60, session(ADMIN)) : session(null, { setupRequired: true })))
       .on('POST', '/api/setup', () => {
         done = true;
         return { user: ADMIN };

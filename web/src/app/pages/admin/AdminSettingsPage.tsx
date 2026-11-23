@@ -71,7 +71,10 @@ function SettingsForm({ settings, saved, onSaved }: { settings: AdminSettings; s
     const p = settingsProblems(draft);
     setProblems(p);
     if (Object.keys(p).length || !dirty) return;
-    update.mutate(patch, { onSuccess: onSaved });
+    // Not `mutate(patch, { onSuccess })`: the saved settings re-key this form before the hook's
+    // refetches finish, and per-call callbacks of an unmounted form never run. The promise still
+    // settles, and `onSaved` belongs to the page, which stays. Failures show through `update.error`.
+    update.mutateAsync(patch).then(onSaved, () => undefined);
   };
 
   const referenceDbs = reference.data?.databases ?? [];

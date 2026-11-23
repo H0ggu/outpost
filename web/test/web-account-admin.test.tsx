@@ -15,6 +15,7 @@ import {
   apiError,
   invite,
   job,
+  later,
   NOW,
   referenceDb,
   renderAt,
@@ -99,7 +100,10 @@ describe('AdminSettingsPage', () => {
 
   it('saves only the changed settings and shows the server answer', async () => {
     const current = settingsServer();
-    api().on('GET', '/api/session', () => session(ADMIN, { signupMode: current().signupMode }));
+    // Slow refetches after the save, as over a network: the form is re-keyed before they answer.
+    api()
+      .on('GET', '/api/session', () => later(40, null).then(() => session(ADMIN, { signupMode: current().signupMode })))
+      .on('GET', '/api/admin/status', () => later(40, adminStatus()));
     const { qc } = renderAt(<AdminSettingsPage />, { path: '/admin/settings', layout: true });
     const save = await screen.findByRole('button', { name: 'Save settings' });
     expect((save as HTMLButtonElement).disabled).toBe(true);

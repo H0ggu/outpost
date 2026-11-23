@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PREFS, type SessionUser, type UserPrefs } from '@outpost/shared/api';
 import SettingsPage from '../src/app/pages/SettingsPage.tsx';
-import { apiError, renderAt, session, sessionRow, user, withFakeApi } from './web-account-helpers.tsx';
+import { apiError, later, renderAt, session, sessionRow, user, withFakeApi } from './web-account-helpers.tsx';
 
 const api = withFakeApi();
 
@@ -192,18 +192,38 @@ describe('Change password', () => {
 describe('Two-factor authentication', () => {
   const SETUP = { secret: 'JBSWY3DPEHPK3PXP', otpauthUrl: 'otpauth://totp/Outpost:alice?secret=JBSWY3DPEHPK3PXP', qrSvg: '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>' };
 
-  it('turns it on with the QR code and a confirmation code', async () => {
-    const me = prefsServer();
+  /** Like prefsServer, but session refetches are slow, as over a network. */
+  const slowSessionServer = (start: SessionUser) => {
+    const me = prefsServer(start);
+    api().on('GET', '/api/session', () => later(50, session(me)));
+    return me;
+  };
+
+  it('asks for the password, then turns it on with the QR code and a confirmation code', async () => {
+    const me = slowSessionServer(user());
     api()
-      .on('POST', '/api/me/totp/setup', SETUP)
+      .on('POST', '/api/me/totp/setup', req =>
+        (req.body as { password?: string }).password === 'right-password' ? SETUP : apiError(403, 'forbidden', 'Current password is incorrect'),
+      )
       .on('POST', '/api/me/totp/enable', req => {
-        if ((req.body as { code: string }).code !== '123456') return apiError(400, 'bad_request', 'Invalid TOTP code');
+        if ((req.body as { code: string }).code !== '123456') return apiError(403, 'forbidden', 'That code is not valid');
         me.totpEnabled = true;
         return { ok: true };
       });
     renderAt(<SettingsPage />, { path: '/settings?section=two-factor' });
-    fireEvent.click(await screen.findByRole('button', { name: 'Set up two-factor authentication' }));
+    const start = await screen.findByRole('button', { name: 'Set up two-factor authentication' });
+    fireEvent.click(start);
+    expect(await screen.findByText('Enter your password.')).toBeTruthy();
+    expect(api().find('POST', '/api/me/totp/setup')).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText('Current password'), { target: { value: 'wrong-password' } });
+    fireEvent.click(start);
+    expect(await screen.findByText('Current password is incorrect')).toBeTruthy();
+    expect(screen.getByLabelText('Current password').getAttribute('aria-invalid')).toBe('true');
+    fireEvent.change(screen.getByLabelText('Current password'), { target: { value: 'right-password' } });
+    fireEvent.click(start);
+
     const qr = (await screen.findByRole('img', { name: /QR code/ })) as HTMLImageElement;
+    expect(api().find('POST', '/api/me/totp/setup').at(-1)?.body).toEqual({ password: 'right-password' });
     expect(qr.src.startsWith('data:image/svg+xml')).toBe(true);
     expect(decodeURIComponent(qr.src)).toContain('<rect/>');
     expect(screen.getByLabelText('Secret key').textContent).toBe('JBSW Y3DP EHPK 3PXP');
@@ -218,38 +238,75 @@ describe('Two-factor authentication', () => {
     expect(await screen.findByText(/That code was not accepted/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Authentication code'), { target: { value: '123 456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
+    // The form is replaced as soon as the cached session flips; the confirmation still shows.
     expect(await screen.findByText(/Two-factor authentication is on/)).toBeTruthy();
     expect(api().find('POST', '/api/me/totp/enable').at(-1)?.body).toEqual({ code: '123456' });
     expect(await screen.findByRole('button', { name: 'Turn off two-factor authentication' })).toBeTruthy();
   });
 
-  it('turns it off with the password and a code', async () => {
-    const me = prefsServer(user({ totpEnabled: true }));
+  it('uses the PNG QR code and shows the expiry when the server sends them', async () => {
+    prefsServer();
+    api().on('POST', '/api/me/totp/setup', { ...SETUP, qrDataUrl: 'data:image/png;base64,iVBORw0KGgo=', expiresAt: Date.now() + 10 * 60_000 });
+    renderAt(<SettingsPage />, { path: '/settings?section=two-factor' });
+    fireEvent.change(await screen.findByLabelText('Current password'), { target: { value: 'pw' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Set up two-factor authentication' }));
+    const qr = (await screen.findByRole('img', { name: /QR code/ })) as HTMLImageElement;
+    expect(qr.src).toBe('data:image/png;base64,iVBORw0KGgo=');
+    expect(screen.getByText('Confirm in 10 minutes, or start again.')).toBeTruthy();
+  });
+
+  it('turns it off with the password alone or a code alone', async () => {
+    const me = slowSessionServer(user({ totpEnabled: true }));
     api().on('POST', '/api/me/totp/disable', req => {
       const b = req.body as { password: string; code: string };
-      if (b.password !== 'right-password') return apiError(403, 'forbidden', 'Wrong password');
+      if (b.password !== 'right-password' && b.code !== '222222') return apiError(403, 'forbidden', 'Wrong password or code');
       me.totpEnabled = false;
       return { ok: true };
     });
     renderAt(<SettingsPage />, { path: '/settings?section=two-factor' });
     const button = await screen.findByRole('button', { name: 'Turn off two-factor authentication' });
     fireEvent.click(button);
-    expect(await screen.findByText('Enter your password.')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'wrong-password' } });
+    expect(await screen.findByText('Enter your password or a current code.')).toBeTruthy();
+    expect(api().find('POST', '/api/me/totp/disable')).toHaveLength(0);
+
+    // A code alone (lost password managers happen too): a refusal shows at the code.
     fireEvent.change(screen.getByLabelText('Authentication code'), { target: { value: '111111' } });
     fireEvent.click(button);
-    expect(await screen.findByText('Wrong password')).toBeTruthy();
+    expect(await screen.findByText('Wrong password or code')).toBeTruthy();
+    expect(screen.getByLabelText('Authentication code').getAttribute('aria-invalid')).toBe('true');
+    expect(api().find('POST', '/api/me/totp/disable').at(-1)?.body).toEqual({ password: '', code: '111111' });
+
+    // The password alone (a lost authenticator).
+    fireEvent.change(screen.getByLabelText('Authentication code'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'right-password' } });
     fireEvent.click(button);
     expect(await screen.findByText('Two-factor authentication is off.')).toBeTruthy();
+    expect(api().find('POST', '/api/me/totp/disable').at(-1)?.body).toEqual({ password: 'right-password', code: '' });
     expect(await screen.findByRole('button', { name: 'Set up two-factor authentication' })).toBeTruthy();
+  });
+
+  it('checks the code format and places a refusal of both proofs above the button', async () => {
+    prefsServer(user({ totpEnabled: true }));
+    api().on('POST', '/api/me/totp/disable', apiError(403, 'forbidden', 'Wrong password or code'));
+    renderAt(<SettingsPage />, { path: '/settings?section=two-factor' });
+    const button = await screen.findByRole('button', { name: 'Turn off two-factor authentication' });
+    fireEvent.change(screen.getByLabelText('Authentication code'), { target: { value: '12' } });
+    fireEvent.click(button);
+    expect(await screen.findByText('Enter the current 6-digit code.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } });
+    fireEvent.change(screen.getByLabelText('Authentication code'), { target: { value: '123456' } });
+    fireEvent.click(button);
+    expect(await screen.findByText('Wrong password or code')).toBeTruthy();
+    expect(screen.getByLabelText('Password').getAttribute('aria-invalid')).toBeNull();
+    expect(screen.getByLabelText('Authentication code').getAttribute('aria-invalid')).toBeNull();
   });
 
   it('reports a failed setup', async () => {
     prefsServer();
     api().on('POST', '/api/me/totp/setup', apiError(500, 'internal', 'Internal server error'));
     renderAt(<SettingsPage />, { path: '/settings?section=two-factor' });
-    fireEvent.click(await screen.findByRole('button', { name: 'Set up two-factor authentication' }));
+    fireEvent.change(await screen.findByLabelText('Current password'), { target: { value: 'pw' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Set up two-factor authentication' }));
     expect(await screen.findByText('Could not start the setup')).toBeTruthy();
   });
 });

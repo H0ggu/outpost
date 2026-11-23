@@ -1,15 +1,15 @@
 /**
  * Account sections of /settings (PLAN §6, §10): change password, two-factor authentication
- * (TOTP: QR code + confirmation code to turn it on, password + code to turn it off) and the list
- * of signed-in sessions with revoke.
+ * (TOTP: the current password, then a QR code + confirmation code to turn it on; the password or
+ * a current code to turn it off) and the list of signed-in sessions with revoke.
  */
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
-import type { SessionRow, SessionUser, TotpSetupResponse } from '@outpost/shared/api';
+import type { SessionRow, SessionUser } from '@outpost/shared/api';
 import { ApiError } from '../../../api/client.ts';
 import { Box, Button, EmptyState, ErrorBox, licon, Spinner } from '../../../components/index.ts';
 import { paths } from '../../../paths.ts';
-import { useChangePassword, useMySessions, useRevokeSession, useTotpChange, useTotpSetup } from '../../account-hooks.ts';
+import { useChangePassword, useMySessions, useRevokeSession, useTotpChange, useTotpSetup, type TotpSetupResult } from '../../account-hooks.ts';
 import { ConfirmDialog } from './Dialog.tsx';
 import { describeUserAgent, relativeTime, useTimeFormat } from './format.ts';
 import { Flash, formErrors, newPasswordProblems, PASSWORD_MIN_LENGTH, PasswordField, TextField } from './forms.tsx';
@@ -134,6 +134,10 @@ export const groupSecret = (secret: string): string => secret.replace(/\s+/g, ''
 /** The server's SVG QR code as an image (an <img> cannot run anything inside the SVG). */
 const svgDataUrl = (svg: string): string => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
+/** The QR code to show: the server's PNG when it sends one (a data: URL only), else its SVG. */
+export const totpQrSrc = (setup: TotpSetupResult): string =>
+  setup.qrDataUrl && /^data:image\/(png|svg\+xml|gif|webp)[;,]/.test(setup.qrDataUrl) ? setup.qrDataUrl : svgDataUrl(setup.qrSvg);
+
 export function TotpSection({ user }: { user: SessionUser }) {
   const [message, setMessage] = useState<string | null>(null);
   return (
@@ -155,45 +159,71 @@ export function TotpSection({ user }: { user: SessionUser }) {
         in.
       </p>
       {message && <Flash>{message}</Flash>}
+      {/* The confirmation lives here: the form that turned it on or off is replaced by the other one. */}
       {user.totpEnabled ? (
-        <TotpDisable onDone={() => setMessage('Two-factor authentication is off.')} />
+        <TotpDisable username={user.username} onDone={() => setMessage('Two-factor authentication is off.')} />
       ) : (
-        <TotpEnable onDone={() => setMessage('Two-factor authentication is on. You will need a code the next time you sign in.')} />
+        <TotpEnable
+          username={user.username}
+          onStart={() => setMessage(null)}
+          onDone={() => setMessage('Two-factor authentication is on. You will need a code the next time you sign in.')}
+        />
       )}
     </Box>
   );
 }
 
-function TotpEnable({ onDone }: { onDone: () => void }) {
+function TotpEnable({ username, onStart, onDone }: { username: string; onStart: () => void; onDone: () => void }) {
   const setup = useTotpSetup();
   const change = useTotpChange();
-  const [pending, setPending] = useState<TotpSetupResponse | null>(null);
+  const [pending, setPending] = useState<TotpSetupResult | null>(null);
+  const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
 
   if (!pending) {
+    const passwordRefused = wrongPassword(setup.error);
+    const passwordError =
+      problem ?? (passwordRefused ? (setup.error instanceof ApiError && setup.error.message) || 'Wrong password.' : undefined);
+    const start = (e: FormEvent) => {
+      e.preventDefault();
+      if (!password) {
+        setProblem('Enter your password.');
+        return;
+      }
+      setProblem(null);
+      onStart();
+      setup.mutate(
+        { password },
+        {
+          onSuccess: res => {
+            setPending(res);
+            setPassword('');
+            setCode('');
+            change.reset();
+          },
+        },
+      );
+    };
     return (
-      <div className="acc-stack">
-        {setup.isError && <ErrorBox error={setup.error} title="Could not start the setup" />}
-        <div>
-          <Button
-            icon={licon.Padlock}
-            disabled={setup.isPending}
-            onClick={() =>
-              setup.mutate(undefined, {
-                onSuccess: res => {
-                  setPending(res);
-                  setCode('');
-                  setProblem(null);
-                  change.reset();
-                },
-              })
-            }
-          >
+      <form className="acc-form acc-form--narrow" onSubmit={start} noValidate aria-label="Set up two-factor authentication">
+        <UsernameHint username={username} />
+        <PasswordField
+          label="Current password"
+          name="current-password"
+          autoComplete="current-password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          help="Confirm it is you before adding an authenticator."
+          error={passwordError}
+        />
+        {setup.isError && !passwordRefused && <ErrorBox error={setup.error} title="Could not start the setup" />}
+        <div className="acc-actions acc-actions--start">
+          <Button type="submit" icon={licon.Padlock} disabled={setup.isPending}>
             {setup.isPending ? 'Preparing…' : 'Set up two-factor authentication'}
           </Button>
         </div>
-      </div>
+      </form>
     );
   }
 
@@ -210,14 +240,14 @@ function TotpEnable({ onDone }: { onDone: () => void }) {
       return;
     }
     setProblem(null);
-    change.mutate(
-      { action: 'enable', code: c },
-      {
-        onSuccess: () => {
-          setPending(null);
-          onDone();
-        },
+    // Turning it on swaps this form for TotpDisable before the session refetch ends: the
+    // promise still settles, a per-call onSuccess would not run.
+    change.mutateAsync({ action: 'enable', code: c }).then(
+      () => {
+        setPending(null);
+        onDone();
       },
+      () => undefined,
     );
   };
 
@@ -227,7 +257,7 @@ function TotpEnable({ onDone }: { onDone: () => void }) {
         <li>
           <strong>Scan the QR code</strong> with your authenticator app.
           <div className="acc-totp__qr">
-            <img src={svgDataUrl(pending.qrSvg)} alt="QR code for your authenticator app" width={200} height={200} />
+            <img src={totpQrSrc(pending)} alt="QR code for your authenticator app" width={200} height={200} />
           </div>
           <div className="acc-totp__manual">
             <span className="muted">Or enter this key by hand:</span>
@@ -253,6 +283,7 @@ function TotpEnable({ onDone }: { onDone: () => void }) {
             className="acc-code-field"
             value={code}
             onChange={e => setCode(e.target.value)}
+            help={pending.expiresAt ? `Confirm ${relativeTime(pending.expiresAt)}, or start again.` : undefined}
             error={field.code}
           />
         </li>
@@ -262,7 +293,15 @@ function TotpEnable({ onDone }: { onDone: () => void }) {
         <Button type="submit" icon={licon.Checkmark} disabled={change.isPending}>
           {change.isPending ? 'Checking…' : 'Turn on'}
         </Button>
-        <Button variant="secondary" onClick={() => setPending(null)} disabled={change.isPending}>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            setPending(null);
+            setProblem(null);
+            setup.reset();
+          }}
+          disabled={change.isPending}
+        >
           Cancel
         </Button>
       </div>
@@ -270,42 +309,43 @@ function TotpEnable({ onDone }: { onDone: () => void }) {
   );
 }
 
-function TotpDisable({ onDone }: { onDone: () => void }) {
+/** Which proof the last "turn off" attempt sent, to put a refusal next to it. */
+type DisableProof = 'password' | 'code' | 'both';
+
+function TotpDisable({ username, onDone }: { username: string; onDone: () => void }) {
   const change = useTotpChange();
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [problems, setProblems] = useState<Record<string, string>>({});
+  const [sent, setSent] = useState<DisableProof | null>(null);
 
   const error = change.error;
   const { field, form } = formErrors(error, ['password', 'code'], problems);
-  const codeRefused = wrongCode(error);
-  const passwordRefused = !codeRefused && wrongPassword(error);
-  if (codeRefused && !field.code) field.code = 'That code was not accepted.';
-  if (passwordRefused && !field.password) field.password = error instanceof ApiError ? error.message : 'Wrong password.';
+  // A refusal (403) is about whichever proof was sent; with both, it stays above the button.
+  const refused = error instanceof ApiError && (error.code === 'forbidden' || error.code === 'unauthorized' || error.code === 'totp_required');
+  const refusedAt = refused && sent !== 'both' ? sent : null;
+  if (refusedAt === 'password' && !field.password) field.password = (error as ApiError).message || 'Wrong password.';
+  if (refusedAt === 'code' && !field.code) field.code = (error as ApiError).message || 'That code was not accepted.';
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const p: Record<string, string> = {};
-    if (!password) p.password = 'Enter your password.';
     const c = code.replace(/\s+/g, '');
-    if (!/^\d{6}$/.test(c)) p.code = 'Enter the current 6-digit code.';
+    if (!password && !c) p.password = 'Enter your password or a current code.';
+    if (c && !/^\d{6}$/.test(c)) p.code = 'Enter the current 6-digit code.';
     setProblems(p);
     if (Object.keys(p).length) return;
-    change.mutate(
-      { action: 'disable', password, code: c },
-      {
-        onSuccess: () => {
-          setPassword('');
-          setCode('');
-          onDone();
-        },
-      },
-    );
+    setSent(password && c ? 'both' : password ? 'password' : 'code');
+    // Turning it off swaps this form for TotpEnable before the session refetch ends (see above).
+    change.mutateAsync({ action: 'disable', password, code: c }).then(onDone, () => undefined);
   };
 
   return (
     <form className="acc-form acc-form--narrow" onSubmit={submit} noValidate aria-label="Turn off two-factor authentication">
-      <p className="muted">To turn it off, confirm with your password and a current code.</p>
+      <p className="muted">
+        To turn it off, confirm with your password <strong>or</strong> a current code from your authenticator app.
+      </p>
+      <UsernameHint username={username} />
       <PasswordField
         label="Password"
         name="password"
@@ -324,9 +364,10 @@ function TotpDisable({ onDone }: { onDone: () => void }) {
         className="acc-code-field"
         value={code}
         onChange={e => setCode(e.target.value)}
+        help="Lost your authenticator? The password alone is enough."
         error={field.code}
       />
-      {form && !codeRefused && !passwordRefused && <Flash kind="failure">{form}</Flash>}
+      {form && !refusedAt && <Flash kind="failure">{form}</Flash>}
       <div className="acc-actions acc-actions--start">
         <Button type="submit" variant="red" icon={licon.X} disabled={change.isPending}>
           {change.isPending ? 'Turning off…' : 'Turn off two-factor authentication'}

@@ -25,13 +25,32 @@
   outline: none;
 }
 
-/* Header layout: keep every item on one line, let the title shrink last. */
+/*
+ * Header layout: every item on one line. Widths (see the media queries at the end):
+ *   ≥ 1440 px  full nav, search up to 14rem, user name up to 14rem;
+ *   1180–1439  tighter nav links, shorter user name;
+ *   ≤ 1179     the nav moves into the hamburger panel (the kit does this only at ≤ 900 px,
+ *              where 7 links, the search and the user menu no longer fit);
+ *   ≤ 480      the search moves into the panel too and the user menu shows its icon only.
+ * The search pill never shrinks below a usable width, and the title never shrinks.
+ */
 .site-header {
   gap: clamp(0.4rem, 1.5vw, 1rem);
 }
 
-.site-title {
+.site-title,
+.site-jobs {
   flex-shrink: 0;
+}
+
+.site-search {
+  flex: 0 1 auto;
+  min-width: 9rem;
+}
+
+.site-search input {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* The kit's generic input[type=search] rule would draw a second box inside the pill. */
@@ -183,11 +202,16 @@
  * User menu
  * ------------------------------------------------------------------------ */
 
+.user-menu {
+  flex-shrink: 0;
+}
+
 .user-menu > button {
   max-width: 14rem;
 }
 
 .user-menu__name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -328,18 +352,79 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Phones
+ * Narrower screens
  * ------------------------------------------------------------------------ */
 
-@media (max-width: 900px) {
-  .topnav {
-    max-height: calc(100dvh - var(--site-header-height));
-    overflow-y: auto;
-    z-index: 150;
+/* Laptops: the full nav still fits with tighter links and a shorter user name. */
+@media (min-width: 1180px) and (max-width: 1439.98px) {
+  .site-header {
+    gap: 0.75rem;
   }
 
   .topnav a {
+    padding: 0 0.6rem;
+  }
+
+  .user-menu > button {
+    max-width: 9rem;
+  }
+}
+
+/*
+ * Below 1180 px the nav becomes the hamburger panel (the kit's ≤ 900 px rules, repeated for the
+ * wider range): a column of links under the header.
+ */
+@media (max-width: 1179.98px) {
+  .menu-toggle {
+    display: block;
+    flex-shrink: 0;
+  }
+
+  .topnav {
+    display: none;
+    position: absolute;
+    top: var(--site-header-height);
+    left: 0;
+    right: 0;
+    height: auto;
+    max-height: calc(100dvh - var(--site-header-height));
+    overflow-y: auto;
+    z-index: 150;
+    flex-direction: column;
+    background: var(--c-bg-popup);
+    border-bottom: 1px solid var(--c-border);
+    box-shadow: var(--shadow-box);
+  }
+
+  .topnav.open {
+    display: flex;
+  }
+
+  .topnav a {
+    padding: 0.9rem 1.2rem;
+    border-bottom: 0;
+    border-left: 3px solid transparent;
     font-size: 1rem;
+  }
+
+  .topnav a.active {
+    border-left-color: var(--c-accent);
+  }
+}
+
+/* Tablets and small laptops: the panel is a drop-down under the toggle, not a full-width sheet. */
+@media (min-width: 481px) and (max-width: 1179.98px) {
+  .topnav {
+    right: auto;
+    width: 17rem;
+    border-right: 1px solid var(--c-border);
+    border-bottom-right-radius: var(--box-radius);
+  }
+}
+
+@media (max-width: 900px) {
+  .user-menu > button {
+    max-width: 10rem;
   }
 }
 

@@ -23,6 +23,7 @@ import {
   type BroadcastMonthsRequest,
   type ChangePasswordRequest,
   type CreateInviteRequest,
+  type EpochMs,
   type Id,
   type ImportJobsResponse,
   type ImportResponse,
@@ -178,14 +179,32 @@ export function useChangePassword() {
   });
 }
 
-/** `POST /api/me/totp/setup`: a pending secret with its QR code. */
+/**
+ * Body of `POST /api/me/totp/setup`: the current password, so a session alone (a stolen cookie)
+ * cannot put somebody else's authenticator on the account. The auth module's contract calls it
+ * `TotpSetupRequest`; this is the same shape until that type is on main.
+ */
+export interface TotpSetupBody {
+  password: string;
+}
+
+/** `TotpSetupResponse` plus the optional fields newer servers add (a PNG QR code, the expiry). */
+export type TotpSetupResult = TotpSetupResponse & { qrDataUrl?: string; expiresAt?: EpochMs };
+
+/** `POST /api/me/totp/setup` with the current password: a pending secret with its QR code. */
 export function useTotpSetup() {
   return useMutation({
-    mutationFn: () => api.post<TotpSetupResponse>(API_ROUTES.me.totpSetup),
+    mutationFn: (body: TotpSetupBody) => api.post<TotpSetupResult>(API_ROUTES.me.totpSetup, body),
   });
 }
 
-/** `POST /api/me/totp/enable` or `/disable`, then refetch the session (`totpEnabled`). */
+/**
+ * `POST /api/me/totp/enable` or `/disable`, then refetch the session (`totpEnabled`). Disabling
+ * needs the password or a current code (an empty string for the one not used).
+ *
+ * The cached `totpEnabled` flips before the refetch, which swaps the form that called this for
+ * the other one: callers use `mutateAsync` (per-call callbacks of an unmounted form never run).
+ */
 export function useTotpChange() {
   const qc = useQueryClient();
   return useMutation({
@@ -248,11 +267,10 @@ export function useUpdateAdminSettings() {
       qc.setQueryData<SessionInfo>(queryKeys.session, s =>
         s ? { ...s, signupMode: settings.signupMode, anonymousBrowsing: settings.anonymousBrowsing } : s,
       );
-      return Promise.all([
-        qc.invalidateQueries({ queryKey: queryKeys.session }),
-        // Token validity is part of the status panel.
-        qc.invalidateQueries({ queryKey: accountKeys.adminStatus }),
-      ]);
+      // Token validity is part of the status panel. Not awaited: the status probes Lichess and
+      // Chess.com, which can take seconds, and the save is done already.
+      void qc.invalidateQueries({ queryKey: accountKeys.adminStatus });
+      return qc.invalidateQueries({ queryKey: queryKeys.session });
     },
   });
 }

@@ -35,6 +35,12 @@ export interface FakeRequest {
 
 type Handler = (req: FakeRequest) => unknown;
 
+/**
+ * Resolves to `value` after `ms` (a slow server answer). Real browsers see network latency between
+ * a cache update and the refetch that follows it; without it jsdom tests can miss lost callbacks.
+ */
+export const later = <T,>(ms: number, value: T): Promise<T> => new Promise(resolve => setTimeout(() => resolve(value), ms));
+
 /** JSON response. */
 export const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
