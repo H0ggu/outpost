@@ -118,7 +118,7 @@ export function OpponentPicker({
         value={q}
         onChange={setQ}
         label="Find an opponent"
-        placeholder="Search profiles, Lichess, Chess.com, reference players"
+        placeholder="Profile, username, player name or FIDE id"
         busy={search.isFetching && term.length >= 2}
       />
       {error !== null && <ErrorBox error={error} title="Could not add the opponent" />}

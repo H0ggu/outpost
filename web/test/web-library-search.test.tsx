@@ -159,6 +159,17 @@ describe('new-profile links', () => {
     ]);
   });
 
+  it('keeps FIDE names paired with their ids when some have none', () => {
+    const href = newProfileHref([
+      { kind: 'fide', key: '111' },
+      { kind: 'fide', key: '222', label: 'Second, Player' },
+    ]);
+    expect(parseNewProfileQuery(new URL(href, 'http://x').searchParams).sources).toEqual([
+      { kind: 'fide', key: '111', label: undefined },
+      { kind: 'fide', key: '222', label: 'Second, Player' },
+    ]);
+  });
+
   it('drops invalid and duplicate entries', () => {
     const parsed = parseNewProfileQuery(new URLSearchParams('lichess=a%20b&lichess=Hik&lichess=hik&fide=x1&db=0&player=Z&db=3'));
     expect(parsed.sources).toEqual([{ kind: 'lichess', key: 'Hik' }]);

@@ -22,7 +22,8 @@ export function newProfileHref(sources: readonly PickedSource[], name?: string):
       q.append('db', String(s.databaseId));
       q.append('player', s.key);
     } else q.append(s.kind, s.key);
-    if (s.kind === 'fide' && s.label) q.append('fideName', s.label);
+    // one fideName per fide (empty when unnamed), so they pair up by position
+    if (s.kind === 'fide') q.append('fideName', s.label ?? '');
   }
   if (name) q.set('name', name);
   return withQuery(paths.newProfile, q);
