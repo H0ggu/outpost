@@ -26,7 +26,7 @@ PIECE_SETS=(cburnett merida chessnut fantasy spatial celtic kiwen-suwi firi rhos
 BOARDS_PNG=(brown blue green purple ic)
 BOARDS_JPG=(wood4 maple olive grey blue3)
 SOUND_SETS=(sfx piano nes)
-SOUND_FILES=(Move Capture Check GenericNotify)
+SOUND_FILES=(Move Capture Check Checkmate GenericNotify) # Checkmate is an upstream symlink to Check; sound.ts preloads it
 FONTS=(lichess lichess-chess noto-sans-latin noto-sans-latin-ext roboto-latin roboto-latin-ext)
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

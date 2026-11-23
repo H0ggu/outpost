@@ -528,7 +528,7 @@ export interface CurrentRating {
 export interface SourceSummary {
   id: Id;
   kind: SourceKind;
-  /** Lowercase username, FIDE id, or `dbId:playerName`. */
+  /** Lowercase username, FIDE id, or `<databaseId>:<playerKey(name)>` for pgn (server `pgnSourceKey`). */
   key: string;
   displayName: string;
   /** Link to the account on its site (null for pgn sources). */
@@ -547,14 +547,18 @@ export interface SourceSummary {
   sync: SourceSyncStatus;
 }
 
-/** A source to attach to a profile (create / add). */
+/**
+ * A source to attach to a profile (create / add). `key` is what the user picked, never a stored key:
+ * - `lichess` / `chesscom`: the username (any case; stored lowercase);
+ * - `fide`: the FIDE id;
+ * - `pgn`: the player's name exactly as written in the PGN's White/Black tag, with `databaseId`
+ *   (required). The server stores `sources.key = pgnSourceKey(databaseId, key)`
+ *   (server/src/chess/store.ts, the only builder of pgn keys) and `display_name = key`.
+ */
 export interface NewSourceInput {
   kind: SourceKind;
-  /** Username (lichess/chesscom), FIDE id (fide), or player name (pgn, together with `databaseId`). */
   key: string;
-  /** For `pgn`: the player's name as written in the PGN. Defaults to `key`. */
-  playerName?: string;
-  /** For `pgn`: which database. */
+  /** For `pgn` only (required there): which database. */
   databaseId?: Id;
 }
 
@@ -1099,17 +1103,28 @@ export interface ExplorerPlayerResponse {
  */
 export type ExplorerPlayerSpec = string;
 
-/** Query of the explorer endpoints, as lila sends it (PLAN §6). */
+/**
+ * Query of the explorer endpoints, as lila sends it (PLAN §6).
+ *
+ * For Outpost data (player explorer, `/api/explorer/games`) lila's own settings — `speeds`, `modes`,
+ * `since`, `until` — are ANDed with the Outpost filters from the `/f/<segment>/` path. Turn them into
+ * conditions with `explorerQueryRestrictions` (filters.ts) only; never filter on the raw values:
+ * lila always sends `speeds=<selected>` and its speeds have no `unknown`, so a literal match would hide
+ * every PGN and reference game. Rules: `ultraBullet` counts as bullet; a speed set covering every
+ * time class (lila's default omits ultraBullet) or no speeds means no time-class restriction, which
+ * keeps `unknown`; `modes=rated,casual` (or none) means no rated restriction; months are UTC and
+ * inclusive.
+ */
 export interface ExplorerQuery {
   variant?: 'standard';
   fen?: Fen;
   /** UCI csv from `fen`. */
   play?: string;
-  /** Lila's speeds csv: ultraBullet,bullet,blitz,rapid,classical,correspondence. */
+  /** Lila's speeds csv: ultraBullet,bullet,blitz,rapid,classical,correspondence (see above). */
   speeds?: string;
-  /** `rated,casual`. */
+  /** Lila's modes csv: `rated`, `casual` (see above). */
   modes?: string;
-  /** `YYYY-MM` or `YYYY`. */
+  /** `YYYY-MM` (lichess, player) or `YYYY` (masters), inclusive. */
   since?: string;
   until?: string;
   moves?: number;
@@ -1124,9 +1139,14 @@ export interface ExplorerPlayerQuery extends ExplorerQuery {
   color: Color;
 }
 
-/** `GET /api/explorer/games` query: games that reach a position (`fen` or `play` from the start). */
+/**
+ * `GET /api/explorer/games` query: games that reach a position (`fen` or `play` from the start).
+ * Takes the filters as a normal query, plus lila's `speeds`/`modes`/`since`/`until` with the same
+ * meaning as in the player explorer (`explorerQueryRestrictions`), so the list matches its counts.
+ */
 export type ExplorerGamesQuery = ProfileFilters &
-  PageQuery & {
+  PageQuery &
+  Pick<ExplorerQuery, 'speeds' | 'modes' | 'since' | 'until'> & {
     player: ExplorerPlayerSpec;
     fen?: Fen;
     play?: string;
@@ -1649,9 +1669,12 @@ export const API_ROUTES = {
   // Games, explorer and proxies
   game: (id: Id | string) => `/api/games/${seg(id)}`,
   explorer: {
-    /** Base handed to lila as `explorer.endpoint` (it appends `masters`, `lichess`, `player`). */
+    /**
+     * Path of the explorer base. Relative: lila needs the absolute URL from `explorerEndpoint`
+     * as `explorer.endpoint` (it resolves `new URL('./masters' | './lichess' | './player', endpoint)`).
+     */
     base: '/api/explorer/',
-    /** Base with Outpost filters in the path: `/api/explorer/f/<encoded>/` (see `encodeFiltersSegment`). */
+    /** Base path with Outpost filters: `/api/explorer/f/<encoded>/` (see `encodeFiltersSegment`, `explorerEndpoint`). */
     filteredBase: (encodedFilters: string) => `/api/explorer/f/${seg(encodedFilters)}/`,
     masters: '/api/explorer/masters',
     mastersPgn: (id: string) => `/api/explorer/masters/pgn/${seg(id)}`,
@@ -1696,6 +1719,17 @@ export const API_ROUTES = {
   prepSet: (id: Id | string) => `/api/prep/${seg(id)}`,
   prepReport: (id: Id | string) => `/api/prep/${seg(id)}/report`,
 } as const;
+
+/**
+ * Absolute `explorer.endpoint` for lila (PLAN §8.3): `${origin}/api/explorer/`, or with Outpost
+ * filters `${origin}/api/explorer/f/<segment>/` (`encodeFiltersSegment`). Lila resolves
+ * `new URL('./<db>', endpoint)`, which throws on a relative base and would drop a query string.
+ */
+export const explorerEndpoint = (origin: string, filtersSegment?: string): string =>
+  new URL(
+    filtersSegment === undefined ? API_ROUTES.explorer.base : API_ROUTES.explorer.filteredBase(filtersSegment),
+    origin,
+  ).href;
 
 /**
  * Response of every state-changing endpoint (documentation; the server must match it).

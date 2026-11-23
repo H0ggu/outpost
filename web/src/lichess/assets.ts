@@ -94,8 +94,8 @@ export function storedTheme(): ThemeName | null {
   }
 }
 
-/** Sounds vendored for each free set. */
-export const SOUND_NAMES = ['Move', 'Capture', 'Check', 'GenericNotify'] as const;
+/** Sounds vendored for each free set (Checkmate is a copy of Check, as upstream; lila preloads it). */
+export const SOUND_NAMES = ['Move', 'Capture', 'Check', 'Checkmate', 'GenericNotify'] as const;
 /** Sound name. */
 export type SoundName = (typeof SOUND_NAMES)[number];
 

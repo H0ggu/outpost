@@ -14,6 +14,9 @@ import type { FastifyPluginAsync } from 'fastify';
  *   - PUT/DELETE /api/profiles/:slug/bookmark (→ BookmarkResponse)
  *   - GET /api/bookmarks (ProfileListResponse)
  *
+ * Sources (NewSourceInput): for `pgn`, `key` is the player's name as written in the PGN and
+ * `databaseId` is required; store `sources.key = pgnSourceKey(databaseId, key)` (src/chess/store.ts,
+ * never build it by hand) and `display_name = key`.
  * Enqueue syncs with enqueueSync / read their state with sourceSyncStatus (src/jobs/; never write
  * to `jobs` directly). Attaching a pgn/fide source to stored games: rebuildPlayerGames
  * (src/chess/store.ts) or an enqueued 'rebuild' job. Record views in profile_views.

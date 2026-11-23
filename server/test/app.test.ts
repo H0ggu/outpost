@@ -67,6 +67,27 @@ describe('app (no web build)', () => {
     expect(none.statusCode).toBe(403);
   });
 
+  it('accepts only loopback hosts as same-host origins without PUBLIC_ORIGIN (no DNS rebinding)', async () => {
+    const post = (host: string, origin: string) =>
+      t.app.inject({ method: 'POST', url: '/api/logout', headers: { 'x-outpost': '1', host, origin } });
+    for (const [host, origin] of [
+      ['localhost:8080', 'http://localhost:8080'],
+      ['127.0.0.1:5173', 'http://127.0.0.1:5173'],
+      ['[::1]:8080', 'http://[::1]:8080'],
+    ] as const) {
+      expect((await post(host, origin)).statusCode, host).toBe(404); // past the CSRF check
+    }
+    for (const [host, origin] of [
+      ['rebind.example:8080', 'http://rebind.example:8080'],
+      ['192.168.1.10:5173', 'http://192.168.1.10:5173'],
+      ['localhost:8080', 'http://localhost:5173'],
+    ] as const) {
+      const res = await post(host, origin);
+      expect(res.statusCode, host).toBe(403);
+      expect(res.json().error.code).toBe('csrf');
+    }
+  });
+
   it('lets a same-host POST with the header through the CSRF check (dev/test)', async () => {
     const res = await t.app.inject({ method: 'POST', url: '/api/logout', headers: mutationHeaders });
     expect(res.statusCode).toBe(404); // not implemented yet, but past the CSRF check

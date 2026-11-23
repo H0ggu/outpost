@@ -7,7 +7,7 @@
  *   2. security headers + CSRF/Origin check (global hooks);
  *   3. cookie, multipart, rate-limit (opt-in per route), compression;
  *   4. /api/health and the route plugins in src/routes/;
- *   5. the built web app (web/dist) with SPA fallback, when it exists.
+ *   5. the built web app (web/dist) with SPA fallback, when it exists (never in development).
  *
  * Module agents only edit their own src/routes/<area>.ts and module folder; this file should not
  * need changes. Background work starts from a plugin via app.addHook('onReady') / ('onClose').
@@ -127,12 +127,16 @@ export function isSpaPath(path: string): boolean {
 
 /**
  * Serves web/dist when it has been built: hashed /assets/* immutable, HTML no-cache,
- * /studio → studio.html, other client routes → index.html. Without a build (dev, tests),
- * unknown paths get a JSON 404 and the Vite dev server serves the UI.
+ * /studio → studio.html, other client routes → index.html. Without a build, and always in
+ * development (`config.webDistDir` is null), unknown paths get a JSON 404 and the Vite dev server
+ * serves the UI.
  */
 async function registerWebUi(app: FastifyInstance, config: Config): Promise<void> {
   const dist = config.webDistDir;
-  const hasDist = existsSync(join(dist, 'index.html'));
+  const hasDist = dist !== null && existsSync(join(dist, 'index.html'));
+  if (dist === null) {
+    app.log.info('development: web/dist is not served here; open the Vite dev server (npm run dev, http://localhost:5173)');
+  }
 
   if (hasDist) {
     await app.register(fastifyStatic, {

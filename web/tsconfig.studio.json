@@ -1,12 +1,23 @@
 {
   "extends": "../tsconfig.base.json",
-  "//": "Studio entry (src/studio) only. Owned by the Studio module, which may relax options here for the vendored lila code its imports pull in (web/vendor/lila is type-checked through those imports). The SPA program (tsconfig.json) excludes src/studio.",
+  "//": [
+    "Studio entry (src/studio) only; owned by the Studio module. Vendored lila code is never type-checked (PLAN §1):",
+    "src/studio imports it as `lila/<package>/<module>` (e.g. `lila/analyse/start`, `lila/site/asset`). Here `paths` maps",
+    "that to a hand-written declaration, src/studio/lila-types/<package>/<module>.d.ts, so tsc never opens a vendored .ts file;",
+    "Vite (vite.config.ts) maps the same specifier to web/vendor/lila/<package>/src/<module>. Declare only what Studio uses.",
+    "lila's ambient types (vendor/lila/@types/lichess: declaration files only, skipped by skipLibCheck) are included for",
+    "`site`, `i18n`, `$html` and friends. Never import web/vendor/lila by relative path: `npm run typecheck` fails if any",
+    "vendored source file enters this program (typecheck:studio-boundary in web/package.json)."
+  ],
   "compilerOptions": {
     "lib": ["es2024", "dom", "dom.iterable"],
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": {
+      "lila/*": ["./src/studio/lila-types/*"]
+    }
   },
-  "include": ["src/studio", "src/vite-env.d.ts"],
+  "include": ["src/studio", "src/vite-env.d.ts", "vendor/lila/@types/lichess/index.d.ts"],
   "exclude": ["dist", "node_modules"]
 }

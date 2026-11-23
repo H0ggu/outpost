@@ -43,7 +43,7 @@ This file is the source of truth for design decisions. The research behind it is
 | Engine | `@lichess-org/stockfish-web`, driven by lila's ceval. It needs cross-origin isolation, which we set on every response. The lila fallback engine covers browsers that aren't isolated. |
 | Charts | d3 modules (scale, shape, array, geo) with React-rendered SVG, plus `world-atlas` and `topojson-client` for the map |
 | Tests | **Vitest 5** |
-| Typecheck | TypeScript 7 (`tsc --noEmit`). Vendored lila code is excluded from our own typecheck. |
+| Typecheck | TypeScript 7 (`tsc --noEmit`). Vendored lila code is excluded from our own typecheck: `src/studio` imports it as `lila/<package>/<module>`, which Vite maps to `web/vendor/lila/<package>/src/<module>` and `web/tsconfig.studio.json` (`paths`) maps to hand-written declarations in `src/studio/lila-types/`. Only lila's ambient `@types/lichess` declarations are included. `npm run typecheck` fails if a vendored source file enters any program. |
 | Package manager | npm workspaces: `shared`, `server`, `web` |
 
 ## 2. Repository layout
@@ -115,7 +115,7 @@ Migration `001_init.sql` creates the following. Later modules add their own migr
 - **sessions** `(id_hash PK, user_id, created_at, expires_at, last_seen_at, ip, user_agent)`
 - **invites** `(code PK, created_by, created_at, expires_at, used_by, used_at)`
 - **instance_settings** `(key PK, value)`
-- **sources** `(id, kind 'lichess'|'chesscom'|'fide'|'pgn', key, display_name, site_user_id, title, country, profile_json, sync_state_json, last_synced_at, last_sync_error, created_at, UNIQUE(kind,key))`. One row per sync identity. `key` is the lowercase username, the FIDE id, or `dbId:playerName`.
+- **sources** `(id, kind 'lichess'|'chesscom'|'fide'|'pgn', key, display_name, site_user_id, title, country, profile_json, sync_state_json, last_synced_at, last_sync_error, created_at, UNIQUE(kind,key))`. One row per sync identity. `key` is the lowercase username, the FIDE id, or `<databaseId>:<playerKey(name)>` (built only by `pgnSourceKey`).
 - **profiles** `(id, slug UNIQUE, display_name, owner_user_id, visibility 'private'|'public', auto_refresh, created_at, updated_at, views)`
 - **profile_sources** `(profile_id, source_id, hidden, PRIMARY KEY(profile_id, source_id))`
 - **bookmarks** `(user_id, profile_id, created_at, PK(user_id, profile_id))`
@@ -170,7 +170,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 
 **Auth and CSRF:**
 - Session cookie `outpost_session`: HttpOnly, Secure when `PUBLIC_ORIGIN` is https, SameSite=Lax.
-- Every non-GET request must carry the header `X-Outpost: 1` **and** have an `Origin` equal to `PUBLIC_ORIGIN` (or the same host in dev).
+- Every non-GET request must carry the header `X-Outpost: 1` **and** have an `Origin` equal to `PUBLIC_ORIGIN`. Outside production, the request's own host is also accepted when it is a loopback name (`localhost`, `127.0.0.1`, `[::1]`); to use the dev server from another device, set `PUBLIC_ORIGIN` to the address you open.
 
 **Errors:** `{error:{code, message}}` with the matching HTTP status.
 
@@ -218,7 +218,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 |---|---|---|
 | GET | `/api/search?q=` | `{profiles, lichess, chesscom, reference}` |
 | GET | `/api/profiles` | `?scope=mine\|public\|recent` |
-| POST | `/api/profiles` | `{displayName, slug?, sources:[{kind,key,playerName?,databaseId?}]}` |
+| POST | `/api/profiles` | `{displayName, slug?, sources:[{kind,key,databaseId?}]}`; for `pgn`, `key` is the player's name as written in the PGN and `databaseId` is required |
 | GET | `/api/profiles/:slug` | `ProfileHeader`: name, sources with sync status, visibility, owner?, bookmarked, totals, current ratings per source and time class, lastUpdated, queue info |
 | PATCH | `/api/profiles/:slug` | displayName, slug, visibility, autoRefresh, hidden source ids |
 | DELETE | `/api/profiles/:slug` | |
@@ -250,9 +250,9 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 | GET | `/api/games/:id` | `{game: GameDetail, pgn}` |
 | GET | `/api/explorer/masters`, `/api/explorer/masters/pgn/:id` | Proxy to `https://explorer.lichess.org` (cached 3 h; uses the local reference DB if `mastersSource` is set) |
 | GET | `/api/explorer/lichess` | Proxy with token, cached, at most 20 requests/min with a queue |
-| GET | `/api/explorer/player` | Lichess-compatible **NDJSON**, one final line. `player=<profile slug>` or `lichess:<user>` / `chesscom:<user>` / `db:<id>` / `ref:<fideId>`. Takes `color, speeds, modes, since, until, fen, play, recentGames, moves`, plus Outpost filters in a path segment: `/api/explorer/f/<base64url(filters)>/player` (lila builds `new URL('./player', endpoint)`, so the query would be lost). `recentGames[].id` is the Outpost game id prefixed `op` (e.g. `op123`). |
+| GET | `/api/explorer/player` | Lichess-compatible **NDJSON**, one final line. `player=<profile slug>` or `lichess:<user>` / `chesscom:<user>` / `db:<id>` / `ref:<fideId>`. Takes `color, speeds, modes, since, until, fen, play, recentGames, moves`, plus Outpost filters in a path segment: `/api/explorer/f/<base64url(filters)>/player` (lila builds `new URL('./player', endpoint)`, so the query would be lost). Lila's `speeds`/`modes`/`since`/`until` are ANDed with those filters through `explorerQueryRestrictions` (`shared/filters.ts`): `ultraBullet` counts as bullet, and a full speed set or `modes=rated,casual` means no restriction, so PGN and reference games (`unknown` time class, unrated) stay visible. `recentGames[].id` is the Outpost game id prefixed `op` (e.g. `op123`). |
 | GET | `/api/explorer/reference` | Same shape as masters, from the local reference DB |
-| GET | `/api/explorer/games` | `?player&fen\|play&…filters&page`: games that reach a position |
+| GET | `/api/explorer/games` | `?player&fen\|play&…filters&page`, plus lila's `speeds/modes/since/until` as in the player explorer: games that reach a position |
 | GET | `/api/tablebase/:variant` | Proxy to `tablebase.lichess.ovh` (cached). **No session required**: lila's tablebase request omits credentials. |
 | GET | `/api/cloud-eval` | Proxy to `lichess.org/api/cloud-eval` |
 | GET | `/assets/lifat/nnue/:name` | Downloads the NNUE file once from `tests.stockfishchess.org/api/nn/:name` into `DATA_DIR/nnue` and serves it from there. Name allow-list: `^nn-[0-9a-f]{12}\.nnue$`. |
@@ -313,14 +313,14 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 Follow `docs/research/lila-ui-extraction.md`, option A.
 1. **Vendor.** `scripts/vendor-lichess.sh` copies lila's `ui/{analyse,lib,keyboardMove,site/src,editor/src,@types/lichess}` at the pinned commit into `web/vendor/lila`. It also copies `COPYING.md` and the free assets (§0) into `web/public/lichess`. Use `cp -L`.
 2. **Build glue.**
-   - A Vite resolver plugin maps `lib`, `lib/*`, `keyboard-move` and `@/…` to the importing package's `src`.
+   - A Vite resolver plugin maps `lib`, `lib/*`, `keyboard-move` and `@/…` (lila's own imports) to the importing package's `src`. Our Studio code imports lila as `lila/<package>/<module>` (Vite alias; typed by declarations, see §1).
    - Translation XML is turned into `window.i18n` JS (English only).
    - Generate `gen/_wrap.scss`, then compile the three SCSS entry files with `sass`.
    - Runtime `$html`/`$trim` shims; `window.lichess = {}`.
    - Our own `site` shim reuses lila's asset, mousetrap and sound modules, and maps `loadEsm` to dynamic imports.
 3. **Mount.** `studio.html` mounts `makeStart(patch)(opts)` on `main.analyse`:
    - `socketSend` shim: `evalGet` goes to `/api/cloud-eval` and the answer comes back as `evalHit`; everything else is a no-op.
-   - `explorer.endpoint` is `${origin}/api/explorer/` (or `…/f/<filters>/`); `tablebaseEndpoint` is `/api/tablebase`.
+   - `explorer.endpoint` is the absolute `${origin}/api/explorer/` (or `…/f/<filters>/`), built with `explorerEndpoint(location.origin, segment?)` from `@outpost/shared/api` (lila resolves `new URL('./<db>', endpoint)`, which throws on a relative base); `tablebaseEndpoint` is `/api/tablebase`.
    - Patch the explorer "player" database so it can target an Outpost profile, and make game links open in Outpost.
    - Local full-game review POSTs to `/analysis/review` on lila's server, so disable it.
 4. **Outpost chrome around the board.**

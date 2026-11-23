@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
   await app.listen({ host: config.host, port: config.port });
-  if (!config.publicOrigin) app.log.warn('PUBLIC_ORIGIN is not set: only same-host requests pass the Origin check (dev mode)');
+  if (!config.publicOrigin) app.log.warn('PUBLIC_ORIGIN is not set: only same-host localhost requests pass the Origin check (dev mode); set it to use another address');
 }
 
 main().catch(e => {

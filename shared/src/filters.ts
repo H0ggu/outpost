@@ -9,10 +9,20 @@
  *   `/api/explorer/f/<segment>/player`, because lila builds `new URL('./player', endpoint)` and
  *   would drop a query string.
  * - `resolveDateRange` turns `period` presets or `from`/`to` into epoch-ms bounds.
+ * - `explorerQueryRestrictions` reads lila's own explorer settings (speeds, modes, since, until),
+ *   which the player explorer ANDs with these filters.
  */
 import { z } from 'zod';
-import { SLUG_RE } from './api.ts';
-import { OUTCOMES, TIME_CLASSES, UCI_RE, type Color, type Outcome, type TimeClass } from './chess.ts';
+import { SLUG_RE, type EpochMs, type ExplorerQuery } from './api.ts';
+import {
+  lichessSpeedToTimeClass,
+  OUTCOMES,
+  TIME_CLASSES,
+  UCI_RE,
+  type Color,
+  type Outcome,
+  type TimeClass,
+} from './chess.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -392,6 +402,74 @@ export const formatPlayerSpec = (p: PlayerSpec): string => {
     case 'ref':
       return `ref:${p.fideId}`;
   }
+};
+
+// ---------------------------------------------------------------------------
+// Lila's explorer settings (player explorer, /api/explorer/games)
+// ---------------------------------------------------------------------------
+
+/** What lila's `speeds`, `modes`, `since` and `until` restrict. Null means no restriction. */
+export interface ExplorerRestrictions {
+  /** Allowed time classes; null keeps every game, including `unknown` (PGN and reference games). */
+  timeClasses: TimeClass[] | null;
+  /** true: rated only; false: unrated only; null: both. */
+  rated: boolean | null;
+  /** Inclusive epoch-ms bounds on the game's end time (the column the date filters use). */
+  from: EpochMs | null;
+  to: EpochMs | null;
+}
+
+/** Time classes lila's speeds can select (every class except `unknown`). */
+const SPEED_TIME_CLASSES = TIME_CLASSES.filter(tc => tc !== 'unknown');
+
+const csvItems = (v: string | undefined): string[] =>
+  (v ?? '')
+    .split(',')
+    .map(x => x.trim())
+    .filter(x => x !== '');
+
+/** `YYYY` or `YYYY-MM` (UTC) → first ms of that period and first ms after it; null if malformed. */
+const monthRange = (v: string | undefined): { start: EpochMs; end: EpochMs } | null => {
+  const m = /^(\d{4})(?:-(\d{2}))?$/.exec(v?.trim() ?? '');
+  if (!m) return null;
+  const year = Number(m[1]);
+  if (m[2] === undefined) return { start: Date.UTC(year, 0, 1), end: Date.UTC(year + 1, 0, 1) };
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return null;
+  return { start: Date.UTC(year, month - 1, 1), end: Date.UTC(year, month, 1) };
+};
+
+/**
+ * Lila's explorer settings → restrictions that the player explorer and `/api/explorer/games` AND
+ * with the Outpost filters (PLAN §6). Never compare the raw values with `time_class`/`rated`:
+ * - `speeds`: `ultraBullet` counts as bullet. A set that covers bullet, blitz, rapid, classical
+ *   and correspondence (lila's default leaves out ultraBullet), or no speeds, is no restriction,
+ *   so `unknown` games stay. Otherwise only the selected classes match (no `unknown`).
+ * - `modes`: `rated` alone → rated only; `casual` alone → unrated only; both or none → no restriction.
+ * - `since`/`until`: `YYYY-MM` or `YYYY`, UTC, inclusive of the whole month or year.
+ * Unknown speeds or modes and malformed months are ignored: lila's values come from user settings.
+ */
+export const explorerQueryRestrictions = (
+  q: Pick<ExplorerQuery, 'speeds' | 'modes' | 'since' | 'until'>,
+): ExplorerRestrictions => {
+  const classes = new Set<TimeClass>();
+  for (const speed of csvItems(q.speeds)) {
+    const tc = lichessSpeedToTimeClass(speed);
+    if (tc !== 'unknown') classes.add(tc);
+  }
+  const allSpeeds = classes.size === 0 || SPEED_TIME_CLASSES.every(tc => classes.has(tc));
+
+  const modes = new Set(csvItems(q.modes).filter(m => m === 'rated' || m === 'casual'));
+  const rated = modes.size === 1 ? modes.has('rated') : null;
+
+  const since = monthRange(q.since);
+  const until = monthRange(q.until);
+  return {
+    timeClasses: allSpeeds ? null : SPEED_TIME_CLASSES.filter(tc => classes.has(tc)),
+    rated,
+    from: since ? since.start : null,
+    to: until ? until.end - 1 : null,
+  };
 };
 
 // ---------------------------------------------------------------------------

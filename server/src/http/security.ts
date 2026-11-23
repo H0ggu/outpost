@@ -6,8 +6,10 @@
  * and the referrer policy. A route may override a header by setting it itself.
  *
  * Every request with a non-safe method must send `X-Outpost: 1` and an `Origin` equal to
- * PUBLIC_ORIGIN (outside production, the request's own host is accepted too, which covers the
- * Vite dev proxy and `app.inject` tests).
+ * PUBLIC_ORIGIN. Outside production the request's own host is accepted too, but only when it is a
+ * loopback name (localhost, 127.0.0.0/8, [::1]): that covers the Vite dev proxy and `app.inject`
+ * tests without letting a DNS-rebinding page (Origin == Host == attacker.example) through. To use
+ * the dev server from another device, set PUBLIC_ORIGIN to that address.
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { CSRF_HEADER, CSRF_HEADER_VALUE } from '@outpost/shared/api';
@@ -58,7 +60,8 @@ export function isAllowedOrigin(req: FastifyRequest, config: Config): boolean {
   }
   if (config.publicOrigin !== null && url.origin === config.publicOrigin) return true;
   if (config.isProduction) return false;
-  // Dev/test: accept the request's own host (Vite proxy, app.inject), comparing default ports.
+  // Dev/test: accept the request's own loopback host (Vite proxy, app.inject), comparing default ports.
+  if (!isLoopbackHostname(url.hostname)) return false;
   let own: URL;
   try {
     own = new URL(`${req.protocol}://${req.host}`);
@@ -69,6 +72,13 @@ export function isAllowedOrigin(req: FastifyRequest, config: Config): boolean {
 }
 
 const effectivePort = (u: URL): string => u.port || (u.protocol === 'https:' ? '443' : '80');
+
+/** `localhost`, `*.localhost`, 127.0.0.0/8 or `[::1]` (a WHATWG URL hostname). */
+export const isLoopbackHostname = (hostname: string): boolean =>
+  hostname === 'localhost' ||
+  hostname.endsWith('.localhost') ||
+  hostname === '[::1]' ||
+  /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
 
 /** Rejects non-safe requests without `X-Outpost: 1` or with a foreign Origin (403 `csrf`). */
 export function registerCsrfCheck(app: FastifyInstance, config: Config): void {

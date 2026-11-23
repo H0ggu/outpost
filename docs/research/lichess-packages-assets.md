@@ -208,7 +208,7 @@ Lila now plays `.mp3` only: `${set}/${Name}.mp3` (`ui/site/src/sound.ts`). `.ogg
 - `Confirmation` → `sfx/GenericNotify`
 - In sfx, piano and nes, `Error.mp3` and `OutOfBound.mp3` → `../standard/…`, which is non-free. Skip those two.
 
-**Suggested files:** `{sfx,piano,nes}/{Move,Capture,Check,GenericNotify}.mp3`.
+**Suggested files:** `{sfx,piano,nes}/{Move,Capture,Check,Checkmate,GenericNotify}.mp3`. `Checkmate` is a symlink to `Check` in each of these sets, and lila's `sound.ts` preloads it, so copy it with `cp -L`. Leave out `Error`: it links to `standard`.
 
 If the owner wants the classic `standard` sounds, keep them local and gitignored; do not commit them.
 
@@ -323,7 +323,7 @@ import type { components, paths } from '@lichess-org/types';
 |---|---|---|
 | `public/piece/{cburnett,merida,chessnut,fantasy,spatial,celtic,kiwen-suwi,firi,rhosgfx,mpchess,pixel,letter}/*.svg` | `web/public/lichess/piece/<set>/` | per the piece-set table |
 | `public/images/board/{brown,blue,green,purple,ic}.png`, `{wood4,maple,olive,grey,blue3}.jpg`, plus each `.thumbnail.*` | `web/public/lichess/board/` | AGPLv3+ |
-| `public/sound/{sfx,piano,nes}/{Move,Capture,Check,GenericNotify}.mp3` | `web/public/lichess/sound/<set>/` | AGPLv3+ (Enigmahack) |
+| `public/sound/{sfx,piano,nes}/{Move,Capture,Check,Checkmate,GenericNotify}.mp3` | `web/public/lichess/sound/<set>/` | AGPLv3+ (Enigmahack) |
 | `public/font/{lichess,lichess-chess,noto-sans-latin,noto-sans-latin-ext,roboto-latin,roboto-latin-ext}.woff2` | `web/public/lichess/font/` | see the font table |
 | `ui/lib/src/licon.ts` | `web/src/lichess/licon.ts` | AGPLv3+ |
 | Tokens hand-ported from `ui/lib/css/theme/_theme.default.scss`, `board/_boards.scss`, `explorer/_explorer.scss`, `component/_pgn-viewer.scss` | `web/src/styles/lichess-theme.css` | AGPLv3+ |

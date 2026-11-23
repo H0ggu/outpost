@@ -22,10 +22,29 @@ Read `docs/PLAN.md` first; this page is the "how" for code that lands in the sca
 | explorer | `routes/explorer.ts`, `routes/assets.ts`, `explorer/*` | — | 400–499 |
 | profiles | `routes/{search,profiles,databases,files,prep}.ts`, `profiles/*` (+ helper folders of the same names) | — | 500–599, 700–799 |
 | reference | `routes/{reference,broadcasts}.ts`, `reference/*`, `broadcasts/*` | — | 600–699 |
-| studio | — | `src/studio/*`, `studio.html`, `tsconfig.studio.json`, `vite.config.ts` (Studio glue), `web/vendor` via `scripts/lila-patches/` | — |
+| studio | — | `src/studio/*` (incl. `src/studio/lila-types/`), `studio.html`, `tsconfig.studio.json`, `vite.config.ts` (Studio glue), `web/vendor` via `scripts/lila-patches/` | — |
+| web-profile | — | `src/app/pages/profile/**` (tab pages, `ProfileLayout`, the filters bar, profile-only hooks, components and CSS) | — |
+| web-other | — | every other file under `src/app/pages/` (incl. `admin/`), plus `src/app/Layout.tsx` (site chrome) | — |
 
-Tests follow the same ownership: name server test files after your module (`server/test/<module>-*.test.ts`)
-and only edit your own. The scaffold's own tests (`app`, `config`, `db`, `jobs-queue`, `upstream`, `chess-store`,
+Server paths are under `server/src/`, web paths under `web/`.
+
+**Shared web kit (frozen for both web modules and Studio).** `src/app/{main.tsx,router.tsx,paths.ts,prefs.ts,RouteError.tsx}`,
+`src/app/api/*`, `src/app/components/*`, `src/lichess/*` and `src/styles/*` already cover every §9 route,
+path and shared hook. Don't edit them; put new code next to your pages instead:
+
+- components: `src/app/pages/profile/components/*` (web-profile) or `src/app/pages/components/*` (web-other);
+- hooks: `src/app/pages/profile/hooks.ts` or `src/app/pages/hooks.ts`, with query keys built from the
+  existing `queryKeys` prefixes (e.g. `[...queryKeys.profile(slug), 'explorer-games', …]`) rather than
+  new entries in `queryKeys`;
+- CSS: a `.css` file next to the page that imports it, using the tokens and class names of
+  `src/styles/*`.
+
+If a frozen file is wrong or truly missing something, make the smallest additive change and list it in
+your hand-back report so it can be reconciled at merge. Promoting a page-local component to the kit
+happens at integration, not on a module branch.
+
+Tests follow the same ownership: name test files after your module (`server/test/<module>-*.test.ts`,
+`web/test/<module>-*.test.tsx`) and only edit your own. The scaffold's own tests (`app`, `config`, `db`, `jobs-queue`, `upstream`, `chess-store`,
 `filter-sql`, `access`) cover the cross-module API below; the owning module may extend them.
 
 ## Cross-module server API (use it, don't re-implement it)
@@ -45,8 +64,8 @@ optimise a body but not change a signature or its semantics without updating eve
 | Game lists | `GAME_ROW_SELECT` + `toGameRow`, `DB_GAME_ROW_COLUMNS` + `toDbGameRow` (`src/stats/gameRows.ts`) | stats |
 | Read a profile / database | `loadProfileForViewer(db, slug, req.user)`, `loadDatabaseForViewer` (`src/profiles/access.ts`) | profiles |
 | Reference players in search | `searchReferencePlayers` (`src/reference/index.ts`; returns `[]` until reference implements it) | reference |
-| web-profile | — | `src/app/pages/profile/*` (+ a filters bar under `src/app/pages/profile/`) | — |
-| web-other | — | every other file in `src/app/pages/` | — |
+| Lila explorer settings → conditions | `explorerQueryRestrictions(query)` (`@outpost/shared/filters`): ANDed with the filters; never match `speeds`/`modes` literally | shared |
+| pgn source keys | `pgnSourceKey(databaseId, name)` (`src/chess/store.ts`): the only builder of `sources.key` for `pgn`; `NewSourceInput.key` is the name as written in the PGN | jobs |
 
 ## Server (Fastify 5, Node type stripping)
 
@@ -87,7 +106,8 @@ optimise a body but not change a signature or its semantics without updating eve
 ## Web (React 19, React Router 8 data mode, TanStack Query 5)
 
 - Data: `api` from `src/app/api/client.ts` (adds `X-Outpost: 1`, throws `ApiError`) and hooks in
-  `src/app/api/hooks.ts`; add page-specific hooks next to your pages with keys under `queryKeys`.
+  `src/app/api/hooks.ts`; add page-specific hooks next to your pages, with keys under the existing
+  `queryKeys` prefixes (see "Shared web kit" above).
   Stats hooks take `filters` plus the endpoint's own params (`OpeningsParams`, …), which never reuse a
   filter key (`statsQuery` throws if they do); the rating chart narrows `filters.src`/`filters.tc`.
 - Links: `paths` in `src/app/paths.ts`. The Studio is a separate page — use `<a href>` or
@@ -99,6 +119,24 @@ optimise a body but not change a signature or its semantics without updating eve
   layouts must work at 360 px.
 - Cross-origin isolation (COEP `require-corp`): no external images, fonts, scripts or iframes — avatars
   are not shown, flags are emoji.
+
+## Studio (vendored lila)
+
+- **Vendored lila is never type-checked** (PLAN §1). Import it only as `lila/<package>/<module>`
+  (`lila/analyse/start`, `lila/site/asset`, `lila/lib/licon`, …). Vite resolves that to
+  `web/vendor/lila/<package>/src/<module>`; `tsconfig.studio.json` resolves it (`paths`) to a declaration
+  you write at `src/studio/lila-types/<package>/<module>.d.ts`. Declare only the exports Studio uses, as
+  loosely as is safe (e.g. `makeStart`, the parts of `AnalyseOpts` you pass). A missing declaration is a
+  TS2307 error, never a silent pull of vendored sources.
+- lila's globals (`site`, `i18n`, `$html`, `$trim`, cash `$`) are typed by
+  `vendor/lila/@types/lichess/index.d.ts`, which the Studio program includes (declaration files only).
+- Never import `web/vendor/lila` by relative path, and never relax `tsconfig.studio.json` to type-check
+  lila: `npm run typecheck` (`typecheck:studio-boundary`) fails when any vendored source file enters the
+  Studio program.
+- lila's own bare imports (`lib`, `lib/*`, `keyboard-move`, `@/…`) are a Vite resolver concern only
+  (PLAN §8.2); behaviour changes to vendored files go in `scripts/lila-patches/*.patch`.
+- `explorer.endpoint` must be absolute: `explorerEndpoint(location.origin, encodeFiltersSegment(filters))`
+  from `@outpost/shared/api`.
 
 ## Tests
 

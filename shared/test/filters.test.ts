@@ -5,6 +5,7 @@ import {
   base64UrlEncode,
   decodeFiltersSegment,
   encodeFiltersSegment,
+  explorerQueryRestrictions,
   filtersKey,
   filtersToQuery,
   formatPlayerSpec,
@@ -138,5 +139,45 @@ describe('player specs', () => {
   it('rejects malformed specs', () => {
     for (const c of ['', 'a', 'Upper', '-ab', 'db:0', 'db:x', 'ref:abc', 'fide:1', 'lichess:', 'lichess:a b'])
       expect(parsePlayerSpec(c)).toBeNull();
+  });
+});
+
+describe('explorerQueryRestrictions', () => {
+  const none = { timeClasses: null, rated: null, from: null, to: null };
+
+  it("treats lila's default and full speed sets as no restriction, keeping unknown (PGN/reference) games", () => {
+    expect(explorerQueryRestrictions({})).toEqual(none);
+    expect(explorerQueryRestrictions({ speeds: '', modes: '' })).toEqual(none);
+    // lila's default selection omits ultraBullet
+    expect(explorerQueryRestrictions({ speeds: 'bullet,blitz,rapid,classical,correspondence' })).toEqual(none);
+    expect(explorerQueryRestrictions({ speeds: 'ultraBullet,bullet,blitz,rapid,classical,correspondence' })).toEqual(none);
+    // ultraBullet alone covers bullet
+    expect(explorerQueryRestrictions({ speeds: 'ultraBullet,blitz,rapid,classical,correspondence' })).toEqual(none);
+    expect(explorerQueryRestrictions({ modes: 'rated,casual' })).toEqual(none);
+  });
+
+  it('restricts to the selected time classes, folding ultraBullet into bullet', () => {
+    expect(explorerQueryRestrictions({ speeds: 'blitz,rapid' }).timeClasses).toEqual(['blitz', 'rapid']);
+    expect(explorerQueryRestrictions({ speeds: 'ultraBullet' }).timeClasses).toEqual(['bullet']);
+    expect(explorerQueryRestrictions({ speeds: 'classical,bogus' }).timeClasses).toEqual(['classical']);
+  });
+
+  it('maps a single mode to rated / unrated', () => {
+    expect(explorerQueryRestrictions({ modes: 'rated' }).rated).toBe(true);
+    expect(explorerQueryRestrictions({ modes: 'casual' }).rated).toBe(false);
+    expect(explorerQueryRestrictions({ modes: 'casual,rated,casual' }).rated).toBeNull();
+  });
+
+  it('turns months and years into inclusive UTC bounds', () => {
+    expect(explorerQueryRestrictions({ since: '2024-02', until: '2024-02' })).toMatchObject({
+      from: Date.UTC(2024, 1, 1),
+      to: Date.UTC(2024, 2, 1) - 1,
+    });
+    expect(explorerQueryRestrictions({ since: '2023', until: '2023' })).toMatchObject({
+      from: Date.UTC(2023, 0, 1),
+      to: Date.UTC(2024, 0, 1) - 1,
+    });
+    expect(explorerQueryRestrictions({ until: '2024-12' }).to).toBe(Date.UTC(2025, 0, 1) - 1);
+    expect(explorerQueryRestrictions({ since: '2024-13', until: 'soon' })).toEqual(none);
   });
 });

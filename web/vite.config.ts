@@ -30,10 +30,13 @@ const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: {
+    alias: [
       // pgn-viewer's exports map ("./*" → "./dist/*.js") hides its stylesheet; alias the file directly.
-      'lpv-css': here('../node_modules/@lichess-org/pgn-viewer/dist/lichess-pgn-viewer.css'),
-    },
+      { find: 'lpv-css', replacement: here('../node_modules/@lichess-org/pgn-viewer/dist/lichess-pgn-viewer.css') },
+      // Studio imports vendored lila as `lila/<package>/<module>` → web/vendor/lila/<package>/src/<module>.
+      // tsc maps the same specifier to hand-written declarations instead (tsconfig.studio.json, PLAN §1).
+      { find: /^lila\/([^/]+)\/(.+)$/, replacement: `${here('./vendor/lila')}/$1/src/$2` },
+    ],
   },
   server: {
     port: 5173,
@@ -48,7 +51,8 @@ export default defineConfig({
     proxy,
   },
   build: {
-    sourcemap: true,
+    // No source maps in the image (~2.5 MB, served publicly). Debug build: `npm run build -w @outpost/web -- --sourcemap`.
+    sourcemap: false,
     chunkSizeWarningLimit: 1024,
     rolldownOptions: {
       input: {

@@ -1,6 +1,6 @@
 {
   "extends": "../tsconfig.base.json",
-  "//": "React SPA sources. src/studio has its own program (tsconfig.studio.json, owned by the Studio module): once it imports web/vendor/lila, tsc follows those imports, and `exclude` cannot stop that, so the SPA program must not include src/studio at all.",
+  "//": "React SPA sources. src/studio has its own program (tsconfig.studio.json, owned by the Studio module), which types vendored lila through hand-written declarations; the SPA program does not include src/studio or vendor at all.",
   "compilerOptions": {
     "lib": ["es2024", "dom", "dom.iterable"],
     "module": "esnext",

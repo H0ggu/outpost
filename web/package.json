@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.studio.json && tsc -p tsconfig.node.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.studio.json && tsc -p tsconfig.node.json && npm run -s typecheck:studio-boundary",
+    "typecheck:studio-boundary": "if tsc -p tsconfig.studio.json --listFilesOnly | grep /vendor/lila/ | grep -v /vendor/lila/@types/lichess/; then echo 'error: the files above are vendored lila sources pulled into tsconfig.studio.json. Import them as lila/<package>/<module> and declare what you use in src/studio/lila-types (docs/CONVENTIONS.md, Studio).' >&2; exit 1; fi"
   },
   "dependencies": {
     "@badrap/result": "0.3.1",

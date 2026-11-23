@@ -16,6 +16,8 @@ describe('config', () => {
     expect(c.dataDir).toBe(join(ROOT_DIR, 'data'));
     expect(c.dbPath).toBe(join(ROOT_DIR, 'data', 'outpost.db'));
     expect(c.openingsDir).toBe(join(ROOT_DIR, 'server', 'data', 'openings'));
+    // Vite serves the UI in development; a stale web/dist must not shadow it on :8080.
+    expect(c.webDistDir).toBeNull();
   });
 
   it('treats empty values as unset and normalises PUBLIC_ORIGIN', () => {
@@ -28,7 +30,9 @@ describe('config', () => {
 
   it('requires PUBLIC_ORIGIN in production', () => {
     expect(() => loadConfig({ NODE_ENV: 'production' })).toThrow(ConfigError);
-    expect(loadConfig({ NODE_ENV: 'production', PUBLIC_ORIGIN: 'http://10.0.0.2:8080' }).isProduction).toBe(true);
+    const prod = loadConfig({ NODE_ENV: 'production', PUBLIC_ORIGIN: 'http://10.0.0.2:8080' });
+    expect(prod.isProduction).toBe(true);
+    expect(prod.webDistDir).toBe(join(ROOT_DIR, 'web', 'dist'));
   });
 
   it('parses TRUSTED_PROXIES', () => {

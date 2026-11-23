@@ -36,13 +36,16 @@ cp .env.example .env          # optional in dev
 npm run dev                   # server on :8080 (node --watch) + Vite on :5173 (proxies /api)
 ```
 
-Open http://localhost:5173. Other scripts:
+Open http://localhost:5173. In development the server on :8080 only answers the API (it never serves
+`web/dist`), and it accepts state-changing requests from `localhost` only; to try the dev server from
+another device, set `PUBLIC_ORIGIN` to the address you open there (e.g. `http://192.168.1.10:5173`).
+Other scripts:
 
 | Command | Does |
 |---|---|
 | `npm test` | Vitest for shared, server and web |
-| `npm run typecheck` | TypeScript 7 (`tsc`) for every workspace; the Studio (`web/src/studio`) has its own program |
-| `npm run build` | Builds the web app into `web/dist` (served by the server when present) |
+| `npm run typecheck` | TypeScript 7 (`tsc`) for every workspace; the Studio (`web/src/studio`) has its own program, which types vendored lila through declarations and never checks its sources |
+| `npm run build` | Builds the web app into `web/dist` (served by `npm start` and Docker). No source maps; `npm run build -w @outpost/web -- --sourcemap` adds them |
 | `npm start` | Runs the server in production mode (`NODE_ENV=production`, so `PUBLIC_ORIGIN` is required) |
 | `npm run vendor` | Re-vendors Lichess code and assets at the pinned commits (`scripts/vendor-lichess.sh`) |
 

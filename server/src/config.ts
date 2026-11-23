@@ -126,8 +126,11 @@ export interface Config {
   uploadsDir: string;
   /** lichess-org/chess-openings TSVs (server/data/openings). */
   openingsDir: string;
-  /** Built web app (web/dist); served when it exists. */
-  webDistDir: string;
+  /**
+   * Built web app (web/dist), served when it exists. Null in development: the live UI is the Vite
+   * dev server (:5173), and a stale web/dist from an earlier build must not shadow it on :8080.
+   */
+  webDistDir: string | null;
   /** Env LICHESS_TOKEN (wins over the admin UI value). */
   lichessToken: string | null;
   /** Env CHESSCOM_CONTACT (wins over the admin UI value). */
@@ -183,7 +186,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     nnueDir: join(dataDir, 'nnue'),
     uploadsDir: join(dataDir, 'uploads'),
     openingsDir: join(ROOT_DIR, 'server', 'data', 'openings'),
-    webDistDir: join(ROOT_DIR, 'web', 'dist'),
+    webDistDir: e.NODE_ENV === 'development' ? null : join(ROOT_DIR, 'web', 'dist'),
     lichessToken: e.LICHESS_TOKEN ?? null,
     chesscomContact: e.CHESSCOM_CONTACT ?? null,
     setupToken: e.SETUP_TOKEN ?? null,

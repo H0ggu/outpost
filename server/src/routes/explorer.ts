@@ -28,6 +28,12 @@ import type { FastifyPluginAsync } from 'fastify';
  *     lila sends extras such as `source=analysis` and `variant`.
  *   - The player explorer counts each game at most once per position (a game that repeats a
  *     position has several `positions` rows with the same pos_key): use the first occurrence.
+ *   - Lila's own `speeds`/`modes`/`since`/`until` are ANDed with the `/f/:filters/` filters
+ *     (player explorer and /api/explorer/games). Read them only through
+ *     `explorerQueryRestrictions` (@outpost/shared/filters): lila always sends `speeds`, which has
+ *     no `unknown`, so matching it literally would hide every PGN and reference game. ultraBullet
+ *     is bullet; a full speed set and `modes=rated,casual` mean no restriction.
+ *   - Lila needs an absolute `explorer.endpoint` (`explorerEndpoint` in @outpost/shared/api).
  *
  * TODO(explorer): implement. Keep this file thin: validate with src/http/validate.ts, check access
  * with the preHandlers in src/auth/session.ts, call into the module, return contract types, and
