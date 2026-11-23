@@ -243,7 +243,7 @@ export function ImportPanel({ db }: { db: DatabaseInfo }) {
 /** The final summary of an import. */
 export function ImportSummary({ outcome, onDismiss }: { outcome: ImportOutcome; onDismiss: () => void }) {
   const ok = outcome.status === 'done';
-  const extra = importCountItems(outcome.counts);
+  const extra = importCountItems(outcome.counts).filter(i => i.n > 0);
   return (
     <div className={ok ? 'lib-summary lib-summary--ok' : 'lib-summary lib-summary--bad'} role="status">
       <i data-icon={ok ? licon.Checkmark : licon.CautionTriangle} aria-hidden />

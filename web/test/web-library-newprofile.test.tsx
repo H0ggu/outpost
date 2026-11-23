@@ -92,7 +92,8 @@ describe('NewProfilePage', () => {
     fireEvent.change(dbSelect, { target: { value: '5' } });
     fireEvent.change(screen.getByLabelText('Player name'), { target: { value: 'Carlsen, M.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    expect(within(accounts()).getByText('Carlsen, M. (Club games)')).toBeTruthy();
+    expect(within(accounts()).getByText('Carlsen, M.')).toBeTruthy();
+    expect(within(accounts()).getByText('in Club games')).toBeTruthy();
 
     // Remove the FIDE one.
     fireEvent.click(screen.getByRole('button', { name: 'Remove 1503014' }));
@@ -156,6 +157,7 @@ describe('NewProfilePage', () => {
     expect(await screen.findByText('Carlsen, Magnus')).toBeTruthy();
     expect(screen.getByText('FIDE 1503014')).toBeTruthy();
     expect(within(accounts()).getByText('Carlsen, M.')).toBeTruthy();
+    expect(await within(accounts()).findByText(/^in (Club games|database #5)$/)).toBeTruthy();
     expect((screen.getByLabelText('Display name') as HTMLInputElement).value).toBe('Magnus');
   });
 });

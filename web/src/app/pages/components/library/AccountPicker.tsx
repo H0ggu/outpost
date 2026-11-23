@@ -105,8 +105,7 @@ function ManualSource({ has, onAdd }: { has: (s: PickedSource) => boolean; onAdd
     } else {
       if (dbId === '') return setError('Pick a database.');
       if (!k) return setError('Type the player’s name as written in the PGN.');
-      const db = gameDbs.find(d => d.id === dbId);
-      s = { kind: 'pgn', key: k, databaseId: dbId, label: db ? `${k} (${db.name})` : k };
+      s = { kind: 'pgn', key: k, databaseId: dbId };
     }
     if (has(s)) return setError('Already added.');
     setError(null);

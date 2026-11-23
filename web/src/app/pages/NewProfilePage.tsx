@@ -9,7 +9,7 @@ import { AccountPicker } from './components/library/AccountPicker.tsx';
 import { dedupeSources, parseNewProfileQuery, sourceIdentity, type PickedSource } from './components/library/newProfileQuery.ts';
 import { SourceBadge } from './components/library/ProfileList.tsx';
 import { SignInPrompt } from './components/library/QueryView.tsx';
-import { useCreateProfile } from './library-hooks.ts';
+import { useCreateProfile, useDatabases } from './library-hooks.ts';
 import './components/library/library.css';
 import './NewProfilePage.css';
 
@@ -53,6 +53,8 @@ function NewProfileForm() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const create = useCreateProfile();
+  const databases = useDatabases(sources.some(s => s.kind === 'pgn'));
+  const dbName = (dbId: number | undefined) => databases.data?.databases.find(d => d.id === dbId)?.name ?? `database #${dbId}`;
 
   const first = sources[0];
   const suggestedName = first ? (first.kind === 'pgn' ? first.key : (first.label ?? first.key)) : '';
@@ -104,6 +106,7 @@ function NewProfileForm() {
               <li key={sourceIdentity(s)}>
                 <SourceBadge source={{ kind: s.kind, displayName: s.label ?? s.key }} />
                 {s.kind === 'fide' && s.label && <span className="muted">FIDE {s.key}</span>}
+                {s.kind === 'pgn' && <span className="muted lib-picked__db">in {dbName(s.databaseId)}</span>}
                 <button
                   type="button"
                   className="lib-icon-btn lib-icon-btn--danger"
