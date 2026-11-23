@@ -146,6 +146,22 @@ export interface ExplorerOutpost {
   loginUrl: string;
   /** Why the server can't serve `db` (the Lichess database without an API token), if it can't. */
   unavailable?(db: ExplorerDb): string | undefined;
+  /** "All N games" under the player database's recent games: list every game at the position. */
+  showGames?(req: ExplorerGamesRequest): void;
+}
+
+/** scripts/lila-patches/002: what "All N games" asks for (as lila asked the player explorer). */
+export interface ExplorerGamesRequest {
+  player: string;
+  color: Color;
+  rootFen: string;
+  play: string[];
+  fen: string;
+  speeds: string[];
+  modes: string[];
+  since: string;
+  until: string;
+  total: number;
 }
 
 export interface ExplorerOpts {
@@ -196,6 +212,8 @@ export interface ExplorerCtrl {
   toggle(): void;
   reload(): void;
   db(): ExplorerDb;
+  /** The data shown for the current node (opening data has `isOpening`; `games` from Outpost's player explorer). */
+  current(): { fen: string; isOpening?: true; white?: number; draws?: number; black?: number; games?: number } | undefined;
   config: {
     data: {
       open(v?: boolean): boolean;

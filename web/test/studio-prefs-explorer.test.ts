@@ -83,6 +83,7 @@ describe('explorer options', () => {
     loginUrl: () => '/login?next=%2Fstudio',
     redraw: vi.fn(),
     openGame: vi.fn(),
+    showGames: vi.fn(),
     ...over,
   });
 

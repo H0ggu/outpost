@@ -2,7 +2,7 @@
  * Component tests of the Overview, Games, Explorer, Openings and Opponents tabs over the fake
  * API (web-profile-fixtures.ts): what they request, what they render, and where they link.
  */
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OpeningRow } from '@outpost/shared/api';
 import { decodeFiltersSegment } from '@outpost/shared/filters';
@@ -319,6 +319,61 @@ describe('Explorer tab', () => {
     await waitFor(() => expect(searchOf(location()).get('color')).toBe('black'));
     await waitFor(() => expect(frameSrc().searchParams.get('color')).toBe('black'));
     expect(frameSrc().searchParams.get('pgn')).toBe('1. e4 c5');
+  });
+
+  it('follows the embedded board: the games there, and the Studio at that position', async () => {
+    const { location } = renderProfile(`${SLUG}/explorer?tc=blitz`);
+    const frame = (await screen.findByTitle('Opening explorer')) as HTMLIFrameElement;
+    // happy-dom loads no iframe page (contentWindow is null): stand in for the Studio's window.
+    const studioWindow = { name: 'studio' };
+    Object.defineProperty(frame, 'contentWindow', { value: studioWindow, configurable: true });
+    const src = frameSrc().href;
+    const post = (data: unknown, source: unknown = studioWindow, origin = window.location.origin) =>
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', { data, origin, source: source as Window }));
+      });
+    const at = (line: string[] | null, games: number | null, more: Record<string, unknown> = {}) => ({
+      type: 'outpost:position',
+      player: 'test-player',
+      color: 'white',
+      line,
+      fen: 'rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+      games,
+      ...more,
+    });
+    expect(screen.getByRole('link', { name: 'Games at this position' }).getAttribute('href')).toBe('/u/test-player/games?color=white&tc=blitz');
+
+    post(at(['e2e4', 'c7c5'], 97));
+    const games = await screen.findByRole('link', { name: '97 games at this position' });
+    const params = (sp: URLSearchParams) => Object.fromEntries(sp);
+    expect(params(searchOf(new URL(games.getAttribute('href')!, 'http://x')))).toEqual({ color: 'white', tc: 'blitz', line: 'e2e4,c7c5' });
+    expect(screen.getByText('1. e4 c5', { selector: '.profile-explorer__line .san' })).toBeTruthy();
+    const studio = new URL(screen.getByRole('link', { name: 'Open in Studio' }).getAttribute('href')!, 'http://x');
+    expect(studio.searchParams.get('pgn')).toBe('1. e4 c5');
+    expect(studio.searchParams.has('embed')).toBe(false);
+    // The board moved inside the frame: the frame itself is not reloaded.
+    expect(frameSrc().href).toBe(src);
+
+    // Another player picked inside the embed: no count for this profile.
+    post(at(['e2e4'], 5, { player: 'lichess:someone' }));
+    expect(await screen.findByRole('link', { name: 'Games at this position' })).toBeTruthy();
+    // A line that can't be a filter: the Studio opens at the position instead.
+    post(at(null, 3));
+    await waitFor(() => expect(screen.queryByRole('link', { name: /at this position/ })).toBeNull());
+    const byFen = new URL(screen.getByRole('link', { name: 'Open in Studio' }).getAttribute('href')!, 'http://x');
+    expect(byFen.searchParams.get('fen')).toBe(at(null, 3).fen);
+    expect(decodeFiltersSegment(byFen.searchParams.get('filters')!)).toEqual({ tc: ['blitz'] });
+
+    // Messages from elsewhere are ignored.
+    post(at(['d2d4'], 1), window);
+    post(at(['d2d4'], 1), studioWindow, 'https://evil.example');
+    post(at(['d2d4'], 1), null);
+    expect(screen.queryByRole('link', { name: '1 game at this position' })).toBeNull();
+
+    // "All N games" inside the embed opens the Games tab at that line.
+    post({ type: 'outpost:show-games', player: 'test-player', color: 'white', line: ['e2e4', 'c7c5'] });
+    await waitFor(() => expect(location().pathname).toBe('/u/test-player/games'));
+    expect(params(searchOf(location()))).toEqual({ color: 'white', tc: 'blitz', line: 'e2e4,c7c5' });
   });
 });
 

@@ -78,7 +78,9 @@ export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<vo
     loginUrl: ctrl.loginUrl,
     redraw: () => ctrl.analyse?.redraw(),
     openGame: ctrl.openExplorerGame,
+    showGames: ctrl.showPositionGames,
   });
+  ctrl.playerLabel = explorer.outpost.playerLabel;
 
   const initial = dataOf(first);
   const opts: AnalyseOpts = {
@@ -118,6 +120,7 @@ export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<vo
   analyse.redraw = () => {
     lilaRedraw();
     ctrl.redraw();
+    ctrl.postEmbedPosition();
     clearTimeout(dirtyTimer);
     dirtyTimer = setTimeout(() => ctrl.onBoardChange(), DIRTY_CHECK_MS);
   };

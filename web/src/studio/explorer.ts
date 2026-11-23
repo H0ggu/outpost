@@ -6,7 +6,9 @@
  *   - player → `/api/explorer/player` with `player=<profile slug | lichess:… | chesscom:… | db:… | ref:…>`,
  *     or `/api/explorer/f/<filters>/player` for the profile the Studio was opened with (?filters=);
  *   - tablebase → `/api/tablebase/<variant>`;
- *   - game links open in Outpost (stored games, masters PGN) or on lichess.org (Lichess database games).
+ *   - game links open in Outpost (stored games, masters PGN) or on lichess.org (Lichess database games);
+ *   - "All N games" under the player database's recent games lists every game at the position
+ *     (positionGames.ts).
  */
 import {
   API_ROUTES,
@@ -21,6 +23,7 @@ import {
 } from '@outpost/shared/api';
 import { parsePlayerSpec } from '@outpost/shared/filters';
 import { api } from '../app/api/client.ts';
+import type { PositionGamesRequest } from './positionGames.ts';
 
 // Structural copies of lila's explorer types (lila-types/analyse/interfaces.d.ts, patch 002), so this
 // module has no lila import and is unit-tested; boot.ts hands the result to lila, which checks them.
@@ -49,6 +52,7 @@ export interface ExplorerOpts {
     requiresAuth(): boolean;
     readonly loginUrl: string;
     unavailable(db: ExplorerDb): string | undefined;
+    showGames(req: PositionGamesRequest): void;
   };
 }
 
@@ -65,6 +69,8 @@ export interface ExplorerDeps {
   loginUrl: () => string;
   redraw: () => void;
   openGame: (db: ExplorerDb, id: string, orientation: Color, fen: string) => void;
+  /** "All N games" under the player explorer's recent games (the games at the position). */
+  showGames: (req: PositionGamesRequest) => void;
 }
 
 const SITE_LABELS: Readonly<Record<string, string>> = { lichess: 'Lichess', chesscom: 'Chess.com' };
@@ -190,6 +196,7 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
         return suggestions;
       },
       openGame: deps.openGame,
+      showGames: req => deps.showGames(req),
       requiresAuth: () => !deps.signedIn() && !deps.anonymousBrowsing(),
       get loginUrl() {
         return deps.loginUrl();

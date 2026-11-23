@@ -166,6 +166,25 @@ describe('player explorer (/api/explorer/player)', () => {
     expect([r.white, r.draws, r.black]).toEqual([0, 0, 0]);
   });
 
+  it('counts every game reaching the position in `games` (ended there too), as /api/explorer/games lists them', async () => {
+    const list = async (query: string) => {
+      const res = await t.app.inject({ url: `/api/explorer/games?${query}`, headers: { cookie: other } });
+      expect(res.statusCode, res.body).toBe(200);
+      return res.json() as { total: number };
+    };
+    // 1.e4 c5: g3 ended there, so no move counts it, but it is at the position.
+    const ended = await explore('player=alice&color=white&play=e2e4,c7c5');
+    expect(ended.games).toBe(1);
+    expect((await list('player=alice&color=white&play=e2e4,c7c5')).total).toBe(1);
+    const start = await explore('player=alice&color=white');
+    expect(start.games).toBe(8);
+    expect((await list('player=alice&color=white')).total).toBe(8);
+    // g1, g2, g3 and g7 (which transposes into 1.e4 after its knight moves).
+    const e4 = await explore('player=alice&color=white&play=e2e4');
+    expect(e4.games).toBe(4);
+    expect((await list('player=alice&color=white&play=e2e4')).total).toBe(4);
+  });
+
   it("reads the player's colour", async () => {
     const r = await explore('player=alice&color=black');
     expect(r.moves.map(m => [m.uci, m.white, m.draws, m.black])).toEqual([['e2e4', 1, 0, 0]]);
@@ -381,7 +400,7 @@ describe('player explorer (/api/explorer/player)', () => {
 
   it('answers an empty explorer for other variants (Outpost stores standard chess only)', async () => {
     const r = await explore('player=alice&color=white&variant=crazyhouse');
-    expect(r).toEqual({ opening: null, queuePosition: 0, white: 0, draws: 0, black: 0, moves: [], recentGames: [] });
+    expect(r).toEqual({ opening: null, queuePosition: 0, white: 0, draws: 0, black: 0, moves: [], recentGames: [], games: 0 });
     const fromPos = await explore('player=alice&color=white&variant=fromPosition');
     expect(fromPos.white).toBe(5);
   });

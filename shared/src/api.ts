@@ -1230,6 +1230,11 @@ export interface ExplorerPlayerResponse {
   black: number;
   moves: ExplorerPlayerMove[];
   recentGames: ExplorerGameRef[];
+  /**
+   * Outpost extension (lila ignores it): every game reaching the position, including those that
+   * ended there (which no move counts), so `GET /api/explorer/games` lists exactly this many.
+   */
+  games?: number;
 }
 
 /**

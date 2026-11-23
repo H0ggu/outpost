@@ -155,6 +155,45 @@ function showGameTable(ctrl: AnalyseCtrl, fen: FEN, title: string, games: Openin
   ]);
 }
 
+// outpost: "All N games" under the player database's recent games: every game at this position, in Outpost
+const gamesTotal = (data: OpeningData) => data.games ?? data.white + data.draws + data.black;
+
+function allGamesButton(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
+  const { explorer } = ctrl;
+  const outpost = explorer.opts.outpost;
+  if (!outpost?.showGames || explorer.db() !== 'player' || !explorer.config.data.playerName.value()) return null;
+  const total = gamesTotal(data);
+  if (!total) return null;
+  // `bind` keeps its first listener while the button stays: read what is shown at click time
+  const showGames = () => {
+    const shown = explorer.current();
+    const conf = explorer.config.data;
+    const player = conf.playerName.value();
+    if (!shown || !isOpening(shown) || !player) return;
+    const byDb = conf.byDb();
+    outpost.showGames!({
+      player,
+      color: conf.color(),
+      rootFen: ctrl.nodeList[0].fen,
+      play: ctrl.nodeList.slice(1).map(n => n.uci!),
+      fen: shown.fen,
+      speeds: conf.speed(),
+      modes: conf.mode(),
+      since: byDb.since(),
+      until: byDb.until(),
+      total: gamesTotal(shown),
+    });
+  };
+  return hl(
+    'button.button.button-empty.text.explorer__all-games',
+    {
+      attrs: { type: 'button', title: 'List every game of this player at this position', ...dataIcon(licon.List) },
+      hook: bind('click', showGames),
+    },
+    total === 1 ? 'The game at this position' : `All ${numberFormat(total)} games at this position`,
+  );
+}
+
 function openGame(ctrl: AnalyseCtrl, gameId: string) {
   const orientation = ctrl.chessground.state.orientation;
   const outpost = ctrl.explorer.opts.outpost;
@@ -266,6 +305,7 @@ function show(ctrl: AnalyseCtrl): MaybeVNode {
         moveTable,
         topTable,
         recentTable,
+        recentTable && allGamesButton(ctrl, data),
       ]);
     else lastShow = showEmpty(ctrl, data);
   } else if (data && isTablebase(data)) {

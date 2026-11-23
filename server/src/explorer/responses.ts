@@ -179,6 +179,8 @@ export interface PositionStats {
   moves: readonly MoveAgg[];
   /** `recentGames` (player) or `topGames` (masters), already ordered. */
   list: readonly ListedHit[];
+  /** Distinct games reaching the position, those that ended there included (player `games`). */
+  games?: number;
 }
 
 /** `ExplorerPlayerResponse` (one NDJSON line) for a position's stats. */
@@ -222,6 +224,7 @@ export function playerResponse(
     black: totals.black,
     moves: outMoves,
     recentGames: recent.map(h => ref(h.gameId, h.nextUci)).filter((g): g is ExplorerGameRef => g !== null),
+    games: stats.games ?? totals.white + totals.draws + totals.black,
   };
 }
 
@@ -272,4 +275,5 @@ export const emptyPlayerResponse = (opening: ExplorerOpening | null): ExplorerPl
   black: 0,
   moves: [],
   recentGames: [],
+  games: 0,
 });
