@@ -96,7 +96,7 @@ export default function ProfileLayout() {
     <Page title={tabLabel && tab !== '' ? `${h.displayName} · ${tabLabel}` : h.displayName}>
       <div className="profile-page">
         <ProfileHead header={h} signedIn={signedIn} filters={filters} tabs={tabs} />
-        {showFilters && <FiltersBar header={h} />}
+        {showFilters && <FiltersBar header={h} hideColor={tab === 'explorer'} />}
         <Outlet context={context} />
       </div>
     </Page>

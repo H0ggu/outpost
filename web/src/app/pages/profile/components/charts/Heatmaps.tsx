@@ -57,7 +57,7 @@ export function CalendarHeatmap({ days, end, timeZone, mode, weeks = 53 }: Calen
   const cols = Math.ceil((endN - startN + 1) / 7);
   const left = 30;
   const top = 16;
-  const size = clamp(Math.floor((width - left - 2) / cols), 10, 16);
+  const size = clamp(Math.floor((width - left - 2) / cols), 10, 20);
   const gap = size >= 13 ? 3 : 2;
   const svgW = left + cols * size;
   const svgH = top + 7 * size;
@@ -149,35 +149,37 @@ export function HourGrid({ grid, mode }: HourGridProps) {
   const [tip, setTip] = useState<TooltipState | null>(null);
   const left = 34;
   const top = 16;
-  const size = clamp(Math.floor((width - left) / 24), 10, 34);
-  const gap = size >= 16 ? 3 : 2;
-  const svgW = left + 24 * size;
-  const svgH = top + 7 * size;
+  // Columns stretch to the width; rows stay near-square but never taller than 30px.
+  const cw = clamp((width - left) / 24, 10, 64);
+  const ch = clamp(Math.floor(cw), 15, 30);
+  const gap = ch >= 16 ? 3 : 2;
+  const svgW = left + 24 * cw;
+  const svgH = top + 7 * ch;
   const max = Math.max(0, ...grid.flat().map(c => c.games));
-  const hourStep = size >= 22 ? 2 : 3;
+  const hourStep = cw >= 22 ? 2 : 3;
 
   return (
     <div ref={ref} className="chart hour-grid">
       <svg width={svgW} height={svgH} role="img" aria-label="Games by weekday and hour" onPointerLeave={() => setTip(null)}>
         {Array.from({ length: 24 }, (_, h) =>
           h % hourStep === 0 ? (
-            <text key={h} className="chart-axis-text" x={left + h * size + (size - gap) / 2} y={10} textAnchor="middle">
+            <text key={h} className="chart-axis-text" x={left + h * cw + (cw - gap) / 2} y={10} textAnchor="middle">
               {fmtHour(h)}
             </text>
           ) : null,
         )}
         {WEEKDAYS_SHORT.map((d, r) => (
-          <text key={d} className="chart-axis-text" x={0} y={top + r * size + (size - gap) / 2} dy="0.32em">
+          <text key={d} className="chart-axis-text" x={0} y={top + r * ch + (ch - gap) / 2} dy="0.32em">
             {d}
           </text>
         ))}
         {grid.map((row, r) =>
           row.map((c, h) => {
-            const x = left + h * size;
-            const y = top + r * size;
+            const x = left + h * cw;
+            const y = top + r * ch;
             const show = () =>
               setTip({
-                x: x + size / 2,
+                x: x + cw / 2,
                 y: y - 4,
                 content: <ActivityTip title={`${WEEKDAYS[r]} ${fmtHour(h)}:00–${fmtHour(h)}:59`} games={c.games} score={c.score} />,
               });
@@ -187,8 +189,8 @@ export function HourGrid({ grid, mode }: HourGridProps) {
                 className="heat-cell"
                 x={x}
                 y={y}
-                width={size - gap}
-                height={size - gap}
+                width={cw - gap}
+                height={ch - gap}
                 rx={2}
                 style={{ fill: cellFill(mode, c, max) }}
                 onPointerEnter={show}

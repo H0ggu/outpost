@@ -130,6 +130,11 @@ html[data-theme='light'] {
   border-radius: 3px;
 }
 
+/* Absolutely positioned bits (visually-hidden labels) must stay inside the table scroller. */
+.profile-page .table-wrap {
+  position: relative;
+}
+
 /* ---------------------------------------------------------------------------
  * Small pieces: site badges, titles, players, outcomes
  * ------------------------------------------------------------------------ */
@@ -185,7 +190,21 @@ html[data-theme='light'] {
   align-items: baseline;
   gap: 0.3em;
   min-width: 0;
+  max-width: 100%;
   white-space: nowrap;
+}
+
+.profile-page .player-name > * {
+  flex-shrink: 0;
+}
+
+.profile-page .player-name > a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3em;
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
 }
 
 .profile-page .player-name a {
@@ -196,7 +215,10 @@ html[data-theme='light'] {
   color: var(--c-link-hover);
 }
 
-.profile-page .player-name__text {
+.profile-page .player-name__text,
+.profile-page .player-name > .player-name__text {
+  flex-shrink: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -407,13 +429,33 @@ html[data-theme='light'] {
   min-width: 0;
 }
 
-.profile-page .field__label,
-.profile-page .form-label {
+.profile-page .field__label {
   color: var(--c-font-dim);
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   line-height: 1.2;
+}
+
+.profile-page .form-label {
+  color: var(--c-font-dim);
+  font-size: 0.9em;
+}
+
+.profile-page .form-group .seg {
+  align-self: flex-start;
+}
+
+/* One control height across selects, inputs, segmented groups and chips. */
+.profile-page .field select,
+.profile-page .field input,
+.profile-page .seg--sm,
+.profile-page .field .chip {
+  height: 2rem;
+}
+
+.profile-page .seg--sm .seg__btn {
+  height: 100%;
 }
 
 .profile-page .field select,
@@ -757,6 +799,10 @@ html[data-theme='light'] {
   box-shadow: 0 -1px 0 var(--c-border) inset;
 }
 
+.profile-page .profile-tabs a {
+  margin-bottom: 0;
+}
+
 /* ---------------------------------------------------------------------------
  * Filters bar
  * ------------------------------------------------------------------------ */
@@ -872,13 +918,17 @@ html[data-theme='light'] {
     margin-left: 0;
   }
 
+  .profile-page .field .seg {
+    align-self: flex-start;
+  }
+
   .profile-page .field--text input,
-.profile-page .field--line input {
+  .profile-page .field--line input {
     width: 100%;
   }
 
   .profile-page .field--text .field__input,
-.profile-page .field--line .field__input {
+  .profile-page .field--line .field__input {
     width: 100%;
   }
 }
@@ -1153,13 +1203,13 @@ html[data-theme='light'] {
 
 .profile-page .games-table td.gt-opp {
   max-width: 16rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.profile-page .games-table td.gt-opp .color-dot {
-  margin-right: 0.45em;
+.profile-page .gt-opp__inner {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  min-width: 0;
 }
 
 .profile-page .games-table .gt-result {
@@ -1272,13 +1322,13 @@ html[data-theme='light'] {
 
 @media (max-width: 640px) {
   .profile-page .games-table .gt-moves,
-.profile-page .games-table .gt-src,
-.profile-page .gt-tc__text {
+  .profile-page .games-table .gt-src,
+  .profile-page .gt-tc__text {
     display: none;
   }
 
   .profile-page .games-table td,
-.profile-page .games-table th {
+  .profile-page .games-table th {
     padding: 0.5rem 0.4rem;
   }
 
@@ -1471,12 +1521,12 @@ html[data-theme='light'] {
 
 @media (max-width: 640px) {
   .profile-page .opp-last,
-.profile-page .opp-rating {
+  .profile-page .opp-rating {
     display: none;
   }
 
   .profile-page .opponents-table td,
-.profile-page .opponents-table th {
+  .profile-page .opponents-table th {
     padding: 0.45rem 0.4rem;
   }
 
@@ -1511,18 +1561,24 @@ html[data-theme='light'] {
 }
 
 .profile-page .share-bar {
-  position: relative;
-  display: block;
-  height: 1.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.profile-page .share-bar__track {
+  flex: 1;
+  min-width: 2.5rem;
+  height: 0.7rem;
   border-radius: 3px;
   background: var(--c-bg-zebra2);
   overflow: hidden;
 }
 
 .profile-page .share-bar__fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: 3px;
+  display: block;
+  height: 100%;
+  border-radius: 0 3px 3px 0;
   background: var(--c-wdl-draws);
 }
 
@@ -1535,13 +1591,11 @@ html[data-theme='light'] {
 }
 
 .profile-page .share-bar__text {
-  position: relative;
-  padding-left: 0.4em;
-  font-size: 0.8em;
-  line-height: 1.15rem;
-  color: var(--c-font-clearer);
+  flex: 0 0 2.6em;
+  text-align: right;
+  font-size: 0.85em;
+  color: var(--c-font);
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 3px var(--c-bg-box);
 }
 
 /* ---------------------------------------------------------------------------
@@ -2010,21 +2064,71 @@ html[data-theme='light'] {
   }
 
   .profile-page .ov-table td,
-.profile-page .ov-table th {
+  .profile-page .ov-table th {
     padding: 0.45rem 0.5rem;
   }
 
+  .profile-page .ov-rating {
+    display: flex;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+
+  .profile-page .ov-wdl {
+    min-width: 70px;
+  }
+
   .profile-page .map-summary,
-.profile-page .activity-summary {
+  .profile-page .activity-summary {
     gap: 0.6rem 1.4rem;
   }
 
   .profile-page .map-summary .stat-tile__value,
-.profile-page .activity-summary .stat-tile__value {
+  .profile-page .activity-summary .stat-tile__value {
     font-size: 1.2rem;
   }
 
   .profile-page .profile-explorer__open {
     margin-left: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .profile-page .ov-tc .ov-table th:last-child,
+  .profile-page .ov-tc .ov-table td:last-child {
+    display: none;
+  }
+
+  .profile-page .ov-table .tc-icon > span:not(.visually-hidden) {
+    display: none;
+  }
+
+  .profile-page .ov-table th {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 640px) {
+  .profile-page .map-opps {
+    display: none;
+  }
+
+  .profile-page .map-country-name {
+    white-space: nowrap;
+  }
+
+  .profile-page .map-table td,
+  .profile-page .map-table th {
+    padding: 0.5rem 0.45rem;
+  }
+
+  .profile-page .map-wdl {
+    min-width: 70px;
+  }
+
+  .profile-page .activity-box .card .box__top,
+  .profile-page .activity-box .card .box__pad {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
   }
 }

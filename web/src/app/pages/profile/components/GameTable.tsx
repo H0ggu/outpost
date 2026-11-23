@@ -70,8 +70,10 @@ export function GameTable({ slug, games, sources, timeZone }: GameTableProps) {
                     <OutcomeMark outcome={g.outcome} />
                   </td>
                   <td className="gt-opp">
-                    <ColorDot color={g.color} />
-                    <OpponentName opponent={g.opponent} />
+                    <span className="gt-opp__inner">
+                      <ColorDot color={g.color} />
+                      <OpponentName opponent={g.opponent} />
+                    </span>
                   </td>
                   <td className="gt-result" title={TERMINATION_LABELS[g.termination]}>
                     <span className={`result-text result-text--${g.outcome}`}>{resultText(g.result)}</span>

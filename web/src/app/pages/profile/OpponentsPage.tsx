@@ -169,8 +169,10 @@ function BehaviourCard({ outcome, rows }: { outcome: Outcome; rows: readonly Beh
                 <td>{TERMINATION_LABELS[r.termination]}</td>
                 <td className="num">{fmtInt(r.count)}</td>
                 <td className="behaviour-table__share">
-                  <span className="share-bar" title={fmtPct100(r.pct)}>
-                    <span className={`share-bar__fill share-bar__fill--${outcome}`} style={{ width: `${Math.max(0, Math.min(100, r.pct))}%` }} />
+                  <span className="share-bar">
+                    <span className="share-bar__track" aria-hidden>
+                      <span className={`share-bar__fill share-bar__fill--${outcome}`} style={{ width: `${Math.max(0, Math.min(100, r.pct))}%` }} />
+                    </span>
                     <span className="share-bar__text">{fmtPct100(r.pct)}</span>
                   </span>
                 </td>

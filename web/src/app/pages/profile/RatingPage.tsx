@@ -13,6 +13,8 @@ import { useProfile } from './hooks.ts';
 
 const RANGES = ['all', '30d', '3m', '6m', '12m'] as const;
 type Range = (typeof RANGES)[number];
+/** Lines shown at first (the most-played ones); the legend switches the others on. */
+const DEFAULT_LINES = 3;
 const RANGE_LABELS: Readonly<Record<Range, string>> = { all: 'All', '30d': '30 days', '3m': '3 months', '6m': '6 months', '12m': '1 year' };
 
 /**
@@ -23,7 +25,8 @@ const RANGE_LABELS: Readonly<Record<Range, string>> = { all: 'All', '30d': '30 d
 export default function RatingPage() {
   const { slug, header, timeZone } = useProfile();
   const [filters, setFilters] = useUrlFilters();
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
+  // Lines the viewer switched on or off; the rest follow the default (the most-played few).
+  const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
   const rating = useRatingStats(slug, filters);
 
   const src = filters.src?.length === 1 ? String(filters.src[0]) : 'all';
@@ -73,7 +76,14 @@ export default function RatingPage() {
   else if (rating.isError) body = <ErrorBox error={rating.error} onRetry={() => void rating.refetch()} title="Could not load the rating history" />;
   else {
     const series = toChartSeries(rating.data.series, header.sources);
-    const shown = series.filter(s => !hidden.has(s.key));
+    const defaultOn = new Set(
+      [...series]
+        .sort((a, b) => b.points.length - a.points.length)
+        .slice(0, DEFAULT_LINES)
+        .map(s => s.key),
+    );
+    const isOn = (key: string) => toggled.get(key) ?? defaultOn.has(key);
+    const shown = series.filter(s => isOn(s.key));
     const { from, to } = resolveDateRange(filters);
     const allT = series.flatMap(s => s.points.map(p => p[0]));
     const xDomain: [number, number] | undefined =
@@ -85,21 +95,14 @@ export default function RatingPage() {
         <>
           <ul className="series-legend series-legend--toggles" aria-label="Lines">
             {series.map(s => {
-              const off = hidden.has(s.key);
+              const off = !isOn(s.key);
               return (
                 <li key={s.key}>
                   <button
                     type="button"
                     className={['chip', !off && 'active'].filter(Boolean).join(' ')}
                     aria-pressed={!off}
-                    onClick={() =>
-                      setHidden(h => {
-                        const next = new Set(h);
-                        if (off) next.delete(s.key);
-                        else next.add(s.key);
-                        return next;
-                      })
-                    }
+                    onClick={() => setToggled(t => new Map(t).set(s.key, off))}
                   >
                     <Swatch color={s.color} dash={s.dash} />
                     {s.label}

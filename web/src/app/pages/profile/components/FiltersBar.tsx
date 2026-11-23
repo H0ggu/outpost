@@ -201,8 +201,11 @@ function DateRange({ f, set }: { f: ProfileFilters; set: (patch: Partial<Profile
   );
 }
 
-/** The filters bar. `sources` come from the profile header (only shown with 2+ accounts). */
-export function FiltersBar({ header }: { header: ProfileHeader }) {
+/**
+ * The filters bar. `sources` come from the profile header (only shown with 2+ accounts).
+ * `hideColor` drops the colour control where the page has its own (the Explorer's side toggle).
+ */
+export function FiltersBar({ header, hideColor = false }: { header: ProfileHeader; hideColor?: boolean }) {
   const [filters, setFilters] = useUrlFilters();
   const [open, setOpen] = useState(false);
   const [more, setMore] = useState(false);
@@ -245,6 +248,7 @@ export function FiltersBar({ header }: { header: ProfileHeader }) {
 
       <div className="pfilters__body">
         <div className="pfilters__row">
+          {!hideColor && (
           <span className="field">
             <span className="field__label">Colour</span>
             <Segmented
@@ -259,6 +263,7 @@ export function FiltersBar({ header }: { header: ProfileHeader }) {
               onChange={v => set({ color: v === 'all' ? undefined : v })}
             />
           </span>
+          )}
 
           <SelectField
             label="Period"

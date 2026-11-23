@@ -24,7 +24,7 @@ type Moves = (typeof MOVES)[number];
 export default function OpeningsPage() {
   const { slug } = useProfile();
   const navigate = useNavigate();
-  const [filters, setFilters] = useUrlFilters();
+  const [filters] = useUrlFilters();
   const [order, setOrder] = useQueryParam<Order>('order', oneOf(ORDERS, 'most'), 'most');
   const [minGames, setMinGames] = useQueryParam<MinGames>('minGames', oneOf(MIN_GAMES, ''), '');
   const [minMoves] = useQueryParam<Moves>('minMoves', oneOf(MOVES, ''), '');
@@ -46,28 +46,20 @@ export default function OpeningsPage() {
 
   const controls = (
     <div className="openings-controls">
-      <Segmented
-        label="Side"
-        size="sm"
-        value={side}
-        options={[
-          { value: 'both', label: 'Both' },
-          { value: 'white', label: 'White' },
-          { value: 'black', label: 'Black' },
-        ]}
-        onChange={v => setFilters({ ...filters, color: v === 'both' ? undefined : v })}
-      />
-      <Segmented
-        label="Order"
-        size="sm"
-        value={order}
-        options={[
-          { value: 'most', label: 'Most played' },
-          { value: 'best', label: 'Best' },
-          { value: 'worst', label: 'Worst' },
-        ]}
-        onChange={v => setOrder(v)}
-      />
+      <span className="field">
+        <span className="field__label">Order</span>
+        <Segmented
+          label="Order"
+          size="sm"
+          value={order}
+          options={[
+            { value: 'most', label: 'Most played' },
+            { value: 'best', label: 'Best' },
+            { value: 'worst', label: 'Worst' },
+          ]}
+          onChange={v => setOrder(v)}
+        />
+      </span>
       <SelectField
         label="Min. games"
         value={minGames}
