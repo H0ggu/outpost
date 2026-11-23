@@ -220,6 +220,14 @@ describe('streams', () => {
     expect(await collect(decompressAuto(chunksOf(Buffer.alloc(0))))).toBe('');
   });
 
+  it('recognises zstd files that start with a skippable frame (database.lichess.org)', async () => {
+    const skippable = Buffer.from([0x50, 0x2a, 0x4d, 0x18, 4, 0, 0, 0, 1, 2, 3, 4]);
+    const file = Buffer.concat([skippable, zstdCompressSync(Buffer.from(text))]);
+    expect(detectCompression(file)).toBe('zstd');
+    expect(detectCompression(Buffer.from([0x5e, 0x2a, 0x4d, 0x18]))).toBe('zstd');
+    expect(await collect(decompressAuto(chunksOf(file, 5)))).toBe(text);
+  });
+
   it('refuses zip and bzip2 and caps the output', async () => {
     await expect(collect(decompressAuto(chunksOf(Buffer.from('PK\x03\x04rest'))))).rejects.toBeInstanceOf(UnsupportedFormatError);
     await expect(collect(decompressAuto(chunksOf(Buffer.from('BZh91AY'))))).rejects.toBeInstanceOf(UnsupportedFormatError);

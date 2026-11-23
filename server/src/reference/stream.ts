@@ -56,9 +56,14 @@ export async function* countBytes(
 /** Compression of a stream, from its first bytes. */
 export type Compression = 'zstd' | 'gzip' | 'none';
 
-/** Detects zstd (28 B5 2F FD), gzip (1F 8B); throws for zip and bzip2; anything else is plain text. */
+/**
+ * Detects zstd (frame magic 28 B5 2F FD, or a skippable frame 5x 2A 4D 18 as written by seekable /
+ * multi-threaded encoders: database.lichess.org files start with one) and gzip (1F 8B); throws for
+ * zip and bzip2; anything else is plain text.
+ */
 export function detectCompression(head: Uint8Array): Compression {
   if (head.length >= 4 && head[0] === 0x28 && head[1] === 0xb5 && head[2] === 0x2f && head[3] === 0xfd) return 'zstd';
+  if (head.length >= 4 && (head[0]! & 0xf0) === 0x50 && head[1] === 0x2a && head[2] === 0x4d && head[3] === 0x18) return 'zstd';
   if (head.length >= 2 && head[0] === 0x1f && head[1] === 0x8b) return 'gzip';
   if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04) {
     throw new UnsupportedFormatError('ZIP archives are not supported: extract the PGN (or recompress it as .zst or .gz)');
