@@ -36,7 +36,7 @@ import {
   type GameResult,
   type Termination,
 } from '@outpost/shared/chess';
-import { pgnDateTime, terminationFromTag } from '../chess/pgn.ts';
+import { pgnDateTime, storedTags, terminationFromTag } from '../chess/pgn.ts';
 import type { NormalizedGame, NormalizedPlayer } from '../chess/store.ts';
 import type { Db } from '../db/index.ts';
 import { UPSTREAM, UpstreamError } from '../http/upstream.ts';
@@ -292,7 +292,7 @@ export function mapChesscomGame(
       startedAt: startedAt !== null && startedAt <= endedAt ? startedAt : endedAt,
       endedAt,
       moves,
-      headers: Object.fromEntries(pgn.headers),
+      headers: storedTags(pgn.headers),
     },
   };
 }

@@ -9,6 +9,8 @@ import {
   insertGame,
   InvalidGameError,
   isReplayError,
+  MAX_STORED_TAGS,
+  MAX_TAG_VALUE_LENGTH,
   openingAt,
   parsePgnGames,
   pgnDateTime,
@@ -249,6 +251,27 @@ describe('PGN refinements', () => {
     ];
     for (const [tag, draw, want] of cases) expect([tag, draw, terminationFromTag(tag, draw)]).toEqual([tag, draw, want]);
     expect(terminationFromTag(null, false)).toBeNull();
+    expect(terminationFromTag('Game drawn by time and insufficient material', true)).toBe('timeout_vs_insufficient');
+  });
+
+  it('reads a huge hostile Termination tag in linear time (no regex backtracking)', () => {
+    for (const filler of ['time ', 'x won by time ', 'game drawn by time ']) {
+      const tag = filler.repeat(Math.ceil(320_000 / filler.length));
+      const t0 = performance.now();
+      terminationFromTag(tag, true);
+      terminationFromTag(tag, false);
+      expect(performance.now() - t0).toBeLessThan(50);
+    }
+  });
+
+  it('bounds the tags it stores and reads', async () => {
+    const extra = Array.from({ length: 100 }, (_, i) => `[Extra${i} "v"]`).join('\n');
+    const long = 'n'.repeat(50_000);
+    const g = await norm(`[Event "${long}"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n[Termination "${'time '.repeat(20_000)}"]\n${extra}\n\n1. e4 e5 1-0\n`);
+    expect(Object.keys(g.headers!)).toHaveLength(MAX_STORED_TAGS);
+    expect(g.headers!.Event).toHaveLength(MAX_TAG_VALUE_LENGTH);
+    expect(g.event).toHaveLength(MAX_TAG_VALUE_LENGTH);
+    expect(g.termination).toBe('timeout');
   });
 
   it('uses rating diffs, end tags and the final position', async () => {

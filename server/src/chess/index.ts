@@ -21,11 +21,14 @@ export {
 } from './openings.ts';
 export {
   DEDUPE_PLY,
+  MAX_STORED_TAGS,
+  MAX_TAG_VALUE_LENGTH,
   parsePgnGames,
   pgnDateTime,
   pgnOriginId,
   pgnTimeClass,
   pgnToNormalizedGame,
+  storedTags,
   terminationFromTag,
   type PgnGame,
   type PgnSkipReason,

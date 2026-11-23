@@ -81,10 +81,32 @@ export function pgnOriginId(
   return `${databaseId}:${h}`;
 }
 
+/**
+ * Longest tag value read or stored, and most tags stored per game. Real tags are short; chessops
+ * only bounds a game's text as a whole (about 1M characters), so a hostile file could otherwise
+ * store megabytes of headers per game or feed huge strings to the tag parsers below.
+ */
+export const MAX_TAG_VALUE_LENGTH = 1000;
+export const MAX_STORED_TAGS = 64;
+
 const header = (game: PgnGame, name: string): string | null => {
-  const v = game.headers.get(name)?.trim();
+  const v = game.headers.get(name)?.slice(0, MAX_TAG_VALUE_LENGTH).trim();
   return v && v !== '?' && v !== '-' ? v : null;
 };
+
+/** The tags stored as `headers_json`: the first `MAX_STORED_TAGS`, values cut to `MAX_TAG_VALUE_LENGTH`. */
+export function storedTags(headers: ReadonlyMap<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  let n = 0;
+  for (const [k, v] of headers) {
+    if (n++ >= MAX_STORED_TAGS) break;
+    out[k.slice(0, 100)] = v.slice(0, MAX_TAG_VALUE_LENGTH);
+  }
+  return out;
+}
+
+/** Longest Termination tag looked at (real ones are a username and a few words). */
+const MAX_TERMINATION_LENGTH = 200;
 
 const rating = (s: string | null): number | null => {
   const n = s && /^\d{1,4}$/.test(s) ? Number(s) : 0;
@@ -124,12 +146,15 @@ export function pgnTimeClass(tc: string | null): TimeClass {
  */
 export function terminationFromTag(tag: string | null, draw: boolean): Termination | null {
   if (!tag) return null;
-  const t = tag.trim().toLowerCase();
+  // Bounded input and no backtracking pattern: every test below is linear in the tag's length.
+  const t = tag.slice(0, MAX_TERMINATION_LENGTH).trim().toLowerCase();
   // Chess.com puts the winner's username first; only look at the words after " won ".
   const won = t.lastIndexOf(' won ');
-  const drawnBy = /^game drawn by (.+)$/.exec(t);
-  const reason = won >= 0 ? t.slice(won + 5) : drawnBy ? drawnBy[1]! : t;
-  if (/\btimeout vs\.? insufficient|\btime\b.*\binsufficient/.test(reason)) return 'timeout_vs_insufficient';
+  const reason = won >= 0 ? t.slice(won + 5) : t.startsWith('game drawn by ') ? t.slice('game drawn by '.length) : t;
+  const timeAt = reason.search(/\btime\b/);
+  if (/\btimeout vs\.? insufficient/.test(reason) || (timeAt >= 0 && /\binsufficient/.test(reason.slice(timeAt)))) {
+    return 'timeout_vs_insufficient';
+  }
   if (/\babandon/.test(reason)) return 'abandon';
   if (/\bresign/.test(reason)) return draw ? null : 'resign';
   if (/\bcheckmate|\bmate\b/.test(reason)) return draw ? null : 'mate';
@@ -251,6 +276,6 @@ export function pgnToNormalizedGame(
     startedAt: at,
     endedAt: end !== null && (at === null || end >= at) ? end : at,
     moves,
-    headers: Object.fromEntries(game.headers),
+    headers: storedTags(game.headers),
   };
 }
