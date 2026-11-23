@@ -332,7 +332,7 @@ describe(`local explorer performance (50k-game profile, ${OTHER_GAMES.toLocaleSt
     }, 600_000);
 
     it('reads the reference DB through its covering index', async () => {
-      const set = referenceGameSet(t.db, refDb);
+      const set = referenceGameSet(t.db, refDb, null);
       const where = setConditions(set, {}, { timeClasses: null, rated: null, from: null, to: null }, { color: null });
       const start = resolvePosition(undefined, '', getOpeningBook()).key;
       for (const plan of ['set', 'position'] as const) {

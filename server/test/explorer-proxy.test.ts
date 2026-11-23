@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
 import { openDb } from '../src/db/index.ts';
 import { migrate } from '../src/db/migrate.ts';
-import { createExplorerProxy, TABLEBASE_PER_CLIENT_PER_MIN } from '../src/explorer/proxy.ts';
+import { createExplorerProxy, PER_CLIENT_PER_MIN, TABLEBASE_PER_CLIENT_PER_MIN } from '../src/explorer/proxy.ts';
 import { HttpError } from '../src/http/errors.ts';
 import { createUpstream } from '../src/http/upstream.ts';
 import { writeSettings } from '../src/settings.ts';
@@ -63,9 +63,12 @@ describe('explorer proxies', () => {
   afterAll(async () => {
     await t?.close();
   });
+  let users = 0;
   afterEach(() => {
     up.reset();
     writeSettings(t.db, { lichessToken: null });
+    // Each test starts with a fresh user: a user's share of each upstream budget is per minute.
+    user = createUserSession(t.db, { username: `uma${++users}` }).cookie;
   });
 
   const get = (url: string, cookie: string | null = user) => t.app.inject({ url, headers: cookie ? { cookie } : {} });
@@ -181,6 +184,44 @@ describe('explorer proxies', () => {
       expect(missing.json().error.code).toBe('not_found');
       expect((await get('/api/explorer/masters/pgn/ZZZZZZZZ')).headers['x-outpost-cache']).toBe('hit');
       expect(up.calls).toHaveLength(2);
+    });
+  });
+
+  describe('client shares', () => {
+    it("gives one user at most half of the masters budget, so another user's requests still go through", async () => {
+      // A fresh app: the instance budget is untouched by the other tests.
+      const own = fakeUpstream();
+      own.on(() => new Response(mastersSample, { headers: { 'content-type': 'application/json' } }));
+      const app = await makeTestApp({ fetch: own.fetch });
+      try {
+        const attacker = createUserSession(app.db, { username: 'greedy' }).cookie;
+        const victim = createUserSession(app.db, { username: 'victim' }).cookie;
+        const ask = (play: string, cookie: string) => app.app.inject({ url: `/api/explorer/masters?play=${play}`, headers: { cookie } });
+        const moves = ['a2a3', 'b2b3', 'c2c3', 'd2d3', 'e2e3', 'f2f3', 'g2g3', 'h2h3', 'a2a4', 'b2b4', 'c2c4', 'd2d4'];
+        const results: number[] = [];
+        for (const m of moves.slice(0, PER_CLIENT_PER_MIN.masters + 2)) results.push((await ask(m, attacker)).statusCode);
+        expect(results.filter(s => s === 200)).toHaveLength(PER_CLIENT_PER_MIN.masters);
+        expect(results.at(-1)).toBe(429);
+        expect(own.calls).toHaveLength(PER_CLIENT_PER_MIN.masters);
+        expect((await ask('e2e4', victim)).statusCode).toBe(200);
+        // Answers already cached stay free.
+        expect((await ask('a2a3', attacker)).headers['x-outpost-cache']).toBe('hit');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('answers a Studio cloud-eval request over the share as a miss', async () => {
+      up.on(() => new Response('', { status: 404 }));
+      const fens = ['8/8/8/8/8/8/8/K1k5', '8/8/8/8/8/8/8/K2k4', '8/8/8/8/8/8/8/K3k3', '8/8/8/8/8/8/8/K4k2', '8/8/8/8/8/8/8/K5k1'];
+      const statuses: Array<[number, string | undefined]> = [];
+      for (let i = 0; i < PER_CLIENT_PER_MIN.cloudEval + 1; i++) {
+        // Distinct positions (the move number is part of the key).
+        const res = await get(`/api/cloud-eval?fen=${encodeURIComponent(`${fens[i % 5]} w - - 0 ${i + 1}`)}&emptyOnMiss=1`);
+        statuses.push([res.statusCode, res.headers['x-outpost-cache'] as string | undefined]);
+      }
+      expect(statuses.every(([s]) => s === 200)).toBe(true);
+      expect(statuses.at(-1)![1]).toBe('client-limit');
     });
   });
 

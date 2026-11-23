@@ -82,8 +82,9 @@ export interface PlayerExplorerInput extends LilaRestrictionsInput {
 
 /** Input of the masters-shaped reference explorer. */
 export interface ReferenceExplorerInput extends LilaRestrictionsInput {
-  /** One reference database, or null for all of them. */
+  /** One reference database (the caller checked that the viewer may read it), or null for all the viewer may read. */
   databaseId: Id | null;
+  viewer: AuthUser | null;
   fen?: string | undefined;
   play?: string | undefined;
   moves?: number | undefined;
@@ -317,7 +318,7 @@ export function createLocalExplorer(deps: {
     },
 
     reference(input) {
-      const set = referenceGameSet(db, input.databaseId);
+      const set = referenceGameSet(db, input.databaseId, input.viewer);
       const position = resolvePosition(input.fen, input.play, openings());
       const filters = neutralFilters(input.filters);
       const restrictions = restrictionsOf(input);

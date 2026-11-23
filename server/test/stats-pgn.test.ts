@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { API_ROUTES } from '@outpost/shared/api';
 import { insertGame, parsePgnGames, type PgnGame } from '../src/chess/index.ts';
 import { pgnSourceKey } from '../src/chess/store.ts';
-import { gameToPgn, pgnMovetext, terminationTag, type PgnGameRecord } from '../src/stats/pgnWriter.ts';
+import { clockText, gameToPgn, pgnMovetext, terminationTag, type PgnGameRecord } from '../src/stats/pgnWriter.ts';
 import { prepareProfilePgnExport } from '../src/stats/pgnExport.ts';
 import { createSource, createUserSession, makeTestApp, testGame, type TestApp } from './helpers.ts';
 import { createProfile, get, RUY, seedAliceWorld, type AliceWorld } from './stats-fixtures.ts';
@@ -41,7 +41,15 @@ describe('PGN writer', () => {
     eco: null,
     opening_name: null,
     headers_json: null,
+    clocks: null,
     ...over,
+  });
+
+  it('writes stored clock times as %clk comments, renumbering Black after a comment', () => {
+    const text = gameToPgn(record({ moves_san: 'e4 e5 Nf3', clocks: '18000,17990,,' }));
+    expect(text.split('\n\n')[1]).toBe('1. e4 { [%clk 0:03:00] } 1... e5 { [%clk 0:02:59.9] } 2. Nf3 1/2-1/2\n');
+    expect(clockText(360_000 + 61_00)).toBe('1:01:01');
+    expect(clockText(980)).toBe('0:00:09.8');
   });
 
   it('writes the roster, the facts and the movetext', () => {
@@ -163,7 +171,7 @@ describe('PGN export of OTB games', () => {
     cookie = createUserSession(t.db, { username: 'otb-viewer' }).cookie;
     // FIDE sources read reference databases only (decision 1), so the OTB games live in one; the
     // PGN spelling of the name is a `pgn` source of the same reference database.
-    const dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'reference', 0)").lastInsertRowid;
+    const dbId = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('OTB', 'reference', 'public', 0)").lastInsertRowid;
     const fide = createSource(t.db, { kind: 'fide', key: '999001', displayName: 'Testplayer, Anna' });
     const pgn = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(dbId, 'Testplayer, A'), displayName: 'Testplayer, A', databaseId: dbId });
     createProfile(t.db, { slug: 'anna', displayName: 'Anna T.', ownerUserId: null, sources: [{ id: pgn }, { id: fide }] });

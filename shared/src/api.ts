@@ -343,7 +343,7 @@ export interface AdminSettings {
   chesscomContactFromEnv: boolean;
   /** Hour (0–23, UTC) of the daily auto refresh. */
   autoRefreshHourUtc: number;
-  /** Minimum minutes between manual updates of one profile. */
+  /** Minimum minutes between manual updates of one profile (admins are exempt). */
   updateCooldownMinutes: number;
   /** Months of history for a source's first import; 0 = everything. */
   initialSyncMonths: number;
@@ -700,8 +700,13 @@ export interface ProfileHeader {
   visibility: Visibility;
   autoRefresh: boolean;
   owner: { id: Id; username: string } | null;
-  /** The viewer may edit/delete/update this profile (owner or admin). */
+  /** The viewer may edit/delete this profile (owner or admin). */
   canEdit: boolean;
+  /**
+   * The viewer may ask for a manual update (`POST /api/profiles/:slug/update`): every signed-in
+   * viewer of the profile. The cooldown applies to everyone but admins (`queue.cooldownUntil`).
+   */
+  canUpdate?: boolean;
   bookmarked: boolean;
   /** Sources visible to the viewer (the owner also sees hidden ones, flagged `hidden`). */
   sources: SourceSummary[];
@@ -717,7 +722,12 @@ export interface BookmarkResponse {
   bookmarked: boolean;
 }
 
-/** `POST /api/profiles/:slug/update` → enqueued sync jobs (fails with `cooldown` when too soon). */
+/**
+ * `POST /api/profiles/:slug/update` → enqueued sync jobs, one per source the viewer sees (every
+ * signed-in viewer of the profile may ask). Fails with 429 `cooldown` (`details.retryAt`) within
+ * `updateCooldownMinutes` of the profile's last update; admins are exempt and their syncs run at
+ * high priority.
+ */
 export interface ProfileUpdateResponse {
   jobs: JobInfo[];
   queue: ProfileQueueInfo;
@@ -1359,7 +1369,10 @@ export interface DatabaseInfo {
   builtin?: boolean;
 }
 
-/** `GET /api/databases`. Mine plus visible public ones. */
+/**
+ * `GET /api/databases`. Mine, then other users' public ones, then the reference databases the
+ * viewer may read (every public one; private ones for admins), each group by name.
+ */
 export interface DatabasesResponse {
   databases: DatabaseInfo[];
 }

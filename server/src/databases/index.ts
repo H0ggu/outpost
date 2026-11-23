@@ -4,8 +4,9 @@
  * (`import.ts`). Reference databases are readable here too (instance-wide data); only admins may
  * change them, and their imports go through the reference module.
  *
- * Access: `loadDatabaseForViewer` (src/profiles/access.ts): owner or admin edit a `games`
- * database; others see it only while it is public (404 otherwise).
+ * Access: `loadDatabaseForViewer` (src/profiles/access.ts, the one database rule): owner or admin
+ * edit a `games` database; other signed-in users see it only while it is public; a reference
+ * database is readable by everyone unless an admin made it private (404 otherwise).
  */
 import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import type {
@@ -21,12 +22,14 @@ import type {
 } from '@outpost/shared/api';
 import { playerKey } from '@outpost/shared/chess';
 import { z } from 'zod';
+import { relinkFideSources } from '../chess/index.ts';
 import type { Config } from '../config.ts';
-import type { Db } from '../db/index.ts';
+import type { Db, SqlValue } from '../db/index.ts';
 import { forbidden, notFound } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import { getJob } from '../jobs/index.ts';
-import type { ViewableDatabase } from '../profiles/access.ts';
+import { READABLE_DATABASE_SQL, readerParams, type ViewableDatabase } from '../profiles/access.ts';
+import { BROADCAST_BUILTIN } from '../reference/databases.ts';
 import { cancelQueuedSyncs } from '../profiles/service.ts';
 import { DB_GAME_ROW_COLUMNS, likeContains, toDbGameRow, type DbGameRowRecord } from '../stats/index.ts';
 import { dropDatabaseUploads } from './import.ts';
@@ -152,15 +155,22 @@ export function databaseInfo(db: Db, database: ViewableDatabase, viewer: AuthUse
   return toInfo(db, row, viewer);
 }
 
-/** `GET /api/databases`: my `games` databases first, then the public ones of others (by name). */
+/**
+ * `GET /api/databases`: my `games` databases first, then the public ones of others, then the
+ * reference databases the viewer may read (instance-wide data, decision 2; private ones for admins
+ * only), each group by name.
+ */
 export function listDatabases(db: Db, viewer: AuthUser | null): DatabaseInfo[] {
-  const rows = db.all<DatabaseRow>(
-    `SELECT ${DATABASE_COLUMNS} FROM databases d LEFT JOIN users u ON u.id = d.owner_user_id
-      WHERE d.kind = 'games' AND (d.visibility = 'public' OR d.owner_user_id = ?)
-      ORDER BY (d.owner_user_id IS ?) DESC, d.name COLLATE NOCASE, d.id`,
-    [viewer?.id ?? null, viewer?.id ?? -1],
+  const rows = db.all<DatabaseRow & { builtin: string | null }>(
+    `SELECT ${DATABASE_COLUMNS}, r.builtin FROM databases d
+       LEFT JOIN users u ON u.id = d.owner_user_id
+       LEFT JOIN reference_databases r ON r.database_id = d.id
+      WHERE (d.kind = 'games' AND (d.visibility = 'public' OR d.owner_user_id = :me))
+         OR (d.kind = 'reference' AND ${READABLE_DATABASE_SQL})
+      ORDER BY d.kind = 'reference', (d.owner_user_id IS :me) DESC, (r.builtin IS NULL), d.name COLLATE NOCASE, d.id`,
+    readerParams(viewer),
   );
-  return rows.map(r => toInfo(db, r, viewer));
+  return rows.map(r => ({ ...toInfo(db, r, viewer), ...(r.kind === 'reference' ? { builtin: r.builtin === BROADCAST_BUILTIN } : {}) }));
 }
 
 /** 403 unless the viewer may change the database. */
@@ -183,7 +193,10 @@ export function createDatabase(db: Db, viewer: AuthUser, body: CreateDatabaseReq
   ).lastInsertRowid;
 }
 
-/** `PATCH /api/databases/:id`. */
+/**
+ * `PATCH /api/databases/:id`. A reference database made private becomes admins-only, which also
+ * takes it out of every FIDE player (and a public one puts it back): `relinkFideSources`.
+ */
 export function updateDatabase(db: Db, database: ViewableDatabase, patch: UpdateDatabaseRequest): void {
   requireDatabaseEditor(database);
   const sets: string[] = [];
@@ -199,7 +212,13 @@ export function updateDatabase(db: Db, database: ViewableDatabase, patch: Update
     sets.push(`${column} = ?`);
     params.push(v);
   }
-  if (sets.length) db.run(`UPDATE databases SET ${sets.join(', ')} WHERE id = ?`, [...params, database.id]);
+  if (sets.length === 0) return;
+  db.tx(() => {
+    db.run(`UPDATE databases SET ${sets.join(', ')} WHERE id = ?`, [...params, database.id]);
+    if (database.kind === 'reference' && patch.visibility !== undefined && patch.visibility !== database.visibility) {
+      relinkFideSources(db, database.id);
+    }
+  });
 }
 
 const DELETE_BATCH = 500;
@@ -244,26 +263,56 @@ export function deleteDatabaseGame(db: Db, database: ViewableDatabase, gameId: I
 // Games
 // ---------------------------------------------------------------------------
 
-/** `GET /api/databases/:id/games`: newest first; `q` matches a player name or the event. */
-export function databaseGames(db: Db, database: ViewableDatabase, query: { q?: string | undefined; page: number; pageSize: number }): DbGamesPage {
-  const where = ['g.database_id = ?'];
-  const params: Array<string | number> = [database.id];
+/** Game ids a search scans between two yields to the event loop. */
+export const SEARCH_SCAN_CHUNK = 20_000;
+/** Matches a search keeps while counting: up to this many, the page comes from them (no second scan). */
+const SEARCH_KEEP_IDS = 5_000;
+
+/**
+ * `GET /api/databases/:id/games`: newest first; `q` matches a player name or the event.
+ * A search (a substring match, so no index helps) counts its matches over the database in id
+ * ranges of `SEARCH_SCAN_CHUNK`, yielding to the event loop between them, so a search over a
+ * large reference database never holds the server; when there are few matches the page is cut
+ * from them, otherwise the newest-first scan stops as soon as the page is full.
+ */
+export async function databaseGames(
+  db: Db,
+  database: ViewableDatabase,
+  query: { q?: string | undefined; page: number; pageSize: number },
+): Promise<DbGamesPage> {
+  const page = (sql: string, params: SqlValue[]): DbGamesPage['games'] =>
+    db
+      .all<DbGameRowRecord>(`SELECT ${DB_GAME_ROW_COLUMNS} FROM games g WHERE ${sql} ORDER BY g.ended_at DESC, g.id DESC LIMIT ? OFFSET ?`, [
+        ...params,
+        query.pageSize,
+        (query.page - 1) * query.pageSize,
+      ])
+      .map(toDbGameRow);
+  const paging = { page: query.page, pageSize: query.pageSize };
   const q = query.q?.trim();
-  if (q) {
-    where.push(`(g.white_key LIKE ? ESCAPE '\\' OR g.black_key LIKE ? ESCAPE '\\' OR g.event LIKE ? ESCAPE '\\')`);
-    const key = likeContains(playerKey(q));
-    params.push(key, key, likeContains(q));
+  if (!q) {
+    const total = db.value<number>('SELECT COUNT(*) FROM games g WHERE g.database_id = ?', [database.id]) ?? 0;
+    return { total, ...paging, games: page('g.database_id = ?', [database.id]) };
   }
-  const sql = where.join(' AND ');
-  const total = db.value<number>(`SELECT COUNT(*) FROM games g WHERE ${sql}`, params) ?? 0;
-  const games = db
-    .all<DbGameRowRecord>(`SELECT ${DB_GAME_ROW_COLUMNS} FROM games g WHERE ${sql} ORDER BY g.ended_at DESC, g.id DESC LIMIT ? OFFSET ?`, [
-      ...params,
-      query.pageSize,
-      (query.page - 1) * query.pageSize,
-    ])
-    .map(toDbGameRow);
-  return { total, page: query.page, pageSize: query.pageSize, games };
+  const match = `(g.white_key LIKE ? ESCAPE '\\' OR g.black_key LIKE ? ESCAPE '\\' OR g.event LIKE ? ESCAPE '\\')`;
+  const key = likeContains(playerKey(q));
+  const matchParams = [key, key, likeContains(q)];
+  const range = db.get<{ lo: Id | null; hi: Id | null }>('SELECT min(id) AS lo, max(id) AS hi FROM games WHERE database_id = ?', [database.id]);
+  let total = 0;
+  const kept: Id[] = [];
+  if (range?.lo != null && range.hi != null) {
+    for (let lo = range.lo; lo <= range.hi; lo += SEARCH_SCAN_CHUNK) {
+      if (lo > range.lo) await yieldToLoop();
+      const ids = db.all<{ id: Id }>(
+        `SELECT g.id FROM games g WHERE g.database_id = ? AND g.id BETWEEN ? AND ? AND ${match}`,
+        [database.id, lo, lo + SEARCH_SCAN_CHUNK - 1, ...matchParams],
+      );
+      total += ids.length;
+      if (total <= SEARCH_KEEP_IDS) for (const r of ids) kept.push(r.id);
+    }
+  }
+  if (total <= SEARCH_KEEP_IDS) return { total, ...paging, games: page('g.id IN (SELECT value FROM json_each(?))', [JSON.stringify(kept)]) };
+  return { total, ...paging, games: page(`g.database_id = ? AND ${match}`, [database.id, ...matchParams]) };
 }
 
 const EXPORT_BATCH = 500;
@@ -280,5 +329,7 @@ export async function* exportDatabasePgn(db: Db, databaseId: Id): AsyncGenerator
     yield `${rows.map(gameToPgn).join('\n\n')}\n\n`;
     lastId = rows[rows.length - 1]!.id;
     if (rows.length < EXPORT_BATCH) return;
+    // A fast client never makes the socket push back: let other requests in between batches.
+    await yieldToLoop();
   }
 }

@@ -9,10 +9,11 @@
  *
  * Owner: jobs. The signatures are the cross-module contract; the bodies may be optimised.
  */
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { Chess } from 'chessops/chess';
 import { makeSanAndPlay, parseSan } from 'chessops/san';
 import type { EpochMs, GameOrigin, GameResult, Id, SourceKind, Termination, TimeClass, Title } from '@outpost/shared/api';
-import { colorChar, epdOf, outcomeFor, playerKey, stdUci, type Color } from '@outpost/shared/chess';
+import { colorChar, epdOf, outcomeFor, parseTimeControl, playerKey, stdUci, type Color } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
 import { classifyOpening, getOpeningBook, type OpeningBook, type OpeningMatch } from './openings.ts';
 import { posKey } from './posKey.ts';
@@ -63,6 +64,24 @@ export interface NormalizedGame {
   moves: readonly string[];
   /** Original PGN headers (stored as headers_json), or null. */
   headers: Record<string, string> | null;
+  /**
+   * Time left on the mover's clock after each ply, in centiseconds (null for a ply without one);
+   * omitted or null when unknown. Stored as `games.clocks` (migration 203).
+   */
+  clocks?: ReadonlyArray<number | null> | null;
+}
+
+/** `games.clocks` text of a clock list (null when it holds no clock). */
+export function clocksText(clocks: ReadonlyArray<number | null> | null | undefined, plies: number): string | null {
+  if (!clocks) return null;
+  const kept = clocks.slice(0, plies).map(c => (c !== null && Number.isFinite(c) && c >= 0 ? String(Math.round(c)) : ''));
+  return kept.some(c => c !== '') ? kept.join(',') : null;
+}
+
+/** `games.clocks` → centiseconds per ply (null where a ply has none). */
+export function parseClocks(text: string | null | undefined): Array<number | null> {
+  if (!text) return [];
+  return text.split(',').map(c => (c === '' ? null : Number(c)));
 }
 
 /** `insertGame` rejected the game (illegal or unparsable move). Importers count it as skipped. */
@@ -93,8 +112,27 @@ interface GameFacts {
   endedAt: EpochMs | null;
   timeClass: TimeClass;
   rated: boolean;
+  /** `player_games.rating_pool` (`ratingPoolOf`). */
+  ratingPool: RatingPool | null;
   white: SideFacts;
   black: SideFacts;
+}
+
+/** A rating pool other than the time class's own (`player_games.rating_pool`, migration 202). */
+export type RatingPool = 'ultraBullet';
+
+/**
+ * The rating pool of a game when it is not its time class's own: Lichess rates UltraBullet
+ * (estimated duration `initial + 40 × increment` under 30 s) separately from bullet, though
+ * Outpost files those games under `bullet`. Applies to synced Lichess games and Lichess PGN
+ * exports (a lichess.org `Site`). Rating views (charts, current ratings, averages) leave such
+ * rows out; everything else counts them as bullet games.
+ */
+export function ratingPoolOf(g: { origin: GameOrigin; timeClass: TimeClass; timeControl: string | null; url: string | null }): RatingPool | null {
+  if (g.timeClass !== 'bullet') return null;
+  if (g.origin !== 'lichess' && !(g.url ?? '').startsWith('https://lichess.org/')) return null;
+  const clock = parseTimeControl(g.timeControl);
+  return clock !== null && clock !== 'correspondence' && clock.initial + 40 * clock.increment < 30 ? 'ultraBullet' : null;
 }
 interface SideFacts {
   name: string;
@@ -115,11 +153,12 @@ function opponentIdentity(origin: GameOrigin, opp: SideFacts): { kind: SourceKin
 /**
  * Sources that played this game, with their colour (PLAN §7: one row per source that appears).
  *
- * `fide` sources link **reference-database games only** (PLAN §5 "A FIDE player profile is built
- * from reference-DB games"; docs/DECISIONS.md): a WhiteFideId / BlackFideId tag in a user's PGN
- * database never puts that game on a (possibly public) FIDE profile. Migration 601's trigger
- * `reference_fide_player_games` enforces the same rule for every writer and also keeps one copy
- * per game when several reference databases hold it (the first copy stored wins).
+ * `fide` sources link **games of public reference databases only** (PLAN §5 "A FIDE player profile
+ * is built from reference-DB games"; docs/DECISIONS.md): a WhiteFideId / BlackFideId tag in a
+ * user's PGN database never puts that game on a (possibly public) FIDE profile, and neither does
+ * an admin's private reference database. The trigger `reference_fide_player_games` (migrations
+ * 601, 602) enforces the rule for every writer and also keeps one copy per game when several
+ * reference databases hold it (the first copy stored wins).
  */
 function matchSources(db: Db, g: GameFacts): Array<{ sourceId: Id; color: Color }> {
   const out: Array<{ sourceId: Id; color: Color }> = [];
@@ -141,14 +180,14 @@ function matchSources(db: Db, g: GameFacts): Array<{ sourceId: Id; color: Color 
 
 const INSERT_PLAYER_GAME = `INSERT OR IGNORE INTO player_games
   (source_id, game_id, color, outcome, rating, rating_after, opp_name, opp_key, opp_rating, opp_title,
-   opp_source_kind, ended_at, time_class, rated)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+   opp_source_kind, ended_at, time_class, rated, rating_pool)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 /** Same row, but an existing one takes this import's ratings and titles (the source's own sync knows best). */
 const UPSERT_PLAYER_GAME = `INSERT INTO player_games
   (source_id, game_id, color, outcome, rating, rating_after, opp_name, opp_key, opp_rating, opp_title,
-   opp_source_kind, ended_at, time_class, rated)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+   opp_source_kind, ended_at, time_class, rated, rating_pool)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (source_id, game_id) DO UPDATE SET
     rating = excluded.rating,
     rating_after = COALESCE(excluded.rating_after, player_games.rating_after),
@@ -174,6 +213,7 @@ function writePlayerGame(db: Db, sourceId: Id, gameId: Id, color: Color, g: Game
     g.endedAt,
     g.timeClass,
     g.rated,
+    g.ratingPool,
   ]);
   return r.changes > 0;
 }
@@ -211,6 +251,13 @@ function writePositions(db: Db, gameId: Id, epds: readonly string[], ucis: reado
 }
 
 /**
+ * The rating a `games` row keeps for a side: as the site reports it in its PGN. Chess.com reports
+ * post-game ratings (`ratingAfter`; the importer derives the owner's pre-game `rating` for
+ * `player_games` only), every other origin pre-game ratings (migration 204).
+ */
+const reportedRating = (origin: GameOrigin, p: NormalizedPlayer): number | null => (origin === 'chesscom' ? (p.ratingAfter ?? p.rating) : p.rating);
+
+/**
  * Stores one game: validates and normalises the moves, classifies the opening, writes `games`,
  * `positions` (plies 0…50) and a `player_games` row for every existing source that played it
  * (matched by kind and key: lichess/chesscom username, `pgn` `<dbId>:<name>`, `fide` id).
@@ -234,6 +281,7 @@ export function insertGame(
     endedAt: game.endedAt,
     timeClass: game.timeClass,
     rated: game.rated,
+    ratingPool: ratingPoolOf(game),
     white: { ...game.white, key: playerKey(game.white.name) },
     black: { ...game.black, key: playerKey(game.black.name) },
   };
@@ -248,8 +296,8 @@ export function insertGame(
         `INSERT INTO games (origin, origin_id, url, database_id, white, black, white_key, black_key,
            white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id, result,
            termination, time_class, time_control, rated, event, round, started_at, ended_at, ply_count,
-           moves_san, eco, opening_name, opening_ply, accuracy_white, accuracy_black, headers_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           moves_san, eco, opening_name, opening_ply, accuracy_white, accuracy_black, headers_json, clocks)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           game.origin,
           game.originId,
@@ -259,8 +307,8 @@ export function insertGame(
           game.black.name,
           facts.white.key,
           facts.black.key,
-          game.white.rating,
-          game.black.rating,
+          reportedRating(game.origin, game.white),
+          reportedRating(game.origin, game.black),
           game.white.title,
           game.black.title,
           game.white.fideId,
@@ -282,6 +330,7 @@ export function insertGame(
           game.white.accuracy,
           game.black.accuracy,
           game.headers ? JSON.stringify(game.headers) : null,
+          clocksText(game.clocks, sans.length),
         ],
       ).lastInsertRowid;
 
@@ -307,6 +356,8 @@ interface GameSideRow {
   result: GameResult;
   ended_at: EpochMs | null;
   time_class: TimeClass;
+  time_control: string | null;
+  url: string | null;
   rated: number;
   white: string;
   black: string;
@@ -320,69 +371,152 @@ interface GameSideRow {
   black_fide_id: string | null;
 }
 
+const GAME_SIDE_COLUMNS = `id, origin, database_id, result, ended_at, time_class, time_control, url, rated, white, black, white_key, black_key,
+    white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id`;
+
+/** A source's games from one side: the indexed column, its value and the extra conditions. */
+interface SideQuery {
+  color: Color;
+  sql: string;
+  params: Array<string | number>;
+}
+
+/**
+ * The queries that find a source's games, one per side. Each reads one index (`white_key`,
+ * `black_key`, `white_fide_id`, `black_fide_id`, all ordered by rowid within a value), so batches
+ * can walk it by id. Games of a `fide` source: public reference databases only (migration 602).
+ */
+function sourceSideQueries(db: Db, sourceId: Id): SideQuery[] | null {
+  const src = db.get<{ kind: SourceKind; key: string }>('SELECT kind, key FROM sources WHERE id = ?', [sourceId]);
+  if (!src) return null;
+  return (['white', 'black'] as const).map(color => {
+    switch (src.kind) {
+      case 'lichess':
+      case 'chesscom':
+        return { color, sql: `${color}_key = ? AND origin = ?`, params: [src.key, src.kind] };
+      case 'fide':
+        return {
+          color,
+          sql: `${color}_fide_id = ? AND origin = 'reference'
+                AND database_id IN (SELECT id FROM databases WHERE kind = 'reference' AND visibility = 'public')`,
+          params: [src.key],
+        };
+      case 'pgn': {
+        const sep = src.key.indexOf(':');
+        return { color, sql: `${color}_key = ? AND database_id = ?`, params: [src.key.slice(sep + 1), Number(src.key.slice(0, sep))] };
+      }
+    }
+  });
+}
+
+/** Writes the missing rows of `sourceId` for these games, playing `color`. */
+function linkRows(db: Db, sourceId: Id, color: Color, rows: readonly GameSideRow[]): number {
+  let added = 0;
+  for (const r of rows) {
+    // A Chess.com row holds post-game ratings (migration 204): the rating after the game is known.
+    const after = (rating: number | null): number | null => (r.origin === 'chesscom' ? rating : null);
+    const facts: GameFacts = {
+      origin: r.origin,
+      databaseId: r.database_id,
+      result: r.result,
+      endedAt: r.ended_at,
+      timeClass: r.time_class,
+      rated: r.rated === 1,
+      ratingPool: ratingPoolOf({ origin: r.origin, timeClass: r.time_class, timeControl: r.time_control, url: r.url }),
+      white: { name: r.white, key: r.white_key, rating: r.white_rating, ratingAfter: after(r.white_rating), title: r.white_title, fideId: r.white_fide_id },
+      black: { name: r.black, key: r.black_key, rating: r.black_rating, ratingAfter: after(r.black_rating), title: r.black_title, fideId: r.black_fide_id },
+    };
+    if (writePlayerGame(db, sourceId, r.id, color, facts)) added++;
+  }
+  return added;
+}
+
 /**
  * Adds the missing `player_games` rows of one source from games already stored: a `pgn` source's
- * player in its database, a `fide` source's games in the reference databases (one copy per game,
- * oldest first: see `matchSources`), or a lichess/chesscom source's games imported while syncing
- * someone else. Existing rows are kept (so `rating_after` survives).
- * Returns the number of rows added. Runs in one transaction.
+ * player in its database, a `fide` source's games in the public reference databases (one copy per
+ * game, oldest first: see `matchSources`), or a lichess/chesscom source's games imported while
+ * syncing someone else. Existing rows are kept (so `rating_after` survives).
+ * Returns the number of rows added. Runs in one transaction: for a source with many games use
+ * `rebuildPlayerGamesInBatches`, which lets the server breathe in between.
  */
 export function rebuildPlayerGames(db: Db, sourceId: Id): number {
-  const src = db.get<{ kind: SourceKind; key: string; database_id: Id | null }>(
-    'SELECT kind, key, database_id FROM sources WHERE id = ?',
-    [sourceId],
-  );
-  if (!src) return 0;
-  const cols = `id, origin, database_id, result, ended_at, time_class, rated, white, black, white_key, black_key,
-    white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id`;
-  let rows: GameSideRow[];
-  let isWhite: (r: GameSideRow) => boolean;
-  switch (src.kind) {
-    case 'lichess':
-    case 'chesscom':
-      rows = db.all<GameSideRow>(`SELECT ${cols} FROM games WHERE origin = ? AND (white_key = ? OR black_key = ?)`, [
-        src.kind,
-        src.key,
-        src.key,
-      ]);
-      isWhite = r => r.white_key === src.key;
-      break;
-    case 'fide':
-      rows = db.all<GameSideRow>(
-        `SELECT ${cols} FROM games WHERE origin = 'reference' AND (white_fide_id = ? OR black_fide_id = ?) ORDER BY id`,
-        [src.key, src.key],
-      );
-      isWhite = r => r.white_fide_id === src.key;
-      break;
-    case 'pgn': {
-      const sep = src.key.indexOf(':');
-      const dbId = Number(src.key.slice(0, sep));
-      const name = src.key.slice(sep + 1);
-      rows = db.all<GameSideRow>(`SELECT ${cols} FROM games WHERE database_id = ? AND (white_key = ? OR black_key = ?)`, [
-        dbId,
-        name,
-        name,
-      ]);
-      isWhite = r => r.white_key === name;
-      break;
-    }
-  }
+  const sides = sourceSideQueries(db, sourceId);
+  if (!sides) return 0;
   return db.tx(() => {
     let added = 0;
-    for (const r of rows) {
-      const facts: GameFacts = {
-        origin: r.origin,
-        databaseId: r.database_id,
-        result: r.result,
-        endedAt: r.ended_at,
-        timeClass: r.time_class,
-        rated: r.rated === 1,
-        white: { name: r.white, key: r.white_key, rating: r.white_rating, ratingAfter: null, title: r.white_title, fideId: r.white_fide_id },
-        black: { name: r.black, key: r.black_key, rating: r.black_rating, ratingAfter: null, title: r.black_title, fideId: r.black_fide_id },
-      };
-      if (writePlayerGame(db, sourceId, r.id, isWhite(r) ? 'white' : 'black', facts)) added++;
+    for (const side of sides) {
+      const rows = db.all<GameSideRow>(`SELECT ${GAME_SIDE_COLUMNS} FROM games WHERE ${side.sql} ORDER BY id`, side.params);
+      added += linkRows(db, sourceId, side.color, rows);
     }
     return added;
+  });
+}
+
+/** Games per transaction of `rebuildPlayerGamesInBatches`. */
+export const REBUILD_LINK_BATCH = 2000;
+
+/**
+ * `rebuildPlayerGames` in batches of `batchSize` games (by id, through the side's index), each in
+ * its own transaction, yielding to the event loop in between, so linking a player with millions of
+ * stored games never holds the server. Stops between batches when `signal` aborts (throws its
+ * reason). Returns the number of rows added.
+ */
+export async function rebuildPlayerGamesInBatches(
+  db: Db,
+  sourceId: Id,
+  opts: { signal?: AbortSignal; batchSize?: number } = {},
+): Promise<number> {
+  const sides = sourceSideQueries(db, sourceId);
+  if (!sides) return 0;
+  const batchSize = Math.max(1, opts.batchSize ?? REBUILD_LINK_BATCH);
+  let added = 0;
+  for (const side of sides) {
+    let after = 0;
+    for (;;) {
+      opts.signal?.throwIfAborted();
+      const rows = db.all<GameSideRow>(`SELECT ${GAME_SIDE_COLUMNS} FROM games WHERE ${side.sql} AND id > ? ORDER BY id LIMIT ?`, [
+        ...side.params,
+        after,
+        batchSize,
+      ]);
+      if (rows.length === 0) break;
+      added += db.tx(() => linkRows(db, sourceId, side.color, rows));
+      after = rows[rows.length - 1]!.id;
+      if (rows.length < batchSize) break;
+      await yieldToLoop();
+    }
+  }
+  return added;
+}
+
+/**
+ * After an admin changed a reference database's visibility: `fide` sources link games of public
+ * reference databases only (migration 602), so each FIDE source with a game in that database
+ * drops its rows for games of non-public databases and gets the missing ones back (this
+ * database's games when it became public, another public database's copy of a game when it
+ * became private). Returns the number of sources relinked. Runs in one transaction.
+ */
+export function relinkFideSources(db: Db, databaseId: Id): number {
+  return db.tx(() => {
+    const ids = db
+      .all<{ id: Id }>(
+        `SELECT s.id FROM sources s
+          WHERE s.kind = 'fide'
+            AND (EXISTS (SELECT 1 FROM games g WHERE g.white_fide_id = s.key AND g.database_id = ?1)
+              OR EXISTS (SELECT 1 FROM games g WHERE g.black_fide_id = s.key AND g.database_id = ?1))`,
+        [databaseId],
+      )
+      .map(r => r.id);
+    for (const id of ids) {
+      db.run(
+        `DELETE FROM player_games AS pg
+          WHERE pg.source_id = ?
+            AND (SELECT d.visibility FROM games g JOIN databases d ON d.id = g.database_id WHERE g.id = pg.game_id) IS NOT 'public'`,
+        [id],
+      );
+      rebuildPlayerGames(db, id);
+    }
+    return ids.length;
   });
 }
 

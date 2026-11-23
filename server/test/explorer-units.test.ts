@@ -338,7 +338,7 @@ describe('PGN and performance helpers', () => {
       for (const f of all.filter(f => Number(f.slice(0, 3)) < 401)) copyFileSync(join(MIGRATIONS_DIR, f), join(dir, f));
       const db = openDb(':memory:');
       migrate(db, { dir });
-      const dbId = db.run("INSERT INTO databases (name, kind, created_at) VALUES ('old', 'reference', 0)").lastInsertRowid;
+      const dbId = db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('old', 'reference', 'public', 0)").lastInsertRowid;
       for (const k of ['a', 'b', 'c']) insertGame(db, testGame({ origin: 'reference', originId: `${dbId}:${k}`, databaseId: dbId }));
       insertGame(db, testGame({ originId: 'online' }));
       for (const f of all) copyFileSync(join(MIGRATIONS_DIR, f), join(dir, f));

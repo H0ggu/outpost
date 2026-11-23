@@ -295,8 +295,8 @@ describe('local explorers', () => {
       { set: resolveGameSet(t.db, { kind: 'profile', slug: 'alice' }, viewer()), colors: ['white', 'black', null] as const },
       { set: resolveGameSet(t.db, { kind: 'db', databaseId: gamesDb }, viewer()), colors: ['white', 'black'] as const },
       { set: resolveGameSet(t.db, { kind: 'ref', fideId: '99999902' }, viewer()), colors: ['white', null] as const },
-      { set: referenceGameSet(t.db, null), colors: [null] as const },
-      { set: referenceGameSet(t.db, refB), colors: [null] as const },
+      { set: referenceGameSet(t.db, null, null), colors: [null] as const },
+      { set: referenceGameSet(t.db, refB, null), colors: [null] as const },
     ];
 
     /**
@@ -390,7 +390,7 @@ describe('local explorers', () => {
     });
 
     it('drops moves that are not legal at the position, and their games', async () => {
-      const set = referenceGameSet(t.db, null);
+      const set = referenceGameSet(t.db, null, null);
       const q: PositionQuery = { set, where: setConditions(set, {}, NO_RESTRICTIONS, { color: null }), key: resolvePosition(undefined, '', book).key, color: null };
       for (const plan of ['set', 'position'] as const) {
         const r = await scanPosition(t.db, q, { moves: true, list: { order: 'rating', limit: 15, withMove: true }, legal: uci => uci !== 'e2e4', plan });
@@ -402,7 +402,7 @@ describe('local explorers', () => {
     });
 
     it('yields to the event loop between slices and stops when cancelled', async () => {
-      const set = referenceGameSet(t.db, null);
+      const set = referenceGameSet(t.db, null, null);
       const q: PositionQuery = { set, where: setConditions(set, {}, NO_RESTRICTIONS, { color: null }), key: resolvePosition(undefined, '', book).key, color: null };
       let ranMeanwhile = false;
       const scan = scanPosition(t.db, q, { moves: true, span: 1, plan: 'set' });
@@ -426,12 +426,12 @@ describe('local explorers', () => {
       // Every game reaches the start: more position rows than profile rows → walk the profile.
       expect(await choosePlan(t.db, q(profile, start))).toMatchObject({ plan: 'set' });
       // One game (r1) reaches 2…Nc6 → walk the position.
-      expect(await choosePlan(t.db, q(referenceGameSet(t.db, null), rare))).toEqual({ plan: 'position', rows: 1 });
+      expect(await choosePlan(t.db, q(referenceGameSet(t.db, null, null), rare))).toEqual({ plan: 'position', rows: 1 });
       expect(await positionRowsUpTo(t.db, start, 3)).toBe(3);
     });
 
     it('reads reference databases through the covering index in both plans (EXPLAIN QUERY PLAN)', () => {
-      const set = referenceGameSet(t.db, null);
+      const set = referenceGameSet(t.db, null, null);
       const where = setConditions(set, {}, NO_RESTRICTIONS, { color: null });
       for (const plan of ['set', 'position'] as const) {
         const h = hitsSql({ set, where, key: 1, color: null }, plan, 1, 1000);
@@ -449,19 +449,19 @@ describe('local explorers', () => {
   describe('result cache', () => {
     it('keeps reference results across unrelated writes and drops them when the database changes', async () => {
       const local = createLocalExplorer({ db: t.db, openingsDir: t.config.openingsDir });
-      const first = await local.reference({ databaseId: refA, filters: {} });
-      expect(await local.reference({ databaseId: refA, filters: {} })).toBe(first);
+      const first = await local.reference({ viewer: null, databaseId: refA, filters: {} });
+      expect(await local.reference({ viewer: null, databaseId: refA, filters: {} })).toBe(first);
       // A profile sync and an import into another database leave it cached.
       insertGame(t.db, testGame({ originId: 'cache-unrelated', moves: sans('e4 e5') }));
       insertGame(t.db, testGame({ origin: 'reference', originId: `${refB}:cache-other`, databaseId: refB, moves: sans('e4'), timeClass: 'classical' }));
-      expect(await local.reference({ databaseId: refA, filters: {} })).toBe(first);
+      expect(await local.reference({ viewer: null, databaseId: refA, filters: {} })).toBe(first);
       // A game added to it (or removed) is a new version.
       const added = insertGame(t.db, testGame({ origin: 'reference', originId: `${refA}:cache-new`, databaseId: refA, moves: sans('d4'), timeClass: 'classical' })).gameId;
-      const second = await local.reference({ databaseId: refA, filters: {} });
+      const second = await local.reference({ viewer: null, databaseId: refA, filters: {} });
       expect(second).not.toBe(first);
       expect(second.white + second.draws + second.black).toBe(first.white + first.draws + first.black + 1);
       t.db.run('DELETE FROM games WHERE id = ?', [added]);
-      const third = await local.reference({ databaseId: refA, filters: {} });
+      const third = await local.reference({ viewer: null, databaseId: refA, filters: {} });
       expect(third).not.toBe(second);
       expect(third).toEqual(first);
       // Profiles are never cached (no version), but identical requests in flight share one scan.
@@ -489,15 +489,15 @@ describe('local explorers', () => {
 
     it('queues large scans for a slot and refuses when the queue is full', async () => {
       const local = createLocalExplorer({ db: t.db, openingsDir: t.config.openingsDir, maxConcurrentScans: 1, smallScanRows: 0 });
-      const requests = ['', 'e2e4', 'd2d4'].map(play => local.reference({ databaseId: null, play, filters: {} }));
+      const requests = ['', 'e2e4', 'd2d4'].map(play => local.reference({ viewer: null, databaseId: null, play, filters: {} }));
       expect(local.stats()).toMatchObject({ running: 1, queued: 2 });
       const results = await Promise.all(requests);
       expect(results.map(r => r.moves.length > 0)).toEqual([true, true, true]);
       expect(local.stats()).toMatchObject({ running: 0, queued: 0, inFlight: 0 });
       // A waiting request whose client leaves gives its place up.
       const controller = new AbortController();
-      const first = local.reference({ databaseId: null, play: 'g1f3', filters: {} });
-      const second = local.reference({ databaseId: null, play: 'c2c4', filters: {}, signal: controller.signal });
+      const first = local.reference({ viewer: null, databaseId: null, play: 'g1f3', filters: {} });
+      const second = local.reference({ viewer: null, databaseId: null, play: 'c2c4', filters: {}, signal: controller.signal });
       expect(local.stats().queued).toBe(1);
       controller.abort();
       await expect(second).rejects.toMatchObject({ statusCode: 499 });

@@ -14,7 +14,7 @@ describe('rebuild and local sync jobs', () => {
     insertGame(t.db, testGame({ origin: 'pgn', originId: `${dbId}:a`, databaseId: dbId, white: { name: 'Carol Smith' }, black: { name: 'Dave Jones', fideId: '999001' } }));
     insertGame(t.db, testGame({ origin: 'pgn', originId: `${dbId}:b`, databaseId: dbId, white: { name: 'Dave Jones', fideId: '999001' }, black: { name: 'Carol Smith' }, result: '0-1' }));
     // The same player in a reference database: FIDE sources link these games only (decision 1).
-    refDb = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'reference', 0)").lastInsertRowid;
+    refDb = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('OTB', 'reference', 'public', 0)").lastInsertRowid;
     insertGame(t.db, testGame({ origin: 'reference', originId: `${refDb}:a`, databaseId: refDb, white: { name: 'Erin Park' }, black: { name: 'Jones, Dave', fideId: '999001' } }));
     insertGame(t.db, testGame({ origin: 'reference', originId: `${refDb}:b`, databaseId: refDb, white: { name: 'Jones, Dave', fideId: '999001' }, black: { name: 'Erin Park' }, result: '0-1' }));
   });
@@ -162,4 +162,41 @@ describe('rebuild in batches', () => {
     expect(updates.at(-1)).toMatchObject({ done: 7, total: 7, counts: { playerGames: 7 } });
     expect(indexed()).toEqual(gameIds);
   });
+  it('links nothing again while the database is unchanged, and the new games once it changed', async () => {
+    const own = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('Own games', 'games', 0)").lastInsertRowid;
+    insertGame(t.db, testGame({ origin: 'pgn', originId: `${own}:a`, databaseId: own, white: { name: 'Dave Jones' }, black: { name: 'Q' } }));
+    insertGame(t.db, testGame({ origin: 'pgn', originId: `${own}:b`, databaseId: own, white: { name: 'Q' }, black: { name: 'Dave Jones' } }));
+    const dave = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(own, 'Dave Jones'), databaseId: own });
+    const run = async (full = false) => {
+      const { ctx, updates } = makeJobContext(t, 'sync', full ? { sourceId: dave, full: true } : { sourceId: dave });
+      await syncHandler(ctx);
+      return updates.at(-1)!;
+    };
+    expect(await run()).toMatchObject({ counts: { imported: 2 } });
+    expect(await run()).toMatchObject({ done: 0, message: expect.stringMatching(/up to date/i) });
+    // A row lost meanwhile comes back only when asked for a full sync or when the database changes.
+    t.db.run('DELETE FROM player_games WHERE source_id = ? AND game_id = (SELECT MIN(game_id) FROM player_games WHERE source_id = ?)', [dave, dave]);
+    expect(await run()).toMatchObject({ done: 0 });
+    expect(await run(true)).toMatchObject({ counts: { imported: 1 } });
+    t.db.run('DELETE FROM player_games WHERE source_id = ? AND game_id = (SELECT MIN(game_id) FROM player_games WHERE source_id = ?)', [dave, dave]);
+    insertGame(t.db, testGame({ origin: 'pgn', originId: `${own}:c`, databaseId: own, white: { name: 'Zed' }, black: { name: 'Yan' } }));
+    expect(await run()).toMatchObject({ counts: { imported: 1 } });
+    expect(t.db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [dave])).toBe(2);
+  });
+
+  it('links a source in batches with the same result as one transaction', async () => {
+    const { rebuildPlayerGames, rebuildPlayerGamesInBatches } = await import('../src/chess/store.ts');
+    const other = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('Batches', 'games', 0)").lastInsertRowid;
+    insertGame(t.db, testGame({ origin: 'pgn', originId: `${other}:a`, databaseId: other, white: { name: 'Erin Park' }, black: { name: 'Q' }, result: '0-1' }));
+    insertGame(t.db, testGame({ origin: 'pgn', originId: `${other}:b`, databaseId: other, white: { name: 'Q' }, black: { name: 'Erin Park' } }));
+    const erin = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(other, 'Erin Park'), databaseId: other });
+    expect(await rebuildPlayerGamesInBatches(t.db, erin, { batchSize: 1 })).toBe(2);
+    const linked = t.db.all('SELECT game_id, color, outcome FROM player_games WHERE source_id = ? ORDER BY game_id', [erin]);
+    t.db.run('DELETE FROM player_games WHERE source_id = ?', [erin]);
+    expect(rebuildPlayerGames(t.db, erin)).toBe(2);
+    expect(t.db.all('SELECT game_id, color, outcome FROM player_games WHERE source_id = ? ORDER BY game_id', [erin])).toEqual(linked);
+    expect(await rebuildPlayerGamesInBatches(t.db, erin, { batchSize: 1 })).toBe(0);
+    await expect(rebuildPlayerGamesInBatches(t.db, erin, { signal: AbortSignal.abort() })).rejects.toThrow();
+  });
+
 });

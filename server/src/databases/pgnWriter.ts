@@ -4,6 +4,8 @@
  * game (players, result), and well-known tags missing from the original are filled from the row.
  */
 import type { EpochMs, GameResult } from '@outpost/shared/api';
+import { parseClocks } from '../chess/store.ts';
+import { pgnMovetext } from '../stats/pgnWriter.ts';
 
 /** The `games` columns the writer needs. */
 export interface PgnGameRow {
@@ -27,12 +29,14 @@ export interface PgnGameRow {
   eco: string | null;
   opening_name: string | null;
   headers_json: string | null;
+  /** `games.clocks`, or null. */
+  clocks: string | null;
 }
 
 /** Column list for `PgnGameRow` (table alias `g`). */
 export const PGN_GAME_COLUMNS = `g.id, g.url, g.white, g.black, g.white_rating, g.black_rating, g.white_title, g.black_title,
   g.white_fide_id, g.black_fide_id, g.result, g.time_control, g.event, g.round, g.started_at, g.ended_at, g.moves_san,
-  g.eco, g.opening_name, g.headers_json`;
+  g.eco, g.opening_name, g.headers_json, g.clocks`;
 
 const ROSTER = ['Event', 'Site', 'Date', 'Round', 'White', 'Black', 'Result'] as const;
 const SETUP_TAGS = new Set(['SetUp', 'FEN']);
@@ -59,25 +63,9 @@ const storedHeaders = (json: string | null): Record<string, string> => {
   }
 };
 
-/** Movetext with move numbers, wrapped at 80 columns, ending with the result. */
-export function movetext(movesSan: string, result: GameResult): string {
-  const sans = movesSan.split(' ').filter(Boolean);
-  const tokens: string[] = [];
-  sans.forEach((san, i) => {
-    if (i % 2 === 0) tokens.push(`${i / 2 + 1}.`);
-    tokens.push(san);
-  });
-  tokens.push(result);
-  const lines: string[] = [];
-  let line = '';
-  for (const tok of tokens) {
-    if (line && line.length + 1 + tok.length > 80) {
-      lines.push(line);
-      line = tok;
-    } else line = line ? `${line} ${tok}` : tok;
-  }
-  if (line) lines.push(line);
-  return lines.join('\n');
+/** Movetext with move numbers (and clock comments when stored), wrapped at 80 columns, ending with the result. */
+export function movetext(movesSan: string, result: GameResult, clocks: string | null = null): string {
+  return pgnMovetext(movesSan, result, parseClocks(clocks));
 }
 
 /** One game as PGN text (no trailing blank line). */
@@ -108,5 +96,5 @@ export function gameToPgn(row: PgnGameRow): string {
   fill('ECO', row.eco);
   fill('Opening', row.opening_name);
   const head = [...tags].map(([k, v]) => `[${k} "${escapeTagValue(v)}"]`).join('\n');
-  return `${head}\n\n${movetext(row.moves_san, row.result)}`;
+  return `${head}\n\n${movetext(row.moves_san, row.result, row.clocks)}`;
 }

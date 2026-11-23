@@ -9,14 +9,15 @@
  *    (`POST /api/games/export/_ids`): the `since` cursor is on `createdAt`, so a correspondence
  *    game created before the cursor would otherwise never be imported once finished.
  * 3. `GET /api/games/user/{u}` as NDJSON (`since` = last `createdAt` + 1, `sort=dateAsc`, opening,
- *    accuracy, standard perf types, ongoing games listed so they can be tracked). Games are stored
+ *    accuracy, clocks, standard perf types, ongoing games listed so they can be tracked). Games are stored
  *    in short batches; the cursor is saved in the same transaction, so an interrupted sync resumes
  *    after the last stored batch. The first import starts `initialSyncMonths` back (0 = all); a
  *    `full` resync forgets the cursor and re-reads the whole history (resuming, not restarting,
  *    when that same job is interrupted).
  *
  * Mapping (`mapLichessGame`): variants, from-position games, games against the AI and anonymous
- * players are skipped; UltraBullet counts as bullet; ratings are pre-game and
+ * players are skipped; UltraBullet counts as bullet (its rating pool stays apart:
+ * `player_games.rating_pool`); clock times are kept (`games.clocks`); ratings are pre-game and
  * `ratingAfter = rating + ratingDiff`; a `draw` status is split into dead position / threefold /
  * 50-move / agreement from the final position. No Lichess endpoint used here needs a token (it
  * only raises the export rate when one is configured).
@@ -115,6 +116,8 @@ export interface LichessGame {
   initialFen?: string;
   daysPerTurn?: number;
   clock?: { initial: number; increment: number; totalTime?: number };
+  /** With `clocks=true`: the time left after each ply, in centiseconds. */
+  clocks?: number[];
   tournament?: string;
   swiss?: string;
   arenaTour?: { id: string; name?: string };
@@ -311,6 +314,7 @@ export function mapLichessGame(g: LichessGame): NormalizedGame | { skip: Lichess
     endedAt,
     moves,
     headers,
+    clocks: Array.isArray(g.clocks) ? g.clocks.map(c => (typeof c === 'number' && Number.isFinite(c) && c >= 0 ? c : null)) : null,
   };
 }
 
@@ -329,7 +333,7 @@ export interface LichessSyncOptions {
 }
 
 const gameParams = (): URLSearchParams =>
-  new URLSearchParams({ moves: 'true', opening: 'true', accuracy: 'true', clocks: 'false', evals: 'false' });
+  new URLSearchParams({ moves: 'true', opening: 'true', accuracy: 'true', clocks: 'true', evals: 'false' });
 
 /** Runs a sync of one Lichess source (see the file header). Returns the stored state. */
 export async function syncLichess(ctx: JobContext<'sync'>, src: SourceRow, opts: LichessSyncOptions = {}): Promise<LichessSyncState> {

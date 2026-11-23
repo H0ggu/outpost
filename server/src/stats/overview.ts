@@ -27,7 +27,7 @@ export const OVERVIEW_SPARKLINE_DAYS = 365;
 export const OVERVIEW_TOP_OPENINGS = 5;
 export const OVERVIEW_LATEST_GAMES = 5;
 
-/** Per source and time class, the rating after the latest rated game of the scope. */
+/** Per source and time class, the rating after the latest rated game of the scope (in the class's own rating pool). */
 export function currentRatings(scope: StatsScope): Array<{ sourceId: Id; timeClass: TimeClass; rating: number }> {
   const where = scopeWhere(scope);
   return scope.db
@@ -35,7 +35,7 @@ export function currentRatings(scope: StatsScope): Array<{ sourceId: Id; timeCla
       `SELECT pg.source_id AS source_id, pg.time_class AS time_class, MAX(pg.ended_at) AS t,
               COALESCE(pg.rating_after, pg.rating) AS r
          FROM ${PLAYER_GAMES_BY_PK}
-        WHERE ${where.sql} AND pg.rated = 1 AND COALESCE(pg.rating_after, pg.rating) IS NOT NULL
+        WHERE ${where.sql} AND pg.rated = 1 AND pg.rating_pool IS NULL AND COALESCE(pg.rating_after, pg.rating) IS NOT NULL
         GROUP BY 1, 2
         ORDER BY 1`,
       where.params,

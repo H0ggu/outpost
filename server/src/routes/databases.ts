@@ -57,14 +57,16 @@ import { perUserRateLimit } from '../profiles/rateLimit.ts';
  * loadDatabaseForViewer (404 for private databases of others). Mutations: requireUser, then owner
  * or admin (403). Imports run as the 'pgnImport' job registered here (src/databases/import.ts),
  * at most MAX_PENDING_IMPORTS per user at a time; pasted PGN is limited to MAX_PASTE_BYTES (the
- * JSON body is buffered), files to MAX_PGN_BYTES (streamed to disk). Exports are throttled per
- * user. Logic lives in src/databases/.
+ * JSON body is buffered), files to MAX_PGN_BYTES (streamed to disk). Exports and game lists
+ * (searches scan the whole database) are throttled per user. Logic lives in src/databases/.
  */
 
 /** Imports per IP per minute. */
 export const IMPORT_RATE_LIMIT = { max: 20, timeWindow: 60_000 } as const;
 /** Exports per user per minute (a reference DB can be millions of games). */
 export const EXPORT_RATE_LIMIT = perUserRateLimit(10, 60_000);
+/** Game list and search requests per user per minute (a search scans the whole database). */
+export const DB_GAMES_RATE_LIMIT = perUserRateLimit(60, 60_000);
 /** JSON body limit of the import route: pasted PGN plus JSON escaping. Uploads (multipart) are streamed and not affected. */
 const PASTE_BODY_LIMIT = Math.ceil(MAX_PASTE_BYTES * 1.25) + 64 * 1024;
 
@@ -153,10 +155,10 @@ const databaseRoutes: FastifyPluginAsync = async app => {
     },
   );
 
-  app.get(API_ROUTES.databaseGames(':id'), { preHandler: requireUser }, async (req): Promise<DbGamesPage> => {
+  app.get(API_ROUTES.databaseGames(':id'), { preHandler: requireUser, config: { rateLimit: DB_GAMES_RATE_LIMIT } }, async (req): Promise<DbGamesPage> => {
     const { id } = parseParams(idParams, req.params);
     const query = parseQuery(dbGamesQuerySchema, req.query);
-    return databaseGames(app.db, loadDatabaseForViewer(app.db, id, req.user), query);
+    return await databaseGames(app.db, loadDatabaseForViewer(app.db, id, req.user), query);
   });
 
   app.get(API_ROUTES.databaseExport(':id'), { preHandler: requireUser, config: { rateLimit: EXPORT_RATE_LIMIT } }, async (req, reply) => {

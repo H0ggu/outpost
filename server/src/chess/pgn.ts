@@ -11,16 +11,17 @@
  */
 import { createHash } from 'node:crypto';
 import { Chess } from 'chessops/chess';
-import { PgnParser, parseVariant, startingPosition, type Game, type PgnNodeData } from 'chessops/pgn';
+import { parseComment, PgnParser, parseVariant, startingPosition, type Game, type PgnNodeData } from 'chessops/pgn';
 import { makeSanAndPlay, parseSan } from 'chessops/san';
 import type { Id } from '@outpost/shared/api';
 import {
   epdOf,
   isTitle,
   parseResult,
+  parseTimeControl,
   playerKey,
   timeClassFromClock,
-  timeClassFromTimeControl,
+  type ClockSpec,
   type GameResult,
   type Termination,
   type TimeClass,
@@ -61,6 +62,26 @@ export async function* parsePgnGames(input: string | AsyncIterable<string | Uint
   yield* drain();
 }
 
+/**
+ * Clock times of the mainline from `[%clk h:mm:ss(.f)]` comments: the time left after each ply,
+ * in centiseconds (null for a ply without one), or null when no ply has one.
+ */
+export function mainlineClocks(game: PgnGame): Array<number | null> | null {
+  const out: Array<number | null> = [];
+  let any = false;
+  for (const node of game.moves.mainline()) {
+    let clock: number | null = null;
+    for (const c of node.comments ?? []) {
+      if (!c.includes('%clk')) continue;
+      const secs = parseComment(c).clock;
+      if (secs !== undefined && Number.isFinite(secs) && secs >= 0) clock = Math.round(secs * 100);
+    }
+    if (clock !== null) any = true;
+    out.push(clock);
+  }
+  return any ? out : null;
+}
+
 /** Why a PGN game was not imported (importers count these in `JobProgress.counts`). */
 export type PgnSkipReason = 'variant' | 'fromPosition' | 'noResult' | 'noMoves' | 'illegalMove';
 
@@ -81,10 +102,32 @@ export function pgnOriginId(
   return `${databaseId}:${h}`;
 }
 
+/**
+ * Longest tag value read or stored, and most tags stored per game. Real tags are short; chessops
+ * only bounds a game's text as a whole (about 1M characters), so a hostile file could otherwise
+ * store megabytes of headers per game or feed huge strings to the tag parsers below.
+ */
+export const MAX_TAG_VALUE_LENGTH = 1000;
+export const MAX_STORED_TAGS = 64;
+
 const header = (game: PgnGame, name: string): string | null => {
-  const v = game.headers.get(name)?.trim();
+  const v = game.headers.get(name)?.slice(0, MAX_TAG_VALUE_LENGTH).trim();
   return v && v !== '?' && v !== '-' ? v : null;
 };
+
+/** The tags stored as `headers_json`: the first `MAX_STORED_TAGS`, values cut to `MAX_TAG_VALUE_LENGTH`. */
+export function storedTags(headers: ReadonlyMap<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  let n = 0;
+  for (const [k, v] of headers) {
+    if (n++ >= MAX_STORED_TAGS) break;
+    out[k.slice(0, 100)] = v.slice(0, MAX_TAG_VALUE_LENGTH);
+  }
+  return out;
+}
+
+/** Longest Termination tag looked at (real ones are a username and a few words). */
+const MAX_TERMINATION_LENGTH = 200;
 
 const rating = (s: string | null): number | null => {
   const n = s && /^\d{1,4}$/.test(s) ? Number(s) : 0;
@@ -104,13 +147,47 @@ export function pgnDateTime(date: string | null, time: string | null): number | 
   return Number.isNaN(ms) ? null : ms;
 }
 
-/** Time class of a PGN TimeControl, including FIDE multi-period forms like `40/5400+30:1800+30`. */
-export function pgnTimeClass(tc: string | null): TimeClass {
-  const simple = timeClassFromTimeControl(tc);
-  if (simple !== 'unknown' || !tc) return simple;
+/**
+ * The FIDE rule (Laws of Chess, appendices A and B) on a clock in seconds: the time for 60 moves
+ * (base + 60 × increment) of at most 10 minutes is blitz, under 60 minutes rapid, else standard
+ * (`classical`); under 3 minutes counts as bullet. Over-the-board games use it wherever they are
+ * stored (user PGN databases and reference databases alike).
+ */
+export function fideTimeClass(clock: ClockSpec): TimeClass {
+  const t = clock.initial + 60 * clock.increment;
+  if (!(t > 0)) return 'unknown';
+  if (t < 180) return 'bullet';
+  if (t <= 600) return 'blitz';
+  if (t < 3600) return 'rapid';
+  return 'classical';
+}
+
+/**
+ * Time class of a PGN TimeControl (seconds, as the PGN standard says), including FIDE
+ * multi-period forms like `40/5400+30:1800+30` (first period). `rule`: `lichess` for games played
+ * on Lichess or Chess.com (Lichess's thresholds on `base + 40 × increment`, as for synced games),
+ * `fide` for over-the-board games (`fideTimeClass`).
+ */
+export function pgnTimeClass(tc: string | null, rule: 'lichess' | 'fide' = 'lichess'): TimeClass {
+  const classify = rule === 'fide' ? fideTimeClass : timeClassFromClock;
+  const simple = parseTimeControl(tc);
+  if (simple === 'correspondence') return 'correspondence';
+  if (simple !== null) return classify(simple);
+  if (!tc) return 'unknown';
   const m = /^\d+\/(\d+)(?:\+(\d+))?(?::|$)/.exec(tc);
-  if (m && (tc.includes(':') || m[2] !== undefined)) return timeClassFromClock({ initial: Number(m[1]), increment: Number(m[2] ?? 0) });
+  if (m && (tc.includes(':') || m[2] !== undefined)) return classify({ initial: Number(m[1]), increment: Number(m[2] ?? 0) });
   return 'unknown';
+}
+
+/** A game page on Lichess or Chess.com (not a broadcast or study): `Site` / `Link` of an online game. */
+const ONLINE_GAME_URL_RE =
+  /^https?:\/\/(?:lichess\.org\/(?!broadcast\/|study\/)[A-Za-z0-9]{8}(?:[A-Za-z0-9]{4})?(?:[/?#]|$)|(?:www\.)?chess\.com\/(?:game\/)?(?:live|daily)\/)/i;
+
+/** True for a PGN game played on Lichess or Chess.com (their exports), false for over-the-board games. */
+export function isOnlineSiteGame(headers: { get(name: string): string | undefined }): boolean {
+  const site = headers.get('Site')?.trim() ?? '';
+  const link = headers.get('Link')?.trim() ?? '';
+  return site === 'Chess.com' || ONLINE_GAME_URL_RE.test(site) || ONLINE_GAME_URL_RE.test(link);
 }
 
 /**
@@ -124,12 +201,15 @@ export function pgnTimeClass(tc: string | null): TimeClass {
  */
 export function terminationFromTag(tag: string | null, draw: boolean): Termination | null {
   if (!tag) return null;
-  const t = tag.trim().toLowerCase();
+  // Bounded input and no backtracking pattern: every test below is linear in the tag's length.
+  const t = tag.slice(0, MAX_TERMINATION_LENGTH).trim().toLowerCase();
   // Chess.com puts the winner's username first; only look at the words after " won ".
   const won = t.lastIndexOf(' won ');
-  const drawnBy = /^game drawn by (.+)$/.exec(t);
-  const reason = won >= 0 ? t.slice(won + 5) : drawnBy ? drawnBy[1]! : t;
-  if (/\btimeout vs\.? insufficient|\btime\b.*\binsufficient/.test(reason)) return 'timeout_vs_insufficient';
+  const reason = won >= 0 ? t.slice(won + 5) : t.startsWith('game drawn by ') ? t.slice('game drawn by '.length) : t;
+  const timeAt = reason.search(/\btime\b/);
+  if (/\btimeout vs\.? insufficient/.test(reason) || (timeAt >= 0 && /\binsufficient/.test(reason.slice(timeAt)))) {
+    return 'timeout_vs_insufficient';
+  }
   if (/\babandon/.test(reason)) return 'abandon';
   if (/\bresign/.test(reason)) return draw ? null : 'resign';
   if (/\bcheckmate|\bmate\b/.test(reason)) return draw ? null : 'mate';
@@ -169,6 +249,8 @@ const ratingDiff = (s: string | null): number | null => (s && /^[+-]?\d{1,4}$/.t
  *   (Chess.com and Lichess wording), then the final position for draws (dead position, threefold
  *   repetition, 50-move rule, else agreement); decisive games default to resignation.
  * - ratings are as written (`WhiteElo`); `ratingAfter` = Elo + `WhiteRatingDiff` when present.
+ * - `timeClass`: Lichess's thresholds for games played on Lichess or Chess.com (their `Site` /
+ *   `Link`), the FIDE rule for every other (over-the-board) game (`pgnTimeClass`).
  * - `startedAt` from `UTCDate`/`UTCTime` (else `Date`), `endedAt` from Chess.com's
  *   `EndDate`/`EndTime` when present, else the start.
  */
@@ -243,7 +325,7 @@ export function pgnToNormalizedGame(
     black,
     result,
     termination: termination(game, result, final),
-    timeClass: pgnTimeClass(timeControl),
+    timeClass: pgnTimeClass(timeControl, isOnlineSiteGame(game.headers) ? 'lichess' : 'fide'),
     timeControl,
     rated,
     event,
@@ -251,6 +333,8 @@ export function pgnToNormalizedGame(
     startedAt: at,
     endedAt: end !== null && (at === null || end >= at) ? end : at,
     moves,
-    headers: Object.fromEntries(game.headers),
+    headers: storedTags(game.headers),
+    // User databases keep clock times (the Studio shows them); reference databases don't (size).
+    clocks: ctx.origin === 'pgn' ? mainlineClocks(game) : null,
   };
 }

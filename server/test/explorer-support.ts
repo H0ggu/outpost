@@ -85,7 +85,7 @@ export function createProfile(
   return id;
 }
 
-/** Inserts a database; returns its id. */
+/** Inserts a database (reference ones public, as the reference module creates them; others private); returns its id. */
 export function createDatabase(
   db: Db,
   d: { name: string; kind: 'games' | 'reference'; ownerId?: Id | null; visibility?: 'public' | 'private' },
@@ -94,7 +94,7 @@ export function createDatabase(
     d.ownerId ?? null,
     d.name,
     d.kind,
-    d.visibility ?? 'private',
+    d.visibility ?? (d.kind === 'reference' ? 'public' : 'private'),
     Date.now(),
   ]).lastInsertRowid;
 }

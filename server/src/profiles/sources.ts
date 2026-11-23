@@ -9,12 +9,15 @@
  * - `insertSource` writes a resolved row (race-safe with ON CONFLICT).
  * - `sourceSummaries` builds `SourceSummary` rows (sync status, game counts, current ratings).
  *
- * `profile_json` holds the latest upstream snapshot. This module writes it when a source is
- * created; the sync engine (jobs module) refreshes it. The readers here accept these shapes:
+ * `profile_json` holds the latest upstream snapshot. For Lichess and Chess.com accounts it is the
+ * sync engine's versioned `SourceProfileSnapshot` (src/sync/profile.ts, read with
+ * `parseSourceProfile`), which this module also writes when a source is created and every sync
+ * refreshes. The readers here also accept the raw shapes older rows may still hold until their
+ * next sync:
  * - lichess: the `GET /api/user/{u}` object (`perfs`, `profile.flag`, `profile.fideRating`),
  *   optionally wrapped as `{user: …}`;
  * - chesscom: `{player, stats}` (the `/pub/player/{u}` and `/stats` objects), or the stats object itself;
- * - fide: Lichess's `GET /api/fide/player/{id}` object (`standard`, `rapid`, `blitz`, `federation`).
+ * - fide (always raw): Lichess's `GET /api/fide/player/{id}` object (`standard`, `rapid`, `blitz`, `federation`).
  */
 import type {
   CurrentRating,
@@ -34,7 +37,11 @@ import { HttpError, validationError } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import { UPSTREAM, upstreamHttpError, type Upstream } from '../http/upstream.ts';
 import { sourceSyncStatus } from '../jobs/index.ts';
+import { chesscomSnapshot, type ChesscomProfile, type ChesscomStats } from '../sync/chesscom.ts';
+import { lichessSnapshot, type LichessUser } from '../sync/lichess.ts';
+import { parseSourceProfile } from '../sync/profile.ts';
 import { loadDatabaseForViewer } from './access.ts';
+import { accountLookups, type AccountLookups, type LookupSite } from './lookups.ts';
 import { upstreamJsonWithin } from './upstreamJson.ts';
 
 /** Lichess usernames: 2–30 letters, digits, `_` or `-`. */
@@ -118,6 +125,7 @@ export async function resolveSource(
   index = 0,
 ): Promise<ResolvedSource> {
   const timeoutMs = ctx.timeoutMs ?? CHECK_TIMEOUT_MS;
+  const lookup: Lookup = { lookups: accountLookups(ctx.upstream), client: `user:${ctx.viewer.id}` };
   const fail = (message: string): never => {
     throw validationError(message, { issues: [{ path: `sources.${index}.key`, message }] });
   };
@@ -128,20 +136,20 @@ export async function resolveSource(
       const key = playerKey(raw);
       const row = existingSource(ctx.db, 'lichess', key);
       if (row) return reuse(row);
-      return checkLichessUser(ctx.upstream, key, fail, timeoutMs);
+      return checkLichessUser(ctx.upstream, key, fail, timeoutMs, lookup);
     }
     case 'chesscom': {
       if (!CHESSCOM_USERNAME_RE.test(raw)) fail(`"${raw}" is not a valid Chess.com username`);
       const key = playerKey(raw);
       const row = existingSource(ctx.db, 'chesscom', key);
       if (row) return reuse(row);
-      return checkChesscomUser(ctx.upstream, key, fail, timeoutMs);
+      return checkChesscomUser(ctx.upstream, key, fail, timeoutMs, lookup);
     }
     case 'fide': {
       if (!FIDE_ID_RE.test(raw)) fail(`"${raw}" is not a FIDE id`);
       const row = existingSource(ctx.db, 'fide', raw);
       if (row) return reuse(row);
-      return checkFideId(ctx.db, ctx.upstream, raw, fail, timeoutMs);
+      return checkFideId(ctx.db, ctx.upstream, raw, fail, timeoutMs, lookup);
     }
     case 'pgn': {
       if (input.databaseId === undefined) {
@@ -198,7 +206,30 @@ function hasPendingImport(db: Db, databaseId: Id): boolean {
   );
 }
 
-async function checkLichessUser(upstream: Upstream, key: string, fail: (m: string) => never, timeoutMs: number): Promise<ResolvedSource> {
+/** The lookup budget an account check counts against (profiles/lookups.ts), and whose. */
+interface Lookup {
+  lookups: AccountLookups;
+  client: string;
+}
+
+/** 503 when the account checks of this client or of the instance are used up for the minute. */
+function takeLookup(lookup: Lookup, site: LookupSite): void {
+  if (!lookup.lookups.take(site, lookup.client)) {
+    throw new HttpError(503, 'upstream_unavailable', `Too many ${site === 'lichess' ? 'Lichess' : 'Chess.com'} account checks right now; try again in a minute`, {
+      reason: 'busy',
+    });
+  }
+}
+
+async function checkLichessUser(
+  upstream: Upstream,
+  key: string,
+  fail: (m: string) => never,
+  timeoutMs: number,
+  lookup: Lookup,
+): Promise<ResolvedSource> {
+  if (lookup.lookups.isMissing('lichess', key)) return fail(`No Lichess account "${key}"`);
+  takeLookup(lookup, 'lichess');
   let user: Record<string, unknown> | null;
   try {
     const res = await upstreamJsonWithin(upstream, `${UPSTREAM.lichess}/api/user/${encodeURIComponent(key)}`, {
@@ -206,7 +237,10 @@ async function checkLichessUser(upstream: Upstream, key: string, fail: (m: strin
       allowStatuses: [404],
       timeoutMs,
     });
-    if (res.status === 404) return fail(`No Lichess account "${key}"`);
+    if (res.status === 404) {
+      lookup.lookups.markMissing('lichess', key);
+      return fail(`No Lichess account "${key}"`);
+    }
     user = obj(res.body);
   } catch (e) {
     if (e instanceof HttpError) throw e;
@@ -223,17 +257,31 @@ async function checkLichessUser(upstream: Upstream, key: string, fail: (m: strin
     title: titleOf(user.title),
     country: isoCountry(profile?.flag),
     databaseId: null,
-    profileJson: JSON.stringify(user),
+    // The sync's own snapshot format from the start (one format for the header to read).
+    profileJson: JSON.stringify(
+      lichessSnapshot({ ...user, username: typeof user.username === 'string' ? user.username : key } as unknown as LichessUser, Date.now()),
+    ),
     existingId: null,
   };
 }
 
-async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: string) => never, timeoutMs: number): Promise<ResolvedSource> {
+async function checkChesscomUser(
+  upstream: Upstream,
+  key: string,
+  fail: (m: string) => never,
+  timeoutMs: number,
+  lookup: Lookup,
+): Promise<ResolvedSource> {
   const base = `${UPSTREAM.chesscom}/pub/player/${encodeURIComponent(key)}`;
+  if (lookup.lookups.isMissing('chesscom', key)) return fail(`No Chess.com account "${key}"`);
+  takeLookup(lookup, 'chesscom');
   let player: Record<string, unknown> | null;
   try {
     const res = await upstreamJsonWithin(upstream, base, { allowStatuses: [404, 410], timeoutMs });
-    if (res.status === 404 || res.status === 410) return fail(`No Chess.com account "${key}"`);
+    if (res.status === 404 || res.status === 410) {
+      lookup.lookups.markMissing('chesscom', key);
+      return fail(`No Chess.com account "${key}"`);
+    }
     player = obj(res.body);
   } catch (e) {
     if (e instanceof HttpError) throw e;
@@ -257,15 +305,16 @@ async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: stri
     title: titleOf(player.title),
     country: isoCountry(countryCode),
     databaseId: null,
-    profileJson: JSON.stringify({ player, stats }),
+    profileJson: JSON.stringify(chesscomSnapshot(player as unknown as ChesscomProfile, stats as ChesscomStats | null, Date.now())),
     existingId: null,
   };
 }
 
 /**
- * A FIDE source reads reference-DB games only (PLAN §5; migration 502 enforces it for
- * `player_games`), so only those may name the player: a FideId tag in someone's private PGN
- * database must not leak through a public FIDE profile.
+ * A FIDE source reads games of public reference databases only (PLAN §5; migrations 601 and 602
+ * enforce it for `player_games`), so only those may name the player: a FideId tag in someone's
+ * private PGN database, or an admin's private reference database, must not leak through a public
+ * FIDE profile.
  */
 async function checkFideId(
   db: Db,
@@ -273,18 +322,24 @@ async function checkFideId(
   fideId: string,
   fail: (m: string) => never,
   timeoutMs: number,
+  lookup: Lookup,
 ): Promise<ResolvedSource> {
   // The newest reference game with this FIDE id gives the name as the reference DB writes it.
   const local = db.get<{ name: string; title: string | null }>(
     `SELECT CASE WHEN white_fide_id = ?1 THEN white ELSE black END AS name,
             CASE WHEN white_fide_id = ?1 THEN white_title ELSE black_title END AS title
        FROM games WHERE (white_fide_id = ?1 OR black_fide_id = ?1) AND origin = 'reference'
+        AND database_id IN (SELECT id FROM databases WHERE kind = 'reference' AND visibility = 'public')
       ORDER BY ended_at DESC LIMIT 1`,
     [fideId],
   );
   // Lichess's copy of the FIDE rating list adds the official name, title, federation and ratings.
   let fide: Record<string, unknown> | null = null;
+  // Without local games the id can't be checked otherwise (503 when the budget is spent); with
+  // them the lookup only adds details and is skipped.
+  if (!local) takeLookup(lookup, 'lichess');
   try {
+    if (local && !lookup.lookups.take('lichess', lookup.client)) throw new Error('no lookup budget');
     const res = await upstreamJsonWithin(upstream, `${UPSTREAM.lichess}/api/fide/player/${fideId}`, {
       allowStatuses: [404],
       timeoutMs,
@@ -395,6 +450,11 @@ const chesscomStatsOf = (snap: Record<string, unknown>): Record<string, unknown>
 /** Current site ratings per time class from a source's snapshot (lichess and chesscom only). */
 export function snapshotRatings(kind: SourceKind, profileJson: string | null): Map<TimeClass, SnapshotRating> {
   const out = new Map<TimeClass, SnapshotRating>();
+  const v1 = parseSourceProfile(profileJson);
+  if (v1) {
+    if (v1.site === kind) for (const r of v1.ratings) out.set(r.timeClass, { rating: r.rating, rd: r.rd, provisional: r.provisional });
+    return out;
+  }
   const snap = parseJson(profileJson);
   if (!snap) return out;
   if (kind === 'lichess') {
@@ -419,6 +479,11 @@ export function snapshotRatings(kind: SourceKind, profileJson: string | null): M
 
 /** FIDE ratings known for a source (FIDE directory, Lichess profile field, Chess.com stats). */
 export function fideRatings(kind: SourceKind, profileJson: string | null): SourceSummary['fide'] {
+  const v1 = kind === 'fide' ? null : parseSourceProfile(profileJson);
+  if (v1) {
+    const f = v1.fide;
+    return f && (f.standard !== null || f.rapid !== null || f.blitz !== null) ? { standard: f.standard, rapid: f.rapid, blitz: f.blitz } : null;
+  }
   const snap = parseJson(profileJson);
   if (!snap) return null;
   const positive = (v: unknown): number | null => {
@@ -436,7 +501,8 @@ export function fideRatings(kind: SourceKind, profileJson: string | null): Sourc
 
 /**
  * Current rating per time class: the site's snapshot when the sync stored one, otherwise the
- * rating after the latest game in that time class (rated games first). `games` always counts
+ * rating after the latest game in that time class and its own rating pool (rated games first;
+ * Lichess UltraBullet games, filed under bullet, are another pool). `games` always counts
  * Outpost's stored games.
  */
 export function currentRatings(db: Db, source: Pick<SourceRow, 'id' | 'kind' | 'profile_json'>): CurrentRating[] {
@@ -444,11 +510,11 @@ export function currentRatings(db: Db, source: Pick<SourceRow, 'id' | 'kind' | '
     `SELECT pg.time_class, COUNT(*) AS games,
             COALESCE(
               (SELECT COALESCE(r.rating_after, r.rating) FROM player_games r
-                WHERE r.source_id = ?1 AND r.time_class = pg.time_class AND r.rated = 1
+                WHERE r.source_id = ?1 AND r.time_class = pg.time_class AND r.rated = 1 AND r.rating_pool IS NULL
                   AND COALESCE(r.rating_after, r.rating) IS NOT NULL
                 ORDER BY r.ended_at DESC LIMIT 1),
               (SELECT COALESCE(r.rating_after, r.rating) FROM player_games r
-                WHERE r.source_id = ?1 AND r.time_class = pg.time_class
+                WHERE r.source_id = ?1 AND r.time_class = pg.time_class AND r.rating_pool IS NULL
                   AND COALESCE(r.rating_after, r.rating) IS NOT NULL
                 ORDER BY r.ended_at DESC LIMIT 1)
             ) AS rating

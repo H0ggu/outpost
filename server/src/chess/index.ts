@@ -3,7 +3,7 @@
 //
 // Cross-module API (importers in jobs/sync, profiles/databases and reference all use these):
 //   - store.ts: NormalizedGame, insertGame (the only writer of games/positions/player_games),
-//     rebuildPlayerGames, pgnSourceKey; reindexGames / backfillPlayerTitle (jobs-internal repairs)
+//     rebuildPlayerGames, relinkFideSources, pgnSourceKey; reindexGames / backfillPlayerTitle (jobs-internal repairs)
 //   - replay.ts: replaySan, drawKindOf (how a draw ended, from the final position)
 //   - pgn.ts: parsePgnGames (streaming), pgnToNormalizedGame (dedupe id, skip reasons)
 //   - openings.ts: getOpeningBook, classifyOpening, openingAt (explorer `opening` fields)
@@ -21,11 +21,16 @@ export {
 } from './openings.ts';
 export {
   DEDUPE_PLY,
+  fideTimeClass,
+  isOnlineSiteGame,
+  MAX_STORED_TAGS,
+  MAX_TAG_VALUE_LENGTH,
   parsePgnGames,
   pgnDateTime,
   pgnOriginId,
   pgnTimeClass,
   pgnToNormalizedGame,
+  storedTags,
   terminationFromTag,
   type PgnGame,
   type PgnSkipReason,
@@ -33,13 +38,20 @@ export {
 export { drawKindOf, isReplayError, replaySan, type Replay, type ReplayError } from './replay.ts';
 export {
   backfillPlayerTitle,
+  clocksText,
   insertGame,
   InvalidGameError,
+  parseClocks,
   pgnSourceKey,
   POSITION_MAX_PLY,
+  ratingPoolOf,
   rebuildPlayerGames,
+  rebuildPlayerGamesInBatches,
+  REBUILD_LINK_BATCH,
+  relinkFideSources,
   reindexGames,
   type InsertGameResult,
   type NormalizedGame,
   type NormalizedPlayer,
+  type RatingPool,
 } from './store.ts';

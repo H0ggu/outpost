@@ -4,12 +4,17 @@ import { parseFen } from 'chessops/fen';
 import { parseSan } from 'chessops/san';
 import {
   backfillPlayerTitle,
+  clocksText,
   drawKindOf,
   getOpeningBook,
   insertGame,
   InvalidGameError,
+  isOnlineSiteGame,
   isReplayError,
+  MAX_STORED_TAGS,
+  MAX_TAG_VALUE_LENGTH,
   openingAt,
+  parseClocks,
   parsePgnGames,
   pgnDateTime,
   pgnSourceKey,
@@ -24,6 +29,7 @@ import {
   type PgnGame,
 } from '../src/chess/index.ts';
 import { epdOf } from '@outpost/shared/chess';
+import { otbTimeControl } from '../src/reference/timeControl.ts';
 import { createSource, makeTestApp, testGame, type TestApp } from './helpers.ts';
 
 const PGN = `[Event "Rated Blitz game"]
@@ -141,6 +147,35 @@ describe('PGN helpers', () => {
     expect(pgnTimeClass('1/259200')).toBe('correspondence');
     expect(pgnTimeClass(null)).toBe('unknown');
   });
+
+  it('classifies over-the-board games with the FIDE rule, like the reference DB, and online games like Lichess', async () => {
+    const tcOf = async (tc: string, extra = '') => {
+      const [g] = await collect(`[White "A"]\n[Black "B"]\n[Result "1-0"]\n[TimeControl "${tc}"]\n${extra}\n1. e4 e5 1-0\n`);
+      const n = pgnToNormalizedGame(g!, { origin: 'pgn', databaseId: 1 });
+      if ('skip' in n) throw new Error(n.skip);
+      return n.timeClass;
+    };
+    for (const [tc, want] of [
+      ['1800', 'rapid'],
+      ['1800+0', 'rapid'],
+      ['1500+10', 'rapid'],
+      ['2700+10', 'rapid'],
+      ['600+5', 'rapid'],
+      ['5400+30', 'classical'],
+      ['300+2', 'blitz'],
+      ['40/5400+30:1800+30', 'classical'],
+    ] as const) {
+      expect([tc, await tcOf(tc)]).toEqual([tc, want]);
+      expect([tc, otbTimeControl(tc).timeClass]).toEqual([tc, want]);
+    }
+    // Lichess and Chess.com exports keep Lichess's thresholds (as synced games do).
+    expect(await tcOf('1800', '[Site "https://lichess.org/abcdefgh"]')).toBe('classical');
+    expect(await tcOf('60+0', '[Site "https://lichess.org/abcdefgh"]')).toBe('bullet');
+    expect(await tcOf('600', '[Site "Chess.com"]\n[Link "https://www.chess.com/game/live/1"]')).toBe('rapid');
+    expect(await tcOf('600')).toBe('blitz');
+    // A Lichess broadcast is over the board.
+    expect(isOnlineSiteGame(new Map([['Site', 'https://lichess.org/broadcast/x/y/abcdefgh']]))).toBe(false);
+  });
 });
 
 describe('insertGame', () => {
@@ -196,7 +231,7 @@ describe('insertGame', () => {
   });
 
   it('matches pgn and fide sources in databases', () => {
-    const dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'reference', 0)").lastInsertRowid;
+    const dbId = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('OTB', 'reference', 'public', 0)").lastInsertRowid;
     const fide = createSource(t.db, { kind: 'fide', key: '1503014' });
     const pgnSrc = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(dbId, 'Carlsen, Magnus'), databaseId: dbId });
     const r = insertGame(
@@ -249,6 +284,38 @@ describe('PGN refinements', () => {
     ];
     for (const [tag, draw, want] of cases) expect([tag, draw, terminationFromTag(tag, draw)]).toEqual([tag, draw, want]);
     expect(terminationFromTag(null, false)).toBeNull();
+    expect(terminationFromTag('Game drawn by time and insufficient material', true)).toBe('timeout_vs_insufficient');
+  });
+
+  it('reads a huge hostile Termination tag in linear time (no regex backtracking)', () => {
+    for (const filler of ['time ', 'x won by time ', 'game drawn by time ']) {
+      const tag = filler.repeat(Math.ceil(320_000 / filler.length));
+      const t0 = performance.now();
+      terminationFromTag(tag, true);
+      terminationFromTag(tag, false);
+      expect(performance.now() - t0).toBeLessThan(50);
+    }
+  });
+
+  it('keeps clock times of user-database games (not of reference games) and writes them back', async () => {
+    const text = `[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 { [%clk 0:03:00] } e5 { [%clk 0:02:59.5] } 2. Nf3 1-0\n`;
+    const g = await norm(text);
+    expect(g.clocks).toEqual([18000, 17950, null]);
+    const ref = pgnToNormalizedGame(await one(text), { origin: 'reference', databaseId: 1 });
+    expect('skip' in ref ? ref : ref.clocks).toBeNull();
+    expect(clocksText(g.clocks, 3)).toBe('18000,17950,');
+    expect(parseClocks('18000,17950,')).toEqual([18000, 17950, null]);
+    expect(clocksText([null, null], 2)).toBeNull();
+  });
+
+  it('bounds the tags it stores and reads', async () => {
+    const extra = Array.from({ length: 100 }, (_, i) => `[Extra${i} "v"]`).join('\n');
+    const long = 'n'.repeat(50_000);
+    const g = await norm(`[Event "${long}"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n[Termination "${'time '.repeat(20_000)}"]\n${extra}\n\n1. e4 e5 1-0\n`);
+    expect(Object.keys(g.headers!)).toHaveLength(MAX_STORED_TAGS);
+    expect(g.headers!.Event).toHaveLength(MAX_TAG_VALUE_LENGTH);
+    expect(g.event).toHaveLength(MAX_TAG_VALUE_LENGTH);
+    expect(g.termination).toBe('timeout');
   });
 
   it('uses rating diffs, end tags and the final position', async () => {

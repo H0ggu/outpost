@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AuthUser } from '../src/http/types.ts';
-import { loadDatabaseForViewer, loadProfileByIdForViewer, loadProfileForViewer } from '../src/profiles/access.ts';
+import {
+  loadDatabaseForViewer,
+  loadProfileByIdForViewer,
+  loadProfileForViewer,
+  readableReferenceDatabaseIds,
+} from '../src/profiles/access.ts';
 import { parsePrefs } from '../src/auth/session.ts';
 import { insertGame, rebuildPlayerGames } from '../src/chess/store.ts';
 import { createSource, createUserSession, makeTestApp, testGame, type TestApp } from './helpers.ts';
@@ -57,13 +62,28 @@ describe('profile and database access', () => {
     expect(loadProfileForViewer(t.db, 'public-one', owner).sourceIds).toEqual([visible, hidden]);
   });
 
-  it('applies database visibility', () => {
+  it('applies database visibility (the one database rule)', () => {
     const mine = t.db.run("INSERT INTO databases (owner_user_id, name, kind, visibility, created_at) VALUES (?, 'mine', 'games', 'private', 0)", [owner.id]).lastInsertRowid;
-    const ref = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('ref', 'reference', 'private', 0)").lastInsertRowid;
+    const shared = t.db.run("INSERT INTO databases (owner_user_id, name, kind, visibility, created_at) VALUES (?, 'shared', 'games', 'public', 0)", [owner.id]).lastInsertRowid;
+    const ref = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('ref', 'reference', 'public', 0)").lastInsertRowid;
+    const licensed = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('licensed', 'reference', 'private', 0)").lastInsertRowid;
+    // A private games database: owner and admins.
     expect(loadDatabaseForViewer(t.db, mine, owner).canEdit).toBe(true);
+    expect(loadDatabaseForViewer(t.db, mine, admin).canEdit).toBe(true);
     expect(() => loadDatabaseForViewer(t.db, mine, other)).toThrow(/not found/);
+    expect(() => loadDatabaseForViewer(t.db, mine, null)).toThrow(/not found/);
+    // A public games database: signed-in users only (decision 6).
+    expect(loadDatabaseForViewer(t.db, shared, other).canEdit).toBe(false);
+    expect(() => loadDatabaseForViewer(t.db, shared, null)).toThrow(/not found/);
+    // A public reference database: every viewer (decision 2).
     expect(loadDatabaseForViewer(t.db, ref, null)).toMatchObject({ kind: 'reference', canEdit: false });
-    expect(loadDatabaseForViewer(t.db, ref, admin).canEdit).toBe(true);
+    expect(loadDatabaseForViewer(t.db, ref, other).canEdit).toBe(false);
+    // A private reference database: admins only.
+    expect(() => loadDatabaseForViewer(t.db, licensed, null)).toThrow(/not found/);
+    expect(() => loadDatabaseForViewer(t.db, licensed, other)).toThrow(/not found/);
+    expect(loadDatabaseForViewer(t.db, licensed, admin).canEdit).toBe(true);
+    expect(readableReferenceDatabaseIds(t.db, other)).toEqual([ref]);
+    expect(readableReferenceDatabaseIds(t.db, admin)).toEqual([ref, licensed]);
   });
 
   it('counts pgn sources only while the viewer may read their database', () => {
@@ -71,7 +91,9 @@ describe('profile and database access', () => {
     const privateDb = t.db.run("INSERT INTO databases (owner_user_id, name, kind, visibility, created_at) VALUES (?, 'club', 'games', 'private', 0)", [
       owner.id,
     ]).lastInsertRowid;
-    const refDb = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('ref2', 'reference', 'private', 0)").lastInsertRowid;
+    const refDb = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('ref2', 'reference', 'public', 0)").lastInsertRowid;
+    const privateRef = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('ref3', 'reference', 'private', 0)").lastInsertRowid;
+    const fromPrivateRef = createSource(t.db, { kind: 'pgn', key: `${privateRef}:anna`, databaseId: privateRef });
     const fromPrivate = createSource(t.db, { kind: 'pgn', key: `${privateDb}:anna`, databaseId: privateDb });
     const fromRef = createSource(t.db, { kind: 'pgn', key: `${refDb}:anna`, databaseId: refDb });
     const lichess = createSource(t.db, { kind: 'lichess', key: 'anna' });
@@ -80,14 +102,16 @@ describe('profile and database access', () => {
       "INSERT INTO profiles (slug, display_name, owner_user_id, visibility, created_at, updated_at) VALUES ('anna', 'Anna', ?, 'public', ?, ?)",
       [other.id, now, now],
     ).lastInsertRowid;
-    for (const s of [fromPrivate, fromRef, lichess]) t.db.run('INSERT INTO profile_sources (profile_id, source_id) VALUES (?, ?)', [p, s]);
+    for (const s of [fromPrivate, fromRef, fromPrivateRef, lichess]) t.db.run('INSERT INTO profile_sources (profile_id, source_id) VALUES (?, ?)', [p, s]);
     const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
     expect(loadProfileForViewer(t.db, 'anna', other).sourceIds).toEqual(sorted([fromRef, lichess]));
     expect(loadProfileForViewer(t.db, 'anna', null).sourceIds).toEqual(sorted([fromRef, lichess]));
     expect(loadProfileForViewer(t.db, 'anna', owner).sourceIds).toEqual(sorted([fromPrivate, fromRef, lichess]));
-    expect(loadProfileForViewer(t.db, 'anna', admin).sourceIds).toEqual(sorted([fromPrivate, fromRef, lichess]));
+    expect(loadProfileForViewer(t.db, 'anna', admin).sourceIds).toEqual(sorted([fromPrivate, fromRef, fromPrivateRef, lichess]));
     t.db.run("UPDATE databases SET visibility = 'public' WHERE id = ?", [privateDb]);
     expect(loadProfileForViewer(t.db, 'anna', other).sourceIds).toEqual(sorted([fromPrivate, fromRef, lichess]));
+    // Database reads need a session (decision 6): a public games database does not count for anonymous visitors.
+    expect(loadProfileForViewer(t.db, 'anna', null).sourceIds).toEqual(sorted([fromRef, lichess]));
   });
 
   it("never reaches a private database's games through a FIDE source", () => {

@@ -52,7 +52,8 @@ interface Counter {
 }
 
 const counter = (): Counter => ({ games: 0, w: 0, d: 0 });
-const toCell = (c: Counter): ActivityCell => ({ games: c.games, score: scoreOf(c.games, c.w, c.d) });
+/** A counter as the contract's `ActivityCell`. */
+export const toCell = (c: Counter): ActivityCell => ({ games: c.games, score: scoreOf(c.games, c.w, c.d) });
 
 /** Local-time aggregation of a set of games. */
 export interface LocalActivity {

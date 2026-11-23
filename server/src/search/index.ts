@@ -32,6 +32,8 @@ import { isTitle, playerKey } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
 import type { AuthUser } from '../http/types.ts';
 import { UPSTREAM, type Upstream } from '../http/upstream.ts';
+import { READABLE_DATABASE_SQL } from '../profiles/access.ts';
+import { accountLookups, type LookupSite } from '../profiles/lookups.ts';
 import { profileSummaries } from '../profiles/service.ts';
 import { CHESSCOM_USERNAME_RE, chesscomDisplayName, LICHESS_USERNAME_RE } from '../profiles/sources.ts';
 import { upstreamJsonWithin } from '../profiles/upstreamJson.ts';
@@ -93,6 +95,17 @@ export interface SearchDeps {
   signal?: AbortSignal;
   /** Upstream deadline (default `SEARCH_UPSTREAM_TIMEOUT_MS`; tests shorten it). */
   timeoutMs?: number;
+  /**
+   * Who searches (a signed-in user or an address): upstream lookups count against the instance's
+   * lookup budget and this client's share (profiles/lookups.ts); over it, that site is reported
+   * `unavailable` rather than asked.
+   */
+  client?: string;
+}
+
+/** Takes a lookup on `site` for the searching client, or throws (the site is then reported unavailable). */
+function takeLookup(deps: SearchDeps, site: LookupSite): void {
+  if (!accountLookups(deps.upstream).take(site, deps.client ?? 'anonymous')) throw new Error(`No ${site} lookup budget left`);
 }
 
 interface UpstreamHit {
@@ -108,6 +121,7 @@ async function lichessAutocomplete(deps: SearchDeps, q: string): Promise<Upstrea
   const key = `lichess:${playerKey(q)}`;
   const cached = deps.cache.get<UpstreamHit[]>(key);
   if (cached) return cached;
+  takeLookup(deps, 'lichess');
   const url = new URL(`${UPSTREAM.lichess}/api/player/autocomplete`);
   url.searchParams.set('term', q);
   url.searchParams.set('object', 'true');
@@ -130,6 +144,9 @@ async function chesscomExact(deps: SearchDeps, q: string): Promise<UpstreamHit[]
   const key = `chesscom:${lower}`;
   const cached = deps.cache.get<UpstreamHit[]>(key);
   if (cached) return cached;
+  const lookups = accountLookups(deps.upstream);
+  if (lookups.isMissing('chesscom', lower)) return [];
+  takeLookup(deps, 'chesscom');
   const res = await upstreamJsonWithin(deps.upstream, `${UPSTREAM.chesscom}/pub/player/${encodeURIComponent(lower)}`, {
     allowStatuses: [404, 410],
     timeoutMs: deps.timeoutMs ?? SEARCH_UPSTREAM_TIMEOUT_MS,
@@ -139,7 +156,7 @@ async function chesscomExact(deps: SearchDeps, q: string): Promise<UpstreamHit[]
   const player = res.body as { username?: unknown; url?: unknown; title?: unknown } | null;
   if (player && typeof player === 'object' && typeof player.username === 'string') {
     hits = [{ username: chesscomDisplayName(player.url, player.username), title: titleOf(player.title) }];
-  }
+  } else if (res.status === 404 || res.status === 410) lookups.markMissing('chesscom', lower);
   deps.cache.set(key, hits);
   return hits;
 }
@@ -243,7 +260,7 @@ export function searchProfiles(db: Db, q: string, viewer: AuthUser | null, limit
                    LEFT JOIN databases d ON d.id = s.database_id
                   WHERE ps.profile_id = p.id
                     AND (ps.hidden = 0 OR p.owner_user_id = :me OR :admin)
-                    AND (s.database_id IS NULL OR d.kind = 'reference' OR d.visibility = 'public' OR d.owner_user_id = :me OR :admin)
+                    AND (s.database_id IS NULL OR ${READABLE_DATABASE_SQL})
                     AND (s.key LIKE :likeKey ESCAPE '\\' OR s.display_name LIKE :like ESCAPE '\\')))
         ORDER BY (lower(p.display_name) = :lower OR p.slug = :lower) DESC, (p.owner_user_id = :me) DESC, p.views DESC, p.id DESC
         LIMIT :limit`,

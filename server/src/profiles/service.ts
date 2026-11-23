@@ -3,7 +3,9 @@
  * views (PLAN §4 profiles/profile_sources/bookmarks/profile_views, §5, §6 "Search and profiles", §7).
  *
  * Access: every function takes a `ViewableProfile` from `loadProfileForViewer` (404 for private
- * profiles of others); mutations additionally need `canEdit` (owner or admin, `requireEditor`).
+ * profiles of others); mutations additionally need `canEdit` (owner or admin, `requireEditor`),
+ * except a manual update, which any signed-in viewer of the profile may ask for (its sources are
+ * shared with every other profile of the same accounts anyway; the cooldown still applies).
  *
  * Orphan policy: a source stays as long as any profile uses it. When the last profile lets go of
  * a source (profile delete, account removal), the source row is deleted with its `player_games`
@@ -44,7 +46,7 @@ import { SLUG_RE, slugify } from '@outpost/shared/api';
 import { isTitle, playerKey } from '@outpost/shared/chess';
 import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { z } from 'zod';
-import { rebuildPlayerGames } from '../chess/store.ts';
+import { rebuildPlayerGamesInBatches } from '../chess/store.ts';
 import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
 import { conflict, forbidden, HttpError, validationError } from '../http/errors.ts';
@@ -52,6 +54,7 @@ import type { AuthUser } from '../http/types.ts';
 import type { Upstream } from '../http/upstream.ts';
 import { cancelQueuedJobs, enqueueSync, JOB_PRIORITY, sourceSyncStatus, syncDedupeKey } from '../jobs/index.ts';
 import { readSettings, type InstanceSettings } from '../settings.ts';
+import { localSourceVersion } from '../sync/index.ts';
 import { loadProfileByIdForViewer, type ViewableProfile } from './access.ts';
 import { insertSource, resolveSource, SOURCE_COLUMNS, sourceSummaries, type ResolvedSource, type SourceRow } from './sources.ts';
 
@@ -61,6 +64,8 @@ import { insertSource, resolveSource, SOURCE_COLUMNS, sourceSummaries, type Reso
 
 /** Most sources one profile may combine. */
 export const MAX_PROFILE_SOURCES = 30;
+/** Most profiles one user may own (admins: no limit). */
+export const MAX_PROFILES_PER_USER = 200;
 
 const noControlChars = (s: string): boolean => !/[\u0000-\u001f\u007f]/.test(s);
 
@@ -199,6 +204,7 @@ export function profileHeader(db: Db, config: Config, profile: ViewableProfile, 
     autoRefresh: row.auto_refresh === 1,
     owner: row.owner_user_id !== null && row.owner_username !== null ? { id: row.owner_user_id, username: row.owner_username } : null,
     canEdit: profile.canEdit,
+    canUpdate: viewer !== null,
     bookmarked: isBookmarked(db, viewer, row.id),
     sources,
     totals,
@@ -449,20 +455,35 @@ async function resolveAll(ctx: ProfilesCtx, viewer: AuthUser, inputs: readonly N
 }
 
 /**
- * After sources were attached: PGN and FIDE sources pick up the games already stored (synchronous,
+ * After sources were attached: PGN and FIDE sources pick up the games already stored (in batches
+ * that yield to the event loop, so a player with a huge database never holds the server;
  * idempotent), Lichess / Chess.com sources that were never synced, or not within the update
  * cooldown, get their sync queued.
  */
-function startSources(db: Db, settings: InstanceSettings, viewer: AuthUser, attached: ReadonlyArray<{ id: Id; created: boolean }>): JobInfo[] {
+async function startSources(
+  db: Db,
+  settings: InstanceSettings,
+  viewer: AuthUser,
+  attached: ReadonlyArray<{ id: Id; created: boolean }>,
+): Promise<JobInfo[]> {
   const jobs: JobInfo[] = [];
   const now = Date.now();
   for (const { id, created } of attached) {
-    const src = db.get<{ kind: SourceKind; last_synced_at: EpochMs | null }>('SELECT kind, last_synced_at FROM sources WHERE id = ?', [id]);
+    const src = db.get<{ kind: SourceKind; database_id: Id | null; last_synced_at: EpochMs | null }>(
+      'SELECT kind, database_id, last_synced_at FROM sources WHERE id = ?',
+      [id],
+    );
     if (!src) continue;
     if (src.kind === 'pgn' || src.kind === 'fide') {
       if (created || src.last_synced_at === null) {
-        rebuildPlayerGames(db, id);
-        db.run('UPDATE sources SET last_synced_at = ?, last_sync_error = NULL WHERE id = ?', [now, id]);
+        const version = localSourceVersion(db, src);
+        await rebuildPlayerGamesInBatches(db, id);
+        // Same state as a local sync (src/sync/index.ts), so the next update has nothing to do.
+        db.run('UPDATE sources SET last_synced_at = ?, last_sync_error = NULL, sync_state_json = ? WHERE id = ?', [
+          Date.now(),
+          JSON.stringify({ linkedVersion: version }),
+          id,
+        ]);
       }
       continue;
     }
@@ -475,6 +496,10 @@ function startSources(db: Db, settings: InstanceSettings, viewer: AuthUser, atta
 /** `POST /api/profiles`: validates the accounts, creates the profile and queues the first syncs. */
 export async function createProfile(ctx: ProfilesCtx, viewer: AuthUser, body: CreateProfileRequest): Promise<ViewableProfile> {
   const { db } = ctx;
+  if (viewer.role !== 'admin') {
+    const owned = db.value<number>('SELECT COUNT(*) FROM profiles WHERE owner_user_id = ?', [viewer.id]) ?? 0;
+    if (owned >= MAX_PROFILES_PER_USER) throw forbidden(`You can own at most ${MAX_PROFILES_PER_USER} profiles`);
+  }
   const slugTaken = () => body.slug !== undefined && db.value('SELECT 1 FROM profiles WHERE slug = ?', [body.slug]) !== undefined;
   // A taken address is refused before the accounts are checked upstream (Lichess, Chess.com, FIDE).
   if (slugTaken()) throw conflict(`The address "${body.slug}" is taken`, { field: 'slug' });
@@ -494,7 +519,7 @@ export async function createProfile(ctx: ProfilesCtx, viewer: AuthUser, body: Cr
     }
     return { profileId, attached };
   });
-  startSources(db, readSettings(db, ctx.config), viewer, attached);
+  await startSources(db, readSettings(db, ctx.config), viewer, attached);
   return loadProfileByIdForViewer(db, profileId, viewer);
 }
 
@@ -709,7 +734,7 @@ export async function addProfileSource(ctx: ProfilesCtx, profile: ViewableProfil
     db.run('UPDATE profiles SET updated_at = ? WHERE id = ?', [Date.now(), profile.id]);
     return a;
   });
-  startSources(db, readSettings(db, ctx.config), viewer, [attached]);
+  await startSources(db, readSettings(db, ctx.config), viewer, [attached]);
   return loadProfileByIdForViewer(db, profile.id, viewer);
 }
 
@@ -737,12 +762,14 @@ export function removeProfileSource(
 // ---------------------------------------------------------------------------
 
 /**
- * `POST /api/profiles/:slug/update`: queues a sync of every Lichess / Chess.com source (PGN and
- * FIDE sources pick up stored games right away). Owners wait `updateCooldownMinutes` between
- * updates (429 `cooldown`, `details.retryAt`); admins bypass it and get high priority.
+ * `POST /api/profiles/:slug/update`: queues a sync of every source — Lichess / Chess.com sources
+ * on their site's lane, PGN and FIDE sources on the local lane (they link stored games in batches,
+ * and only when their databases changed since the last link). Any signed-in viewer of the profile
+ * may ask (editors for every source, others for the sources they see); everyone waits
+ * `updateCooldownMinutes` between updates of one profile (429 `cooldown`, `details.retryAt`),
+ * except admins, who bypass it and get high priority.
  */
 export function requestUpdate(db: Db, config: Config, profile: ViewableProfile, viewer: AuthUser): ProfileUpdateResponse {
-  requireEditor(profile);
   const settings = readSettings(db, config);
   const now = Date.now();
   const row = profileRow(db, profile.id);
@@ -753,18 +780,15 @@ export function requestUpdate(db: Db, config: Config, profile: ViewableProfile, 
     });
   }
   const priority = viewer.role === 'admin' ? JOB_PRIORITY.high : JOB_PRIORITY.manual;
+  const visible = new Set(profile.sourceIds);
   const jobs = db.tx(() => {
     db.run('UPDATE profiles SET update_requested_at = ? WHERE id = ?', [now, profile.id]);
     const out: JobInfo[] = [];
-    for (const s of db.all<{ id: Id; kind: SourceKind }>(
-      `SELECT s.id, s.kind FROM profile_sources ps JOIN sources s ON s.id = ps.source_id WHERE ps.profile_id = ? ORDER BY s.id`,
+    for (const s of db.all<{ id: Id }>(
+      `SELECT s.id FROM profile_sources ps JOIN sources s ON s.id = ps.source_id WHERE ps.profile_id = ? ORDER BY s.id`,
       [profile.id],
     )) {
-      if (s.kind === 'lichess' || s.kind === 'chesscom') out.push(enqueueSync(db, s.id, { userId: viewer.id, priority }));
-      else {
-        rebuildPlayerGames(db, s.id);
-        db.run('UPDATE sources SET last_synced_at = ?, last_sync_error = NULL WHERE id = ?', [now, s.id]);
-      }
+      if (profile.canEdit || visible.has(s.id)) out.push(enqueueSync(db, s.id, { userId: viewer.id, priority }));
     }
     return out;
   });

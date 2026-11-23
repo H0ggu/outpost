@@ -26,7 +26,8 @@ describe('profiles migrations on existing data', () => {
   it('501 keeps every source and its references; 503 sizes files', () => {
     dir = mkdtempSync(join(tmpdir(), 'outpost-mig-'));
     db = openDb(':memory:');
-    migrateWith(['001_init.sql', '500_databases_files.sql']);
+    // 202 because insertGame writes today's player_games columns.
+    migrateWith(['001_init.sql', '202_player_games_rating_pool.sql', '203_games_clocks.sql', '500_databases_files.sql']);
 
     const user = db.run("INSERT INTO users (username, password_hash, created_at) VALUES ('u', 'x', 0)").lastInsertRowid;
     const userDb = db.run("INSERT INTO databases (owner_user_id, name, kind, created_at) VALUES (?, 'Mine', 'games', 0)", [user]).lastInsertRowid;

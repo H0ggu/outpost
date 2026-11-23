@@ -249,10 +249,16 @@ export const isEmptyFilters = (f: ProfileFilters): boolean => filtersKey(f) === 
 
 const DAY_MS = 86_400_000;
 
+/**
+ * The same instant `months` calendar months earlier (UTC), the day clamped to the target month's
+ * length: 31 May − 3 months is 28 Feb (29 in leap years), never 3 March.
+ */
 const monthsBack = (now: number, months: number): number => {
   const d = new Date(now);
-  d.setUTCMonth(d.getUTCMonth() - months);
-  return d.getTime();
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth() - months;
+  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return Date.UTC(y, m, Math.min(d.getUTCDate(), lastDay), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
 };
 
 /**

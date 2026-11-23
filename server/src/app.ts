@@ -24,6 +24,7 @@ import { API_ROUTES, type HealthResponse } from '@outpost/shared/api';
 import type { Config } from './config.ts';
 import type { Db } from './db/index.ts';
 import { errorBody, errorHandler } from './http/errors.ts';
+import { LOG_SERIALIZERS } from './http/logging.ts';
 import { registerCsrfCheck, registerSecurityHeaders } from './http/security.ts';
 import { createUpstream } from './http/upstream.ts';
 import adminRoutes from './routes/admin.ts';
@@ -79,7 +80,8 @@ export interface BuildAppOptions {
 /** Builds the Fastify app. Call `app.listen()` (main.ts) or `app.inject()` (tests). */
 export async function buildApp({ config, db, logger, fetch }: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: logger ?? { level: config.logLevel },
+    // Request lines never carry secret query parameters (invite links): http/logging.ts.
+    logger: logger === false ? false : { level: config.logLevel, ...(typeof logger === 'object' ? logger : {}), serializers: LOG_SERIALIZERS },
     trustProxy: config.trustProxy,
     bodyLimit: JSON_BODY_LIMIT,
     // The explorer carries base64url filters in a path segment (/api/explorer/f/:filters/player).

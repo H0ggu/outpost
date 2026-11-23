@@ -6,14 +6,16 @@
  * FIDE ids, time control, ECO, opening, termination), then any other original header of an
  * imported PGN in its original order. Stored columns win over original headers for the tags
  * Outpost keeps in columns, so an exported game re-imports to the same row. Movetext is the
- * stored mainline with move numbers, wrapped at 80 columns.
+ * stored mainline with move numbers and, when the game has them (`games.clocks`), the clock after
+ * each move as `{ [%clk h:mm:ss] }` (lila shows them), wrapped at 80 columns.
  */
 import type { EpochMs, GameOrigin, GameResult, Id, Termination, TimeClass } from '@outpost/shared/api';
+import { parseClocks } from '../chess/store.ts';
 
 /** Columns of `games g` needed by `gameToPgn`. */
 export const PGN_GAME_COLUMNS = `g.id, g.origin, g.url, g.white, g.black, g.white_rating, g.black_rating, g.white_title,
   g.black_title, g.white_fide_id, g.black_fide_id, g.result, g.termination, g.time_class, g.time_control, g.rated, g.event,
-  g.round, g.started_at, g.ended_at, g.moves_san, g.eco, g.opening_name, g.headers_json`;
+  g.round, g.started_at, g.ended_at, g.moves_san, g.eco, g.opening_name, g.headers_json, g.clocks`;
 
 /** A row of `SELECT ${PGN_GAME_COLUMNS} FROM games g`. */
 export interface PgnGameRecord {
@@ -41,6 +43,8 @@ export interface PgnGameRecord {
   eco: string | null;
   opening_name: string | null;
   headers_json: string | null;
+  /** `games.clocks` (centiseconds per ply, comma separated), or null. */
+  clocks: string | null;
 }
 
 /** Options of `gameToPgn`. */
@@ -151,11 +155,30 @@ export function pgnTags(r: PgnGameRecord, opts: PgnWriteOptions = {}): Array<[st
   return [...tags];
 }
 
-/** Mainline movetext with move numbers and the result, wrapped at 80 columns. */
-export function pgnMovetext(movesSan: string, result: string): string {
+/** A clock in centiseconds as PGN `%clk` text: `h:mm:ss`, with tenths when there are any (`0:00:09.8`). */
+export function clockText(cs: number): string {
+  const tenths = Math.max(0, Math.round(cs / 10));
+  const secs = Math.floor(tenths / 10);
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const frac = tenths % 10 ? `.${tenths % 10}` : '';
+  return `${h}:${pad2(m)}:${pad2(s)}${frac}`;
+}
+
+/**
+ * Mainline movetext with move numbers and the result, wrapped at 80 columns; `clocks` (centiseconds
+ * per ply, `parseClocks`) adds `{ [%clk …] }` after each move that has one.
+ */
+export function pgnMovetext(movesSan: string, result: string, clocks: ReadonlyArray<number | null> = []): string {
   const sans = movesSan.split(' ').filter(s => s !== '');
   const tokens: string[] = [];
-  for (const [i, san] of sans.entries()) tokens.push(i % 2 === 0 ? `${i / 2 + 1}. ${san}` : san);
+  for (const [i, san] of sans.entries()) {
+    const clock = clocks[i];
+    // After a comment the next Black move needs its number again (`1... e5`).
+    const numbered = i % 2 === 0 ? `${i / 2 + 1}. ${san}` : i > 0 && clocks[i - 1] != null ? `${(i + 1) / 2}... ${san}` : san;
+    tokens.push(clock != null ? `${numbered} { [%clk ${clockText(clock)}] }` : numbered);
+  }
   tokens.push(result);
   const lines: string[] = [];
   let line = '';
@@ -174,5 +197,5 @@ export function gameToPgn(r: PgnGameRecord, opts: PgnWriteOptions = {}): string 
   const tags = pgnTags(r, opts)
     .map(([k, v]) => `[${k} "${escapeTag(v)}"]`)
     .join('\n');
-  return `${tags}\n\n${pgnMovetext(r.moves_san, r.result)}\n`;
+  return `${tags}\n\n${pgnMovetext(r.moves_san, r.result, parseClocks(r.clocks))}\n`;
 }

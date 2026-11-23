@@ -245,8 +245,9 @@ describe('stats endpoints on a seeded profile', () => {
         ['C70', 'Ruy Lopez: Morphy Defense', 2, 2],
         ['D30', "Queen's Gambit Declined", 1, 0],
       ]);
+      // The line is the named position the games reached (here 3...cxd4, re-classified within 3 moves).
       expect(three.black.map(r => [r.eco, r.name, r.line])).toEqual([
-        ['B50', 'Sicilian Defense', 'e2e4,c7c5,g1f3,d7d6,d2d4'],
+        ['B50', 'Sicilian Defense', 'e2e4,c7c5,g1f3,d7d6,d2d4,c5d4'],
         ['C70', 'Ruy Lopez: Morphy Defense', 'e2e4,e7e5,g1f3,b8c6,f1b5,a7a6'],
       ]);
       const one = (await get<OpeningsResponse>(t, url('openings', 'maxMoves=1'), cookie)).body;

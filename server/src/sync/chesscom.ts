@@ -17,10 +17,16 @@
  *    job is interrupted).
  * 3. Mapping (`mapChesscomGame`): only `rules == "chess"` from the standard position; `time_class`
  *    as given (`daily` = correspondence); result and termination from both players' result codes
- *    (PGN `Result`/`Termination` as fallback); moves from the PGN via chessops; dedupe by game
+ *    (PGN `Result`/`Termination` as fallback); moves and clock times (`[%clk]`) from the PGN via
+ *    chessops; the event from the tournament the game belongs to (PGN `Tournament` URL, e.g.
+ *    "Bullet Brawl November 21 2026"), else the PGN `Event` ("Live Chess"); dedupe by game
  *    `uuid`. Chess.com ratings are post-game: `ratingAfter` = rating, and the player's pre-game
- *    `rating` is their previous rated game's rating in the same time class when known, otherwise
- *    the same value. Opponents' titles come from `players_cache` when already looked up.
+ *    `rating` is their previous rated game's rating in the same time class when known (from the
+ *    month being read, else from the stored games), otherwise the same value. The game row keeps
+ *    both sides' ratings as Chess.com reports them (post-game; chess/store.ts). Opponents' titles
+ *    come from `players_cache` when already looked up.
+ *    Games stored before events were read from tournaments get them on their source's next sync
+ *    (`backfillTournamentEvents`, once per source).
  * Usernames are lowercased in every URL (mixed case answers 301) and months are zero-padded.
  */
 import { parsePgn, type PgnNodeData, type Game } from 'chessops/pgn';
@@ -36,7 +42,7 @@ import {
   type GameResult,
   type Termination,
 } from '@outpost/shared/chess';
-import { pgnDateTime, terminationFromTag } from '../chess/pgn.ts';
+import { mainlineClocks, pgnDateTime, storedTags, terminationFromTag } from '../chess/pgn.ts';
 import type { NormalizedGame, NormalizedPlayer } from '../chess/store.ts';
 import type { Db } from '../db/index.ts';
 import { UPSTREAM, UpstreamError } from '../http/upstream.ts';
@@ -117,8 +123,80 @@ export interface ChesscomGame {
   initial_setup?: string;
   time_class?: string;
   rules?: string;
+  /** API URL of the tournament (`https://api.chess.com/pub/tournament/<slug>-<id>`), when the game belongs to one. */
+  tournament?: string;
+  /** API URL of the team match, when the game belongs to one. */
+  match?: string;
   white: ChesscomGamePlayer;
   black: ChesscomGamePlayer;
+}
+
+const MONTH_NAMES = new Set([
+  'january',
+  'february',
+  'march',
+  'april',
+  'may',
+  'june',
+  'july',
+  'august',
+  'september',
+  'october',
+  'november',
+  'december',
+]);
+
+/**
+ * The event name of a Chess.com tournament URL (web `…/tournament/live/<slug>-<id>` or API
+ * `…/pub/tournament/<slug>-<id>`), from its slug: `bullet-brawl-november-21-2026-31422095` →
+ * "Bullet Brawl November 21 2026", `first-3-0-thursday-…` → "First 3|0 Thursday …". Null when
+ * the URL names no tournament or its slug has no words.
+ */
+export function chesscomEventName(url: string | null | undefined): string | null {
+  const m = typeof url === 'string' ? /\/tournament\/(?:(?:live|daily)\/)?([^/?#]+)\/?(?:[?#].*)?$/i.exec(url) : null;
+  if (!m) return null;
+  let slug: string;
+  try {
+    slug = decodeURIComponent(m[1]!);
+  } catch {
+    return null;
+  }
+  const words = slug.replace(/-\d+$/, '').split('-').filter(Boolean);
+  if (!words.some(w => /\p{L}/u.test(w))) return null;
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]!;
+    const next = words[i + 1];
+    // Two small numbers are a time control ("3-0" → "3|0"), unless they follow a month (a date).
+    if (/^\d{1,2}$/.test(w) && next !== undefined && /^\d{1,2}$/.test(next) && !MONTH_NAMES.has((words[i - 1] ?? '').toLowerCase())) {
+      out.push(`${w}|${next}`);
+      i++;
+      continue;
+    }
+    out.push(w.charAt(0).toUpperCase() + w.slice(1));
+  }
+  return out.join(' ').slice(0, 200);
+}
+
+/**
+ * Names the events of a source's stored games after their tournaments (see `chesscomEventName`),
+ * for games stored before the importer did. Returns the number of games renamed.
+ */
+export function backfillTournamentEvents(db: Db, sourceId: Id): number {
+  const rows = db.all<{ id: Id; event: string | null; tournament: string | null }>(
+    `SELECT g.id, g.event, json_extract(g.headers_json, '$.Tournament') AS tournament
+       FROM player_games pg JOIN games g ON g.id = pg.game_id
+      WHERE pg.source_id = ? AND g.origin = 'chesscom' AND json_extract(g.headers_json, '$.Tournament') IS NOT NULL`,
+    [sourceId],
+  );
+  return db.tx(() => {
+    let n = 0;
+    for (const r of rows) {
+      const name = chesscomEventName(r.tournament);
+      if (name !== null && name !== r.event) n += db.run('UPDATE games SET event = ? WHERE id = ?', [name, r.id]).changes;
+    }
+    return n;
+  });
 }
 
 /** Why a Chess.com game is not stored. */
@@ -287,12 +365,13 @@ export function mapChesscomGame(
       timeClass: chesscomTimeClass(g.time_class),
       timeControl: g.time_control ?? tag(pgn, 'TimeControl'),
       rated: g.rated === true,
-      event: tag(pgn, 'Event'),
+      event: chesscomEventName(tag(pgn, 'Tournament')) ?? chesscomEventName(g.tournament) ?? tag(pgn, 'Event'),
       round: tag(pgn, 'Round'),
       startedAt: startedAt !== null && startedAt <= endedAt ? startedAt : endedAt,
       endedAt,
       moves,
-      headers: Object.fromEntries(pgn.headers),
+      headers: storedTags(pgn.headers),
+      clocks: mainlineClocks(pgn),
     },
   };
 }
@@ -311,6 +390,8 @@ export interface ChesscomSyncState extends FullResyncMarker {
    * next time, so games that ended after it are found however long the gap. Null before the first.
    */
   lastSyncStartedAt: EpochMs | null;
+  /** The stored games' events were named after their tournaments (`backfillTournamentEvents`). */
+  tournamentEvents?: true;
 }
 
 /**
@@ -397,8 +478,13 @@ export async function syncChesscom(ctx: JobContext<'sync'>, src: SourceRow): Pro
     // States written before this field existed: the source's last completed sync is close enough.
     lastSyncStartedAt:
       typeof saved?.lastSyncStartedAt === 'number' ? saved.lastSyncStartedAt : saved ? (src.last_synced_at ?? null) : null,
+    ...(saved?.tournamentEvents === true ? { tournamentEvents: true as const } : {}),
     ...(full ? { fullJob: ctx.job.id } : {}),
   };
+  if (!state.tournamentEvents) {
+    backfillTournamentEvents(db, src.id);
+    state.tournamentEvents = true;
+  }
   const toFetch = chesscomMonthsToFetch(months, state, startedAt);
 
   // 3. Each month, oldest first.
@@ -421,8 +507,14 @@ export async function syncChesscom(ctx: JobContext<'sync'>, src: SourceRow): Pro
     },
   };
   let seen = 0;
+  // The last month read in full this run: `prevRated` holds its ratings. When a listed month after
+  // it was not read (304, 404, or not re-polled), the next month's first game of each class takes
+  // its pre-game rating from the stored games instead, never from an older month.
+  let lastRead: string | null = null;
   for (const [i, month] of toFetch.entries()) {
     throwIfAborted(signal);
+    if (lastRead !== null && months.some(m => m > lastRead! && m < month)) prevRated.clear();
+    lastRead = null;
     importer.report(i, toFetch.length, `${month.replace('/', '-')}: ${importer.counts.imported} new games so far`);
     const known = state.months[month];
     const res = await getJson<{ games?: unknown }>(`${base}/games/${month}`, [404], known ? { 'if-none-match': known } : {});
@@ -431,12 +523,14 @@ export async function syncChesscom(ctx: JobContext<'sync'>, src: SourceRow): Pro
       if (state.doneThrough === null || month > state.doneThrough) state.doneThrough = month;
     };
     if (res.status === 304) {
+      prevRated.clear();
       importer.counts.unchangedMonths!++;
       done(known ?? null);
       saveSyncState(db, src.id, state);
       continue;
     }
     if (res.status === 404) {
+      prevRated.clear();
       // Listed in the archive but not served: leave it unprocessed so the next sync asks again.
       importer.counts.missingMonths = (importer.counts.missingMonths ?? 0) + 1;
       log.warn({ month }, 'Chess.com listed a month it does not serve (will retry next sync)');
@@ -465,6 +559,7 @@ export async function syncChesscom(ctx: JobContext<'sync'>, src: SourceRow): Pro
       if (importer.add(game)) await importer.flush(() => saveSyncState(db, src.id, state));
     }
     done(res.etag);
+    lastRead = month;
     await importer.flush(() => saveSyncState(db, src.id, state));
     importer.report(i + 1, toFetch.length, `${month.replace('/', '-')}: ${importer.counts.imported} new games so far`);
   }

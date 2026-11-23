@@ -2,12 +2,17 @@
  * Proxies to Lichess's explorer, tablebase and cloud-eval services (PLAN §6), all through
  * `app.upstream`:
  *
- * | Upstream                                   | Auth                         | Budget        | Cache        |
- * |--------------------------------------------|------------------------------|---------------|--------------|
- * | explorer.lichess.org/masters, /masters/pgn | none (token only after a 401)| 20/min, FIFO  | 3 h / 30 d   |
- * | explorer.lichess.org/lichess               | token required (503 without) | 20/min, FIFO  | 3 h          |
- * | tablebase.lichess.ovh/<variant>            | none                         | 120/min (30 per client) | 30 d |
- * | lichess.org/api/cloud-eval                 | none                         | 60/min        | 30 min (404: 10 min) |
+ * | Upstream                                   | Auth                         | Budget                   | Cache        |
+ * |--------------------------------------------|------------------------------|--------------------------|--------------|
+ * | explorer.lichess.org/masters, /masters/pgn | none (token only after a 401)| 20/min (10 per client)   | 3 h / 30 d   |
+ * | explorer.lichess.org/lichess               | token required (503 without) | 20/min (10 per client)   | 3 h          |
+ * | tablebase.lichess.ovh/<variant>            | none                         | 120/min (30 per client)  | 30 d |
+ * | lichess.org/api/cloud-eval                 | none                         | 60/min (30 per client)   | 30 min (404: 10 min) |
+ *
+ * The budgets are the instance's (FIFO queues); a client (a signed-in user, else an address) may
+ * start at most its share of new upstream calls per minute (`PER_CLIENT_PER_MIN`; cache hits and
+ * joined flights are free), so one client can't starve everyone else. Over its share it gets 429
+ * `rate_limited` (`details.reason: 'client_limit'`, `retryAt`) without queueing.
  *
  * Every request first checks `http_cache` (fresh → answered without upstream), then joins an
  * in-flight request for the same key (one upstream call however many clients ask), then waits for
@@ -46,10 +51,13 @@ export const DEFAULT_BUDGETS: Readonly<Record<BudgetName, BudgetOptions>> = {
 };
 
 /**
- * New (uncached) tablebase lookups one client may start per minute: a quarter of the instance's
- * tablebase budget, so a single address can't starve everyone else's endgame lookups.
+ * New (uncached) upstream calls one client may start per minute, per budget: half of the
+ * instance's masters / Lichess explorer / cloud-eval budget and a quarter of the tablebase one, so
+ * a single client can't starve everyone else (decision 26 keeps the budgets themselves).
  */
-export const TABLEBASE_PER_CLIENT_PER_MIN = 30;
+export const PER_CLIENT_PER_MIN: Readonly<Record<BudgetName, number>> = { masters: 10, lichess: 10, tablebase: 30, cloudEval: 30 };
+/** New tablebase lookups one client may start per minute (`PER_CLIENT_PER_MIN.tablebase`). */
+export const TABLEBASE_PER_CLIENT_PER_MIN = PER_CLIENT_PER_MIN.tablebase;
 
 /** Time allowed until the upstream's response headers arrive. */
 export const UPSTREAM_HEADERS_TIMEOUT_MS = 15_000;
@@ -83,6 +91,8 @@ export interface ExplorerProxyDeps {
   timeouts?: { headersMs?: number; bodyMs?: number };
   /** New tablebase lookups per client per minute (default `TABLEBASE_PER_CLIENT_PER_MIN`). */
   tablebasePerClient?: number;
+  /** New upstream calls per client per minute, per budget (defaults `PER_CLIENT_PER_MIN`). */
+  perClient?: Partial<Record<BudgetName, number>>;
   log?: { warn(obj: object, msg: string): void };
 }
 
@@ -93,6 +103,8 @@ interface UpstreamRequest {
   key: string;
   url: string;
   budget: RequestBudget;
+  /** Which budget `budget` is (for the client's share). */
+  budgetName: BudgetName;
   auth: false | 'optional' | 'required';
   /** Statuses that are answers (cached, returned as `ProxyResult.status`). */
   answers: readonly number[];
@@ -111,21 +123,20 @@ interface Flight {
   waiters: number;
 }
 
-/** The Lichess proxies of one app. */
+/**
+ * The Lichess proxies of one app. Every call takes an optional `client` (a signed-in user or an
+ * address): it gets a share of the upstream budget, at most `PER_CLIENT_PER_MIN` new upstream calls
+ * per minute (cache hits and joined flights are free), so one client can't use up the instance's.
+ */
 export interface ExplorerProxy {
   /** `params`: validated, normalised explorer.lichess.org/masters query. */
-  masters(params: URLSearchParams, signal?: AbortSignal): Promise<ProxyResult>;
+  masters(params: URLSearchParams, signal?: AbortSignal, client?: string): Promise<ProxyResult>;
   /** A Lichess masters game id (8 alphanumerics). */
-  mastersPgn(id: string, signal?: AbortSignal): Promise<ProxyResult>;
+  mastersPgn(id: string, signal?: AbortSignal, client?: string): Promise<ProxyResult>;
   /** `params`: validated, normalised explorer.lichess.org/lichess query. */
-  lichess(params: URLSearchParams, signal?: AbortSignal): Promise<ProxyResult>;
-  /**
-   * `client` (the caller's address) gets a share of the upstream budget: at most
-   * `tablebasePerClient` new upstream lookups per minute (cache hits and joined flights are free),
-   * so one client can't use up the instance's tablebase budget.
-   */
+  lichess(params: URLSearchParams, signal?: AbortSignal, client?: string): Promise<ProxyResult>;
   tablebase(variant: string, fen: string, signal?: AbortSignal, client?: string): Promise<ProxyResult>;
-  cloudEval(q: { fen: string; multiPv: number; variant: string | null }, signal?: AbortSignal): Promise<ProxyResult>;
+  cloudEval(q: { fen: string; multiPv: number; variant: string | null }, signal?: AbortSignal, client?: string): Promise<ProxyResult>;
   /** Budget state (admin/debug and tests). */
   budget(name: BudgetName): RequestBudget;
   cache: ExplorerCache;
@@ -198,7 +209,11 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
     budgets[name] = new RequestBudget({ ...DEFAULT_BUDGETS[name], ...deps.budgets?.[name], now });
   }
   const flights = new Map<string, Flight>();
-  const tablebaseClients = new ClientWindow({ perWindow: deps.tablebasePerClient ?? TABLEBASE_PER_CLIENT_PER_MIN, windowMs: 60_000, now });
+  const clientWindows = {} as Record<BudgetName, ClientWindow>;
+  for (const name of Object.keys(PER_CLIENT_PER_MIN) as BudgetName[]) {
+    const perWindow = (name === 'tablebase' ? deps.tablebasePerClient : undefined) ?? deps.perClient?.[name] ?? PER_CLIENT_PER_MIN[name];
+    clientWindows[name] = new ClientWindow({ perWindow, windowMs: 60_000, now });
+  }
   const hasToken = (): boolean => readSettings(deps.db, deps.config).lichessToken !== null;
   const headersMs = deps.timeouts?.headersMs ?? UPSTREAM_HEADERS_TIMEOUT_MS;
   const bodyMs = deps.timeouts?.bodyMs ?? UPSTREAM_BODY_TIMEOUT_MS;
@@ -333,11 +348,13 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
     const flightKey = `${req.auth === false ? 'anon' : 'token'}|${full}`;
     let flight = flights.get(flightKey);
     if (!flight) {
-      if (opts.client !== undefined && req.kind === 'tablebase' && !tablebaseClients.take(opts.client)) {
+      const window = clientWindows[req.budgetName];
+      if (opts.client !== undefined && !window.take(opts.client)) {
+        const what = req.budgetName === 'tablebase' ? 'tablebase lookups' : req.budgetName === 'cloudEval' ? 'cloud evaluations' : 'explorer requests';
         return Promise.reject(
-          new HttpError(429, 'rate_limited', 'Too many tablebase lookups from this address; try again in a minute', {
+          new HttpError(429, 'rate_limited', `Too many ${what} from this client; try again in a minute`, {
             reason: 'client_limit',
-            retryAt: tablebaseClients.nextSlotAt(opts.client),
+            retryAt: window.nextSlotAt(opts.client),
           }),
         );
       }
@@ -366,14 +383,19 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
    * configured — and for the next hour straight with the token, so a re-closed endpoint doesn't
    * cost two requests each time.
    */
-  const anonymousThenToken = async (req: Omit<UpstreamRequest, 'auth' | 'budget'>, signal?: AbortSignal): Promise<ProxyResult> => {
+  const anonymousThenToken = async (
+    req: Omit<UpstreamRequest, 'auth' | 'budget' | 'budgetName'>,
+    signal?: AbortSignal,
+    client?: string,
+  ): Promise<ProxyResult> => {
+    const opts = client === undefined ? {} : { client };
     const withToken = (): Promise<ProxyResult> =>
-      fetchCached({ ...req, auth: 'required', budget: budgets.lichess }, signal).catch((err: unknown) => {
+      fetchCached({ ...req, auth: 'required', budget: budgets.lichess, budgetName: 'lichess' }, signal, opts).catch((err: unknown) => {
         throw proxyHttpError(err);
       });
     if (now() < anonymousRefusedUntil && hasToken()) return withToken();
     try {
-      return await fetchCached({ ...req, auth: false, budget: budgets.masters }, signal);
+      return await fetchCached({ ...req, auth: false, budget: budgets.masters, budgetName: 'masters' }, signal, opts);
     } catch (e) {
       if (!(e instanceof NeedsToken)) throw e;
       anonymousRefusedUntil = now() + ANONYMOUS_REFUSED_MEMORY_MS;
@@ -383,22 +405,24 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
   };
 
   return {
-    masters: (params, signal) =>
-      anonymousThenToken({ kind: 'masters', key: params.toString(), url: `${UPSTREAM.explorer}/masters?${params}`, answers: [] }, signal),
+    masters: (params, signal, client) =>
+      anonymousThenToken({ kind: 'masters', key: params.toString(), url: `${UPSTREAM.explorer}/masters?${params}`, answers: [] }, signal, client),
 
-    mastersPgn: (id, signal) =>
+    mastersPgn: (id, signal, client) =>
       anonymousThenToken(
         { kind: 'masters-pgn', key: id, url: `${UPSTREAM.explorer}/masters/pgn/${encodeURIComponent(id)}`, answers: [404] },
         signal,
+        client,
       ),
 
-    lichess: (params, signal) =>
+    lichess: (params, signal, client) =>
       fetchCached(
         {
           kind: 'lichess',
           key: params.toString(),
           url: `${UPSTREAM.explorer}/lichess?${params}`,
           budget: budgets.lichess,
+          budgetName: 'lichess',
           auth: 'required',
           answers: [],
           precheck: () => {
@@ -413,6 +437,7 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
           },
         },
         signal,
+        client === undefined ? {} : { client },
       ).catch((e: unknown) => {
         throw proxyHttpError(e);
       }),
@@ -424,6 +449,7 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
           key: `${variant}:${fen}`,
           url: `${UPSTREAM.tablebase}/${encodeURIComponent(variant)}?${new URLSearchParams({ fen })}`,
           budget: budgets.tablebase,
+          budgetName: 'tablebase',
           auth: false,
           answers: [],
         },
@@ -433,7 +459,7 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
         throw proxyHttpError(e);
       }),
 
-    cloudEval: (q, signal) => {
+    cloudEval: (q, signal, client) => {
       const params = new URLSearchParams({ fen: q.fen, multiPv: String(q.multiPv) });
       if (q.variant && q.variant !== 'standard') params.set('variant', q.variant);
       return fetchCached(
@@ -442,10 +468,12 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
           key: params.toString(),
           url: `${UPSTREAM.lichess}/api/cloud-eval?${params}`,
           budget: budgets.cloudEval,
+          budgetName: 'cloudEval',
           auth: false,
           answers: [404],
         },
         signal,
+        client === undefined ? {} : { client },
       ).catch((e: unknown) => {
         throw proxyHttpError(e);
       });

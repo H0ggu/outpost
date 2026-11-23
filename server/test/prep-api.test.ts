@@ -3,7 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getOpeningBook } from '../src/chess/openings.ts';
 import { insertGame } from '../src/chess/store.ts';
 import type { AuthUser } from '../src/http/types.ts';
-import { activityBuckets, buildSide, prepReport } from '../src/prep/index.ts';
+import { buildSide, prepReport } from '../src/prep/index.ts';
+import { resolveTimeZone } from '../src/stats/index.ts';
 import { createSource, createUserSession, makeTestApp, mutationHeaders, testGame, type TestApp } from './helpers.ts';
 
 type Session = { userId: number; cookie: string };
@@ -192,6 +193,57 @@ describe('prep API', () => {
     t.db.run("UPDATE profiles SET visibility = 'public' WHERE id = ?", [carolProfile]);
   });
 
+  it('throttles reports per user and computes them one at a time', async () => {
+    const busy = createUserSession(t.db, { username: 'busy' });
+    const set = (await req(busy, 'POST', '/api/prep', { name: 'Throttle', profileIds: [carolProfile] })).json<PrepSet>();
+    const results = await Promise.all(Array.from({ length: 21 }, () => req(busy, 'GET', `/api/prep/${set.id}/report`)));
+    expect(results.filter(r => r.statusCode === 200)).toHaveLength(20);
+    expect(results.filter(r => r.statusCode === 429)).toHaveLength(1);
+    // Another user's budget is their own.
+    expect((await req(me, 'GET', `/api/prep/${set.id}/report`)).statusCode).toBe(404);
+  });
+
+  it('stops a report between opponents once the client is gone', async () => {
+    const set = (await req(me, 'POST', '/api/prep', { name: 'Abort', profileIds: [carolProfile, daveProfile] })).json<PrepSet>();
+    const viewer: AuthUser = { id: me.userId, username: 'me', role: 'user', totpEnabled: false, prefs: {} as AuthUser['prefs'] };
+    const signal = AbortSignal.abort();
+    await expect(prepReport(t.db, t.config, viewer, set.id, {}, { tz: 'UTC', plies: 8, minGames: 1, signal })).rejects.toMatchObject({
+      statusCode: 499,
+    });
+  });
+
+  it('buckets activity like the Activity tab: by end time, date-only games by weekday only, canonical tz', async () => {
+    const club = t.db.run("INSERT INTO databases (owner_user_id, name, kind, visibility, created_at) VALUES (?, 'Club', 'games', 'private', 0)", [
+      me.userId,
+    ]).lastInsertRowid;
+    const jane = createSource(t.db, { kind: 'pgn', key: `${club}:doe, jane`, databaseId: club });
+    // Two date-only OTB games (stored at 00:00 UTC of a Tuesday) and one timed game that started
+    // at 23:50 and ended at 00:20 UTC on a Wednesday.
+    const tuesday = Date.UTC(2026, 8, 1);
+    for (const [i, at] of [tuesday, tuesday + 7 * 86_400_000].entries()) {
+      insertGame(t.db, testGame({ origin: 'pgn', originId: `${club}:d${i}`, databaseId: club, startedAt: at, endedAt: at, white: { name: 'Doe, Jane' }, black: { name: 'X' } }));
+    }
+    const start = Date.UTC(2026, 8, 1, 23, 50);
+    insertGame(
+      t.db,
+      testGame({ origin: 'pgn', originId: `${club}:t`, databaseId: club, startedAt: start, endedAt: start + 30 * 60_000, white: { name: 'Doe, Jane' }, black: { name: 'X' } }),
+    );
+    const janeProfile = profile('jane-doe-prep', me.userId, 'private', [jane]);
+    const set = (await req(me, 'POST', '/api/prep', { name: 'OTB', profileIds: [janeProfile] })).json<PrepSet>();
+    const report = (tz: string) => req(me, 'GET', `/api/prep/${set.id}/report?tz=${encodeURIComponent(tz)}`).then(r => r.json<PrepReport>().opponents[0]!.activity);
+    const ny = await report('america/new_york');
+    expect(ny.tz).toBe('America/New_York');
+    // Only the timed game has an hour: it ended at 20:20 New York time (started 19:50).
+    expect(ny.byHour.map((c, h) => [h, c.games]).filter(([, n]) => n)).toEqual([[20, 1]]);
+    // The date-only games count on their PGN date's weekday (Tuesday = 1), the timed one on its New York day.
+    expect(ny.byWeekday.map(c => c.games)).toEqual([0, 3, 0, 0, 0, 0, 0]);
+    const utc = await report('UTC');
+    expect(utc.byHour.map((c, h) => [h, c.games]).filter(([, n]) => n)).toEqual([[0, 1]]);
+    expect(utc.byWeekday.map(c => c.games)).toEqual([0, 2, 1, 0, 0, 0, 0]);
+    // The same spelling the Activity tab answers with (an alias resolves to its zone).
+    expect((await report('EST')).tz).toBe(resolveTimeZone('EST'));
+  });
+
   it('builds sides from move lists', () => {
     const book = getOpeningBook();
     const side = buildSide(
@@ -213,6 +265,5 @@ describe('prep API', () => {
       ['1. e4 e5 2. Nf3', 0],
       ['1. e4 e5', 1 / 3],
     ]);
-    expect(activityBuckets([{ outcome: 'w', at: null }], 'UTC').byHour.every(c => c.games === 0 && c.score === null)).toBe(true);
   });
 });

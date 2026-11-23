@@ -8,9 +8,10 @@
 // (current site ratings, FIDE ratings, account state) — use them instead of parsing the JSON.
 import { UpstreamError } from '../http/upstream.ts';
 import { registerJobHandler, RequeueJob, type JobContext } from '../jobs/handlers.ts';
-import { rebuildPlayerGames } from '../chess/store.ts';
+import { rebuildPlayerGamesInBatches } from '../chess/store.ts';
+import type { Db } from '../db/index.ts';
 import { syncChesscom } from './chesscom.ts';
-import { finishSync, loadSource, recordSyncError, type SourceRow } from './common.ts';
+import { finishSync, loadSource, parseJsonObject, recordSyncError, type SourceRow } from './common.ts';
 import { geoHandler, queueOpponentLookups } from './geo.ts';
 import { syncLichess, type LichessSyncOptions } from './lichess.ts';
 import { rebuildHandler } from './rebuild.ts';
@@ -52,10 +53,41 @@ function isTransient(e: unknown, signal: AbortSignal): boolean {
   return e instanceof UpstreamError && (e.reason === 'rate_limited' || e.reason === 'aborted');
 }
 
-/** `pgn` and `fide` sources have nothing upstream: a sync links the games already stored. */
-function syncLocal(ctx: JobContext<'sync'>, src: SourceRow): void {
-  const added = rebuildPlayerGames(ctx.db, src.id);
-  finishSync(ctx.db, src.id, null, null, Date.now());
+/**
+ * What a `pgn` / `fide` source's games depend on: the change counters (`explorer_db_stats`) of its
+ * database, or of the public reference databases for a FIDE player (with their ids, so a
+ * visibility change counts as a change).
+ */
+export function localSourceVersion(db: Db, src: Pick<SourceRow, 'kind' | 'database_id'>): string {
+  const rows =
+    src.kind === 'pgn'
+      ? db.all<{ id: number; changes: number }>(
+          'SELECT d.id, COALESCE(s.changes, 0) AS changes FROM databases d LEFT JOIN explorer_db_stats s ON s.database_id = d.id WHERE d.id = ?',
+          [src.database_id],
+        )
+      : db.all<{ id: number; changes: number }>(
+          `SELECT d.id, COALESCE(s.changes, 0) AS changes FROM databases d LEFT JOIN explorer_db_stats s ON s.database_id = d.id
+            WHERE d.kind = 'reference' AND d.visibility = 'public' ORDER BY d.id`,
+        );
+  return rows.map(r => `${r.id}.${r.changes}`).join(',');
+}
+
+/**
+ * `pgn` and `fide` sources have nothing upstream: a sync links the games already stored, in
+ * batches that yield to the event loop. Importers link new games to existing sources themselves,
+ * so a sync with no change to the source's databases since the last one (`localSourceVersion`)
+ * does nothing; a `full` sync always relinks.
+ */
+async function syncLocal(ctx: JobContext<'sync'>, src: SourceRow): Promise<void> {
+  const version = localSourceVersion(ctx.db, src);
+  const saved = parseJsonObject<{ linkedVersion: string }>(src.sync_state_json);
+  if (!ctx.job.payload.full && src.last_synced_at !== null && saved?.linkedVersion === version) {
+    finishSync(ctx.db, src.id, { linkedVersion: version }, null, Date.now());
+    ctx.progress({ done: 0, total: 0, message: 'Up to date: no new games in the database', counts: { imported: 0 } });
+    return;
+  }
+  const added = await rebuildPlayerGamesInBatches(ctx.db, src.id, { signal: ctx.signal });
+  finishSync(ctx.db, src.id, { linkedVersion: version }, null, Date.now());
   ctx.progress({ done: added, total: added, message: `Linked ${added} game${added === 1 ? '' : 's'}`, counts: { imported: added } });
 }
 
@@ -86,7 +118,7 @@ export async function syncHandler(ctx: JobContext<'sync'>, opts: SyncOptions = {
         queueOpponentLookups(ctx.db, src.id, 'chesscom');
         break;
       default:
-        syncLocal(ctx, src);
+        await syncLocal(ctx, src);
     }
   } catch (e) {
     if (!isTransient(e, ctx.signal)) recordSyncError(ctx.db, src.id, e instanceof Error ? e.message : String(e));

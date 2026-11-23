@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { API_ROUTES, type SearchResults } from '@outpost/shared/api';
 import { z } from 'zod';
 import { requireViewer } from '../auth/session.ts';
+import { clientKey } from '../explorer/budget.ts';
 import { parseQuery } from '../http/validate.ts';
 import { MAX_QUERY_LENGTH, MIN_QUERY_LENGTH, search, SearchCache } from '../search/index.ts';
 
@@ -11,8 +12,10 @@ import { MAX_QUERY_LENGTH, MIN_QUERY_LENGTH, search, SearchCache } from '../sear
  * Endpoints (request/response types in @outpost/shared/api):
  *   - GET /api/search?q= (SearchResults: local profiles, Lichess autocomplete, Chess.com exact-username check, known usernames, reference players)
  *
- * requireViewer; throttled per client IP (each query can reach Lichess and Chess.com); upstream calls
- * have a short deadline (body included) and stop when the client closes the request. Logic in src/search/.
+ * requireViewer; throttled per client IP (each query can reach Lichess and Chess.com), and its upstream
+ * lookups count against the instance's lookup budget and the client's share (profiles/lookups.ts);
+ * upstream calls have a short deadline (body included) and stop when the client closes the request.
+ * Logic in src/search/.
  */
 
 /** Searches per IP per minute (the web app debounces typing). */
@@ -42,7 +45,8 @@ const searchRoutes: FastifyPluginAsync = async app => {
       };
       reply.raw.once('close', onClose);
       try {
-        return await search({ db: app.db, upstream: app.upstream, cache, signal: gone.signal }, q, req.user);
+        const client = req.user ? `user:${req.user.id}` : clientKey(req.ip);
+        return await search({ db: app.db, upstream: app.upstream, cache, signal: gone.signal, client }, q, req.user);
       } finally {
         reply.raw.off('close', onClose);
       }

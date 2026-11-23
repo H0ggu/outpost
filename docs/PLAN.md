@@ -120,6 +120,7 @@ Migrations at integration (2026-11-23), applied in number order on a fresh datab
 later rebuild of `games` must recreate them), `500_databases_files`, `501_sources_autoincrement`,
 `503_files_quota`, `600_reference`, `601_reference_fide_dedupe` (the one FIDE rule: `fide` sources
 link reference games only, one copy per game; decision 1). There is no `502` (merged into `601`).
+Added after the review: `202_player_games_rating_pool` (UltraBullet's rating pool, DECISIONS R5), `203_games_clocks`, `204_chesscom_reported_ratings` (R6), `205_pgn_fide_time_class` (R8), `602_reference_private_fide` (FIDE sources link public reference databases only, DECISIONS R2).
 
 - **users** `(id, username UNIQUE COLLATE NOCASE, password_hash, role 'admin'|'user', disabled, totp_secret, created_at, prefs_json)`
 - **sessions** `(id_hash PK, user_id, created_at, expires_at, last_seen_at, ip, user_agent)`
@@ -130,12 +131,15 @@ link reference games only, one copy per game; decision 1). There is no `502` (me
 - **profile_sources** `(profile_id, source_id, hidden, PRIMARY KEY(profile_id, source_id))`
 - **bookmarks** `(user_id, profile_id, created_at, PK(user_id, profile_id))`
 - **games**: one row per distinct game.
-  - Columns: `(id, origin 'lichess'|'chesscom'|'pgn'|'reference', origin_id, url, database_id NULL, white, black, white_key, black_key, white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id, result '1-0'|'0-1'|'1/2-1/2', termination, time_class, time_control, rated, variant, event, round, started_at, ended_at, ply_count, moves_san, eco, opening_name, opening_ply, accuracy_white, accuracy_black, headers_json, UNIQUE(origin, origin_id))`
+  - Columns: `(id, origin 'lichess'|'chesscom'|'pgn'|'reference', origin_id, url, database_id NULL, white, black, white_key, black_key, white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id, result '1-0'|'0-1'|'1/2-1/2', termination, time_class, time_control, rated, variant, event, round, started_at, ended_at, ply_count, moves_san, eco, opening_name, opening_ply, accuracy_white, accuracy_black, headers_json, clocks, UNIQUE(origin, origin_id))`
+  - `clocks` (migration `203`): the time left after each ply in centiseconds, for Lichess, Chess.com and user PGN-database games (not reference games); the PGN writers emit it as `[%clk]` comments.
+  - `white_rating` / `black_rating` are as the site reports them: pre-game, except Chess.com's post-game ratings (migration `204`; `player_games.rating` keeps the derived pre-game value).
   - `termination` is one of `mate|resign|timeout|abandon|agreement|repetition|stalemate|insufficient|fifty|timeout_vs_insufficient|other`.
-  - `time_class` is one of `bullet|blitz|rapid|classical|correspondence|unknown`.
+  - `time_class` is one of `bullet|blitz|rapid|classical|correspondence|unknown`: Lichess's thresholds for games played on Lichess or Chess.com, the FIDE rule for over-the-board PGN games (DECISIONS R8).
   - Only standard chess is stored: no variants, no games against engines, no from-position games.
 - **player_games**: one row per (source, game) from that player's side. This is the table the stats query.
-  - Columns: `(source_id, game_id, color 'w'|'b', outcome 'w'|'d'|'l', rating, rating_after, opp_name, opp_key, opp_rating, opp_title, opp_source_kind, ended_at, time_class, rated, PRIMARY KEY(source_id, game_id))`
+  - Columns: `(source_id, game_id, color 'w'|'b', outcome 'w'|'d'|'l', rating, rating_after, opp_name, opp_key, opp_rating, opp_title, opp_source_kind, ended_at, time_class, rated, rating_pool NULL|'ultraBullet', PRIMARY KEY(source_id, game_id))`
+  - `rating_pool` (migration `202`) names a rating pool other than the time class's own: Lichess UltraBullet, filed under bullet. Rating charts, current ratings and rating averages leave those rows out.
   - Index on `(source_id, ended_at)`.
 - **positions** `(game_id, ply, pos_key INTEGER, next_uci TEXT NULL)` for the first **50 plies**.
   - Index `(pos_key, game_id)`.
@@ -170,7 +174,7 @@ Every row is in scope. "Lila" means the feature is reused from vendored lila cod
 | Studio: board, notation with variations, glyphs and comments, engine (multi-PV, threat, arrows), explorers (masters, online, player, my DBs), PGN/FEN import and export, keyboard shortcuts, themes and piece sets | **Lila analysis board vendored** (all of these come from lila), plus Outpost chrome: My Files sidebar (folders, open/save/save-as, import, recycle bin, search the current position across files), board tabs, layout presets, and settings for board theme, piece set and sound set |
 | My Files / repertoires, synced to mobile | `files` table (PGN with variations) behind the authenticated API. The PWA works on phones, so the same files are available everywhere. |
 | Tournament preparation (Pro) | **Prep** page: a list of opponents, then per-opponent report cards with their White and Black repertoire (top lines), worst-scoring lines, recent games, activity by time and a jump-to-explorer link. Printable. |
-| Elo estimate | Only if we can cite a published conversion; otherwise left out and documented. |
+| Elo estimate | Only if we can cite a published conversion; otherwise left out and documented. **Left out** (no citable conversion found): README "Not included". |
 | Mobile app | Responsive layouts + PWA manifest. Lila's analysis board is already mobile-ready. |
 | Subscriptions, voting, Discord, partner programme | Not applicable (self-hosted, no tiers) |
 | Free-form panel docking (Studio) | Partial: layout presets instead of drag-and-dock |
@@ -234,7 +238,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 | DELETE | `/api/profiles/:slug` | |
 | POST | `/api/profiles/:slug/sources` | |
 | DELETE | `/api/profiles/:slug/sources/:sourceId` | |
-| POST | `/api/profiles/:slug/update` | Enqueue a sync for each source; respects the cooldown |
+| POST | `/api/profiles/:slug/update` | Enqueue a sync for each source the viewer sees; any signed-in viewer; respects the cooldown (admins exempt, high priority); 30 per user and minute |
 | GET | `/api/profiles/:slug/status` | |
 | PUT/DELETE | `/api/profiles/:slug/bookmark` | |
 | GET | `/api/bookmarks` | |
@@ -305,21 +309,23 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
   On a 429, back off 60 s or more, with exponential backoff on 5xx. Jobs left `running` at startup go back to `queued`. Every job stores progress for the UI.
   All upstream calls (jobs and routes alike) go through one client, `app.upstream` (`server/src/http/upstream.ts`): User-Agent, token injection for Lichess hosts only, a per-host 429 cool-down shared by every module, and timeouts. Workers and schedulers start only when `config.startWorkers`.
 - **Lichess.**
-  1. Stream `GET /api/games/user/{u}` as NDJSON with `Accept: application/x-ndjson` and the token. Parameters: `since=<last createdAt+1>`, `sort=dateAsc`, `opening=true`, `accuracy=true`, `perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence`.
+  1. Stream `GET /api/games/user/{u}` as NDJSON with `Accept: application/x-ndjson` and the token. Parameters: `since=<last createdAt+1>`, `sort=dateAsc`, `opening=true`, `accuracy=true`, `clocks=true`, `perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence`.
   2. Skip games that are a variant, `fromPosition`, against AI, or anonymous.
-  3. UltraBullet counts as bullet.
+  3. UltraBullet counts as bullet (filters, W/D/L, openings), but its ratings are another pool and stay out of the bullet rating views (`player_games.rating_pool`, DECISIONS R5).
   4. Ratings are stored pre-game; `rating_after = rating + ratingDiff`.
   5. Profile info comes from `GET /api/user/{u}`. Rating charts are built from the synced games (`player_games`), so `/api/user/{u}/rating-history` is not used.
 - **Chess.com.**
   1. Fetch `/pub/player/{u}` and `/stats`, then `/games/archives`, then each month in order. Lowercase the username; zero-pad `MM`.
   2. Revalidate months with ETag `If-None-Match`; always re-poll the current and previous month.
-  3. Keep only `rules=='chess'`. Use the `time_class` field as given (daily counts as correspondence). Ratings are **post-game**: `rating_after` = rating; `rating` = previous rating in the same class if known, otherwise the same value.
-  4. Parse moves from the PGN with chessops. Result codes map per the research notes.
+  3. Keep only `rules=='chess'`. Use the `time_class` field as given (daily counts as correspondence). Ratings are **post-game**: `rating_after` = rating; `rating` = previous rating in the same class if known, otherwise the same value (only from the month just read or the stored games, never across a month that was not read). The game row keeps both sides' ratings as Chess.com reports them, and `player_games.opp_rating` is the opponent's post-game rating (the archive has no pre-game one).
+  4. Parse moves and clock times (`[%clk]`) from the PGN with chessops. Result codes map per the research notes.
+  5. The event is the tournament's name from the PGN `Tournament` URL ("Bullet Brawl November 21 2026"), else the PGN `Event` ("Live Chess").
 - **After inserting games:**
   1. Classify the opening: the deepest ply among the first 40 whose EPD matches lichess chess-openings.
   2. Write `positions` (50 plies) and `player_games` (one row per source that appears in the game). `fide` sources only link reference-database games, one copy per game across reference databases (migration `601`, decision 1), so a FIDE profile never shows a user's PGN database.
   3. Queue opponent geo lookups: Lichess `POST /api/users` (300 ids per batch, no limit per run); Chess.com `/pub/player/{u}` serially at low priority, most recently met opponents first, at most 1,000 requests per run (the hourly sweep continues after a pause).
-- **Scheduling.** Daily auto refresh at `autoRefreshHourUtc` for profiles with `auto_refresh`. Manual updates enforce `updateCooldownMinutes`. The initial import can be limited to the last N months (`initialSyncMonths`).
+- **Scheduling.** Daily auto refresh at `autoRefreshHourUtc` for profiles with `auto_refresh`. Any signed-in viewer of a profile may ask for a manual update (its accounts are shared with every other profile of them anyway; DECISIONS R3). Manual updates enforce `updateCooldownMinutes` per profile for everyone but admins, whose updates are exempt and run at high priority. The initial import can be limited to the last N months (`initialSyncMonths`).
+- **Local sources.** `pgn` and `fide` sources link games already stored: on attach in batches that yield to the event loop, on an update as a `sync` job on the local lane, which does nothing while their databases are unchanged.
 
 ## 8. Studio (vendored lila analyse)
 Follow `docs/research/lila-ui-extraction.md`, option A.
@@ -373,10 +379,10 @@ Follow `docs/research/lila-ui-extraction.md`, option A.
     (`font-src` allows `data:` for pgn-viewer's embedded icon font, `lpv-fontello`)
   - COOP/COEP as in §8
   - `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`
-- **Access.** Public profiles and their stats can be read anonymously only when `anonymousBrowsing` is on. Everything else needs a session, and owners or admins for mutations.
+- **Access.** Public profiles and their stats can be read anonymously only when `anonymousBrowsing` is on. Everything else needs a session, and owners or admins for mutations. Databases follow one rule wherever their games are read (DECISIONS R1): user databases need a session (owner, or anyone signed in while public); reference databases are open to every viewer unless an admin makes one private (then admins only, and it never feeds FIDE players, R2).
 - **Secrets.** The Lichess token never reaches the browser. All upstream calls go through the server.
 - **Uploads.** Size limits: PGN 50 MB (pasted PGN 5 MB), reference import 2 GB streamed to disk.
-- **Per-user limits** (decision 7): 2,000,000 games across a user's PGN databases (admins: none), 3 pending imports, 10 database exports per minute; Studio files 100 MB of PGN (recycle bin included), 10,000 files, 2,000,000 indexed positions; prep lines from each opponent's latest 5,000 games.
+- **Per-user limits** (decision 7): 2,000,000 games across a user's PGN databases (admins: none), 200 profiles (admins: none), 3 pending imports, 10 database exports and 60 database game lists / searches per minute, 20 prep reports per minute (one at a time), 30 profile creations / account additions and 30 manual updates per minute; Studio files 100 MB of PGN (recycle bin included), 10,000 files, 2,000,000 indexed positions; prep lines from each opponent's latest 5,000 games. Upstream budgets are shared fairly between clients (DECISIONS R9).
 
 ## 11. Testing and verification
 - **Unit tests (Vitest):**

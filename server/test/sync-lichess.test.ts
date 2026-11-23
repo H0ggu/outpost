@@ -49,6 +49,14 @@ describe('mapLichessGame', () => {
     });
   });
 
+  it('keeps the clock times Lichess exports', () => {
+    const g = mapLichessGame({ ...byId('synth001'), clocks: [18003, 18003, 17763, 17500, 17200, 16900, 16800] });
+    if ('skip' in g) throw new Error(g.skip);
+    expect(g.clocks).toEqual([18003, 18003, 17763, 17500, 17200, 16900, 16800]);
+    const none = mapLichessGame(byId('synth001'));
+    expect('skip' in none ? none : none.clocks).toBeNull();
+  });
+
   it('folds UltraBullet into bullet and names arenas', () => {
     const g = mapLichessGame(byId('synth002'));
     if ('skip' in g) throw new Error(g.skip);
@@ -164,6 +172,7 @@ describe('Lichess sync', () => {
       opening: 'true',
       accuracy: 'true',
       moves: 'true',
+      clocks: 'true',
       ongoing: 'true',
       perfType: 'ultraBullet,bullet,blitz,rapid,classical,correspondence',
     });

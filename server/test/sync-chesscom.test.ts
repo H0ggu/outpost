@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UpstreamError } from '../src/http/upstream.ts';
 import { writeSettings } from '../src/settings.ts';
+import { chesscomEventName } from '../src/sync/chesscom.ts';
 import {
   archiveMonth,
   chesscomMonthsToFetch,
@@ -78,6 +79,25 @@ describe('Chess.com mapping', () => {
     expect(game.moves.slice(0, 4)).toEqual(['d4', 'Nf6', 'Nf3', 'g6']);
     expect(game.white.accuracy).toBe(g.accuracies?.white);
     expect(game.headers).toMatchObject({ ECO: 'E62', TimeControl: '180' });
+  });
+
+  it('keeps clock times and names events after their tournament', () => {
+    const g = MONTHS['2026/10']![0]!;
+    const { game } = mapped(g);
+    expect(game.clocks!.slice(0, 4)).toEqual([18000, 18000, 17990, 17930]);
+    expect(game.clocks).toHaveLength(game.moves.length);
+    const url = 'https://www.chess.com/tournament/live/bullet-brawl-november-21-2026-31422095';
+    const inBrawl = { ...g, pgn: g.pgn!.replace('[Event "Live Chess"]', `[Event "Live Chess"]\n[Tournament "${url}"]`) };
+    expect(mapped(inBrawl).game.event).toBe('Bullet Brawl November 21 2026');
+    expect(mapped({ ...g, tournament: 'https://api.chess.com/pub/tournament/titled-tuesday-blitz-november-03-2026-31201855' }).game.event).toBe(
+      'Titled Tuesday Blitz November 03 2026',
+    );
+    expect(chesscomEventName('https://www.chess.com/tournament/live/first-3-0-thursday-november-05-2026-31201863')).toBe(
+      'First 3|0 Thursday November 05 2026',
+    );
+    expect(chesscomEventName('https://www.chess.com/tournament/live/12345')).toBeNull();
+    expect(chesscomEventName('https://www.chess.com/game/live/1')).toBeNull();
+    expect(chesscomEventName(null)).toBeNull();
   });
 
   it('maps daily games as correspondence and keeps unrated games', () => {
@@ -245,6 +265,7 @@ describe('Chess.com sync', () => {
       doneThrough: '2026/11',
       cutoff: null,
       lastSyncStartedAt: Date.UTC(2026, 10, 23, 12),
+      tournamentEvents: true,
     });
 
     const rows = myGames(id);
@@ -473,5 +494,65 @@ describe('Chess.com sync', () => {
     fake.calls.length = 0;
     await expect(run(bad)).rejects.toThrow(/not a valid Chess.com username/);
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it('takes a pre-game rating from the stored games, never from an older month, when a month in between is not read', async () => {
+    // First sync: October is listed but not served; November is read.
+    months['2026/10'] = 'missing';
+    const id = createSource(t.db, { kind: 'chesscom', key: 'hikaru' });
+    await run(id);
+    const blitz = () => myGames(id).filter(r => r.time_class === 'blitz' && r.rated);
+    const novFirst = blitz().find(r => r.ended_at >= Date.UTC(2026, 10, 1))!;
+    // Second sync, a month later: October is served now, November answers 304, December is new.
+    months['2026/10'] = MONTHS['2026/10']!;
+    const lastNov = MONTHS['2026/11']!.filter(g => g.time_class === 'blitz' && g.rated).at(-1)!;
+    const novRating = lastNov.white.username.toLowerCase() === 'hikaru' ? lastNov.white.rating! : lastNov.black.rating!;
+    const dec = { ...MONTHS['2026/11']![0]!, uuid: 'dec-game-1', end_time: Date.UTC(2026, 11, 5) / 1000, start_time: Date.UTC(2026, 11, 5) / 1000 - 300 };
+    archives = [...archives, 'https://api.chess.com/pub/player/hikaru/games/2026/12'];
+    months['2026/12'] = [dec];
+    vi.setSystemTime(Date.UTC(2026, 11, 20, 12));
+    await run(id);
+    expect(monthCalls().slice(-3).map(([m]) => m)).toEqual(['2026/10', '2026/11', '2026/12']);
+    const decRow = myGames(id).find(r => r.origin_id === 'dec-game-1')!;
+    if (dec.time_class === 'blitz' && dec.rated) expect(decRow.rating).toBe(novRating);
+    else expect(decRow.rating).not.toBe(novFirst.rating);
+    // Whatever the class, the pre-game rating is the latest stored one of that class before it.
+    const before = t.db.value<number>(
+      `SELECT rating_after FROM player_games WHERE source_id = ? AND time_class = ? AND rated = 1 AND ended_at < ? ORDER BY ended_at DESC LIMIT 1`,
+      [id, decRow.time_class, decRow.ended_at],
+    );
+    expect(decRow.rating).toBe(before);
+  });
+
+  it('keeps both sides of a game row as Chess.com reports them; the owner’s pre-game rating stays in player_games', async () => {
+    const id = createSource(t.db, { kind: 'chesscom', key: 'hikaru' });
+    await run(id);
+    const rows = t.db.all<{ white_rating: number; black_rating: number; headers_json: string; rating: number; rating_after: number; color: string }>(
+      `SELECT g.white_rating, g.black_rating, g.headers_json, pg.rating, pg.rating_after, pg.color
+         FROM games g JOIN player_games pg ON pg.game_id = g.id WHERE pg.source_id = ? AND pg.rated = 1`,
+      [id],
+    );
+    expect(rows.length).toBeGreaterThan(5);
+    for (const r of rows) {
+      const h = JSON.parse(r.headers_json) as Record<string, string>;
+      expect([r.white_rating, r.black_rating]).toEqual([Number(h.WhiteElo), Number(h.BlackElo)]);
+      expect(r.rating_after).toBe(r.color === 'w' ? r.white_rating : r.black_rating);
+    }
+    expect(rows.some(r => r.rating !== r.rating_after)).toBe(true);
+  });
+
+  it('names stored games after their tournaments once per source', async () => {
+    const id = createSource(t.db, { kind: 'chesscom', key: 'hikaru' });
+    await run(id);
+    const gameId = t.db.value<number>('SELECT game_id FROM player_games WHERE source_id = ? ORDER BY ended_at DESC LIMIT 1', [id])!;
+    const url = 'https://www.chess.com/tournament/live/bullet-brawl-november-21-2026-31422095';
+    t.db.run(`UPDATE games SET event = 'Live Chess', headers_json = json_set(headers_json, '$.Tournament', ?) WHERE id = ?`, [url, gameId]);
+    // A state written before the backfill existed.
+    const state = stateOf(id);
+    delete state.tournamentEvents;
+    t.db.run('UPDATE sources SET sync_state_json = ? WHERE id = ?', [JSON.stringify(state), id]);
+    await run(id);
+    expect(t.db.value('SELECT event FROM games WHERE id = ?', [gameId])).toBe('Bullet Brawl November 21 2026');
+    expect(stateOf(id).tournamentEvents).toBe(true);
   });
 });
