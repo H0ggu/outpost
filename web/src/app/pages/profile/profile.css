@@ -288,6 +288,28 @@ html[data-theme='light'] {
   font-size: 0.95em;
 }
 
+/* Board preview of an opening line (LinePreview.tsx), floating over the page from <body>. */
+.line-preview {
+  position: fixed;
+  z-index: 250;
+  padding: 4px;
+  background: var(--c-bg-popup);
+  border: 1px solid var(--c-border);
+  border-radius: var(--box-radius);
+  box-shadow: var(--shadow-box), 0 8px 24px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+}
+
+.line-preview__board {
+  width: 100%;
+  aspect-ratio: 1;
+}
+
+.line-preview__board > .cg-wrap {
+  width: 100%;
+  height: 100%;
+}
+
 .profile-page .color-dot {
   display: inline-block;
   flex: 0 0 auto;

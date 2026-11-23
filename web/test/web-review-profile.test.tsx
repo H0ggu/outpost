@@ -14,6 +14,7 @@ import OpeningsPage from '../src/app/pages/profile/OpeningsPage.tsx';
 import OpponentsPage from '../src/app/pages/profile/OpponentsPage.tsx';
 import OverviewPage from '../src/app/pages/profile/OverviewPage.tsx';
 import ProfileLayout from '../src/app/pages/profile/ProfileLayout.tsx';
+import LinePreview, { linePosition, previewPlacement } from '../src/app/pages/profile/components/LinePreview.tsx';
 import { newProfileForOpponent } from '../src/app/pages/profile/links.ts';
 import SettingsPage from '../src/app/pages/SettingsPage.tsx';
 import { ALL_GAMES, mockFetch, sessionInfo, type MockOptions } from './web-profile-fixtures.ts';
@@ -201,5 +202,44 @@ describe('a profile for an opponent', () => {
     const create = await screen.findByRole('link', { name: 'New profile for Opponent02' });
     expect(create.getAttribute('href')).toMatch(/^\/profiles\/new\?(lichess|chesscom)=Opponent02&name=Opponent02$/);
     expect(create.textContent).toBe('New profile');
+  });
+});
+
+describe('the openings board preview', () => {
+  it('finds the position at the end of a line', () => {
+    const p = linePosition('e2e4,c7c5,g1f3');
+    expect(p?.fen).toBe('rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2');
+    expect(p?.lastMove).toEqual(['g1', 'f3']);
+    expect(linePosition('')?.lastMove).toBeUndefined();
+    expect(linePosition('e2e5')).toBeNull();
+  });
+
+  it('opens below the name, or above it near the bottom of the window', () => {
+    expect(previewPlacement({ left: 100, top: 200, bottom: 220 }, { width: 1280, height: 900 }, 176)).toEqual({ left: 100, top: 226 });
+    expect(previewPlacement({ left: 100, top: 800, bottom: 820 }, { width: 1280, height: 900 }, 176)).toEqual({ left: 100, top: 618 });
+    // Kept inside the window horizontally.
+    expect(previewPlacement({ left: 1250, top: 200, bottom: 220 }, { width: 1280, height: 900 }, 176).left).toBe(1096);
+  });
+
+  it('draws a view-only board turned to the player, outside the table', () => {
+    render(<LinePreview line="e2e4,e7e5" color="black" anchor={{ left: 10, top: 10, bottom: 30 }} />);
+    const box = document.body.querySelector<HTMLElement>('body > .line-preview')!;
+    expect(box).not.toBeNull();
+    expect(box.getAttribute('aria-hidden')).toBe('true');
+    expect(box.querySelector('.cg-wrap')?.classList.contains('orientation-black')).toBe(true);
+    expect(box.style.top).toBe('36px');
+  });
+
+  it('shows on hovering an opening name, and goes on leaving it', async () => {
+    renderAs(`${SLUG}/openings`);
+    const white = await screen.findByRole('region', { name: 'As White' });
+    const link = await find<HTMLAnchorElement>('td.op-name a.row-action', white);
+    fireEvent.pointerOver(link, { pointerType: 'mouse' });
+    await waitFor(() => expect(document.querySelector('.line-preview .cg-wrap')).not.toBeNull());
+    fireEvent.pointerOut(link, { pointerType: 'mouse' });
+    await waitFor(() => expect(document.querySelector('.line-preview')).toBeNull());
+    // A touch tap opens the line instead.
+    fireEvent.pointerOver(link, { pointerType: 'touch' });
+    expect(document.querySelector('.line-preview')).toBeNull();
   });
 });
