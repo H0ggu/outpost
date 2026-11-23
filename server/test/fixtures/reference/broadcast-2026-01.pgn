@@ -1,0 +1,140 @@
+[Event "Round 1: Alpha, Test - Beta, Test"]
+[Site "https://lichess.org/broadcast/outpost-test-open-2026/round-1/Rnd1AAAA/Game0001"]
+[Date "2026.01.10"]
+[Round "1.1"]
+[White "Alpha, Test"]
+[Black "Beta, Test"]
+[Result "1-0"]
+[WhiteElo "2650"]
+[WhiteTitle "GM"]
+[WhiteFideId "900001"]
+[BlackElo "2480"]
+[BlackTitle "IM"]
+[BlackFideId "900002"]
+[TimeControl "90+30"]
+[Variant "Standard"]
+[UTCDate "2026.01.10"]
+[UTCTime "14:00:00"]
+[BroadcastName "Outpost Test Open 2026 | Masters"]
+[BroadcastURL "https://lichess.org/broadcast/outpost-test-open-2026/round-1/Rnd1AAAA"]
+[GameURL "https://lichess.org/broadcast/outpost-test-open-2026/round-1/Rnd1AAAA/Game0001"]
+
+1. e4 { [%clk 1:30:00] } 1... e5 { [%clk 1:30:00] } 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O 9. h3 Nb8 10. d4 Nbd7 1-0
+
+[Event "Outpost Test Open 2026"]
+[Site "https://lichess.org/broadcast/outpost-test-open-2026/round-1/Rnd1AAAA/Game0002"]
+[Date "2026.01.10"]
+[Round "1.2"]
+[White "Gamma, Testy"]
+[Black "Delta, Test"]
+[Result "1/2-1/2"]
+[WhiteElo "2400"]
+[WhiteFideId "900003"]
+[BlackElo "2390"]
+[BlackFideId "900004"]
+[TimeControl "90+30"]
+[Termination "3-Fold repetition"]
+[UTCDate "2026.01.10"]
+[UTCTime "14:00:00"]
+[BroadcastName "Outpost Test Open 2026 | Masters"]
+[GameURL "https://lichess.org/broadcast/outpost-test-open-2026/round-1/Rnd1AAAA/Game0002"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 5. e3 O-O 6. Nf3 h6 7. Bh4 b6 8. cxd5 Nxd5 1/2-1/2
+
+[Event "Engine Season 1"]
+[Site "engine.example"]
+[Date "2026.01.11"]
+[White "Engine A 1.0"]
+[Black "Engine B 2.0"]
+[Result "1/2-1/2"]
+[WhiteTitle "BOT"]
+[BlackTitle "BOT"]
+[TimeControl "1800+3"]
+[BroadcastName "Engine Season 1 | Cat 1"]
+[GameURL "https://lichess.org/broadcast/engine-season-1/round-1/Rnd2BBBB/Game0003"]
+
+1. e4 c5 2. Nf3 d6 1/2-1/2
+
+[Event "Round 2: NoPlayer - Beta, Test"]
+[Site "https://lichess.org/broadcast/outpost-test-open-2026/round-2/Rnd3CCCC/Game0004"]
+[Date "2026.01.11"]
+[White "Alpha, Test"]
+[Black "Beta, Test"]
+[Result "1-0"]
+[WhiteFideId "900001"]
+[BlackFideId "900002"]
+[Termination "Unplayed"]
+[BroadcastName "Outpost Test Open 2026 | Masters"]
+[GameURL "https://lichess.org/broadcast/outpost-test-open-2026/round-2/Rnd3CCCC/Game0004"]
+
+1. e4 1-0
+
+[Event "Outpost Test Open 2026"]
+[Date "2026.01.11"]
+[White "Gamma, Test"]
+[Black "Alpha, Test"]
+[Result "*"]
+[BroadcastName "Outpost Test Open 2026 | Masters"]
+[GameURL "https://lichess.org/broadcast/outpost-test-open-2026/round-2/Rnd3CCCC/Game0005"]
+
+1. c4 e5 *
+
+[Event "Outpost Test Weekender"]
+[Site "https://lichess.org/broadcast/outpost-test-weekender/round-1/Rnd4DDDD/Game0006"]
+[Date "2026.01.12"]
+[Round "1.1"]
+[White "1850 Club Player"]
+[Black "Second Club Player"]
+[Result "0-1"]
+[BlackElo "1790"]
+[TimeControl "G: 15 minutes + 5 seconds increment from move 1"]
+[UTCDate "2026.01.12"]
+[UTCTime "09:30:00"]
+[BroadcastName "Outpost Test Weekender | Rapid"]
+[GameURL "https://lichess.org/broadcast/outpost-test-weekender/round-1/Rnd4DDDD/Game0006"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Bb4 0-1
+
+[Event "Outpost Test Weekender"]
+[Date "2026.01.12"]
+[White "Second Club Player"]
+[Black "Third Club Player"]
+[Result "1-0"]
+[BroadcastName "Outpost Test Weekender | Rapid"]
+[GameURL "https://lichess.org/broadcast/outpost-test-weekender/round-1/Rnd4DDDD/Game0007"]
+
+1. e4 e5 2. Qh8 1-0
+
+[Event "Outpost Test Open 2026"]
+[Site "https://lichess.org/broadcast/outpost-test-open-2026/round-3/Rnd5EEEE/Game0008"]
+[Date "2026.01.13"]
+[Round "3.1"]
+[White "Beta, Test"]
+[Black "Epsilon, Test"]
+[Result "1-0"]
+[WhiteElo "2490"]
+[WhiteTitle "IM"]
+[WhiteFideId "900002"]
+[BlackElo "2300"]
+[BlackTitle "FM"]
+[BlackFideId "900005"]
+[TimeControl "3+2"]
+[UTCDate "2026.01.13"]
+[UTCTime "18:00:00"]
+[BroadcastName "Outpost Test Open 2026 | Blitz"]
+[GameURL "https://lichess.org/broadcast/outpost-test-open-2026/round-3/Rnd5EEEE/Game0008"]
+
+1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0
+
+[Event "Chess960 Exhibition"]
+[Date "2026.01.14"]
+[White "Alpha, Test"]
+[Black "Beta, Test"]
+[Result "1-0"]
+[Variant "Chess960"]
+[FEN "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1"]
+[SetUp "1"]
+[BroadcastName "Chess960 Exhibition"]
+
+1. e4 1-0
+

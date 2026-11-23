@@ -303,6 +303,12 @@ export interface AdminSettings {
   /** Months of history for a source's first import; 0 = everything. */
   initialSyncMonths: number;
   mastersSource: MastersSource;
+  /**
+   * Import finished official Lichess broadcast rounds into the built-in "Lichess broadcasts"
+   * reference database automatically (needs the Lichess token; default off). Optional for
+   * compatibility; absent means off.
+   */
+  broadcastAutoImport?: boolean;
 }
 
 /**
@@ -318,6 +324,8 @@ export interface UpdateAdminSettingsRequest {
   updateCooldownMinutes?: number;
   initialSyncMonths?: number;
   mastersSource?: MastersSource;
+  /** See `AdminSettings.broadcastAutoImport`. */
+  broadcastAutoImport?: boolean;
 }
 
 /** One row of `GET /api/admin/users`. */
@@ -1361,6 +1369,8 @@ export interface BroadcastMonthStatus {
   status: 'available' | 'queued' | 'importing' | 'imported' | 'error';
   games: number;
   importedAt: EpochMs | null;
+  /** Why the last import failed (status `error`). */
+  error?: string | null;
 }
 
 /** `GET /api/reference`. */
@@ -1383,7 +1393,14 @@ export interface ReferencePlayer {
   games: number;
   lastPlayed: EpochMs | null;
   maxRating: number | null;
-  /** A visible local profile with this FIDE source, if any. */
+  /** Rating in the player's most recent game, when known. */
+  lastRating?: number | null;
+  /**
+   * Players without a FIDE id are indexed per reference database: its id (attach them as a `pgn`
+   * source with this `databaseId` and `key` = `name`). Null for FIDE players (every reference DB).
+   */
+  databaseId?: Id | null;
+  /** A visible local profile with this FIDE source (or pgn source, without a FIDE id), if any. */
   profileSlug: string | null;
 }
 
@@ -1429,7 +1446,11 @@ export interface BroadcastRoundRef {
   url: string;
 }
 
-/** A broadcast tournament in lists. */
+/**
+ * A broadcast tournament in lists. In `GET /api/broadcasts`, `rounds` holds only the latest round
+ * with games and the current/next (or last) round, as Lichess's list gives them;
+ * `GET /api/broadcasts/tour/:tourId` has every round.
+ */
 export interface BroadcastSummary {
   tour: {
     id: string;
@@ -1450,8 +1471,12 @@ export interface BroadcastSummary {
 
 /** `GET /api/broadcasts`. */
 export interface BroadcastsResponse {
+  /** Ongoing tours (between rounds too), live ones first. */
   active: BroadcastSummary[];
+  /** Finished tours, most recent first. */
   recent: BroadcastSummary[];
+  /** Tours that have not started yet (optional for compatibility). */
+  upcoming?: BroadcastSummary[];
 }
 
 /** `GET /api/broadcasts/tour/:tourId`. */

@@ -1,0 +1,197 @@
+{
+ "active": [
+  {
+   "tour": {
+    "id": "TourNEXT",
+    "name": "Next Round Test Cup",
+    "slug": "next-round-test-cup",
+    "info": {
+     "format": "Swiss",
+     "tc": "15 min + 10 sec / move",
+     "fideTC": "rapid",
+     "location": "Testville",
+     "timeZone": "Europe/Oslo",
+     "players": "Alpha, Beta",
+     "website": "https://example.org/",
+     "standings": "https://example.org/standings"
+    },
+    "createdAt": 1790000000000,
+    "url": "https://lichess.org/broadcast/next-round-test-cup/TourNEXT",
+    "tier": 5,
+    "dates": [
+     1795100000000,
+     1795400000000
+    ],
+    "image": "https://image.lichess.org/display?path=x.webp"
+   },
+   "round": {
+    "id": "RndNX002",
+    "name": "Round 2",
+    "slug": "round-2",
+    "createdAt": 1790000000000,
+    "startsAt": 1795350000000,
+    "url": "https://lichess.org/broadcast/next-round-test-cup/round-2/RndNX002"
+   },
+   "roundToLink": {
+    "id": "RndNX001",
+    "name": "Round 1",
+    "slug": "round-1",
+    "createdAt": 1790000000000,
+    "startsAt": 1795100000000,
+    "finishedAt": 1795110000000,
+    "finished": true,
+    "url": "https://lichess.org/broadcast/next-round-test-cup/round-1/RndNX001"
+   },
+   "group": "Next Round Test Cup"
+  },
+  {
+   "tour": {
+    "id": "TourLIVE",
+    "name": "Live Test Open | Masters",
+    "slug": "live-test-open-masters",
+    "info": {
+     "format": "8-player round robin",
+     "tc": "90 min + 30 sec / move",
+     "fideTC": "standard",
+     "location": "Testville",
+     "timeZone": "Europe/Oslo",
+     "players": "Alpha, Beta",
+     "website": "https://example.org/",
+     "standings": "https://example.org/standings"
+    },
+    "createdAt": 1790000000000,
+    "url": "https://lichess.org/broadcast/live-test-open-masters/TourLIVE",
+    "tier": 4,
+    "dates": [
+     1795000000000,
+     1795600000000
+    ],
+    "image": "https://image.lichess.org/display?path=x.webp",
+    "description": "Synthetic test tournament."
+   },
+   "round": {
+    "id": "RndLV002",
+    "name": "Round 2",
+    "slug": "round-2",
+    "createdAt": 1790000000000,
+    "startsAt": 1795086400000,
+    "ongoing": true,
+    "url": "https://lichess.org/broadcast/live-test-open-masters/round-2/RndLV002"
+   }
+  }
+ ],
+ "upcoming": [
+  {
+   "tour": {
+    "id": "TourUPCO",
+    "name": "Upcoming Test Championship",
+    "slug": "upcoming-test-championship",
+    "info": {
+     "format": "8-player round robin",
+     "tc": "90 min + 30 sec / move",
+     "fideTC": "standard",
+     "location": "Testville",
+     "timeZone": "Europe/Oslo",
+     "players": "Alpha, Beta",
+     "website": "https://example.org/",
+     "standings": "https://example.org/standings"
+    },
+    "createdAt": 1790000000000,
+    "url": "https://lichess.org/broadcast/upcoming-test-championship/TourUPCO",
+    "tier": 5,
+    "dates": [
+     1800000000000,
+     1800500000000
+    ],
+    "image": "https://image.lichess.org/display?path=x.webp",
+    "description": "Synthetic test tournament."
+   },
+   "round": {
+    "id": "RndUP001",
+    "name": "Round 1",
+    "slug": "round-1",
+    "createdAt": 1790000000000,
+    "startsAt": 1800000000000,
+    "url": "https://lichess.org/broadcast/upcoming-test-championship/round-1/RndUP001"
+   }
+  }
+ ],
+ "past": {
+  "currentPage": 1,
+  "maxPerPage": 24,
+  "currentPageResults": [
+   {
+    "tour": {
+     "id": "TourDONE",
+     "name": "Finished Test Cup",
+     "slug": "finished-test-cup",
+     "info": {
+      "format": "8-player round robin",
+      "tc": "90 min + 30 sec / move",
+      "fideTC": "standard",
+      "location": "Testville",
+      "timeZone": "Europe/Oslo",
+      "players": "Alpha, Beta",
+      "website": "https://example.org/",
+      "standings": "https://example.org/standings"
+     },
+     "createdAt": 1790000000000,
+     "url": "https://lichess.org/broadcast/finished-test-cup/TourDONE",
+     "tier": 3,
+     "dates": [
+      1794000000000
+     ],
+     "image": "https://image.lichess.org/display?path=x.webp",
+     "description": "Synthetic test tournament."
+    },
+    "round": {
+     "id": "RndDN002",
+     "name": "Round 2",
+     "slug": "round-2",
+     "createdAt": 1790000000000,
+     "startsAt": 1795180000000,
+     "finishedAt": 1795200000000,
+     "finished": true,
+     "url": "https://lichess.org/broadcast/finished-test-cup/round-2/RndDN002"
+    }
+   },
+   {
+    "tour": {
+     "id": "TourOLD1",
+     "name": "Old Test Open",
+     "slug": "old-test-open",
+     "info": {
+      "format": "8-player round robin",
+      "tc": "90 min + 30 sec / move",
+      "fideTC": "standard",
+      "location": "Testville",
+      "timeZone": "Europe/Oslo",
+      "players": "Alpha, Beta",
+      "website": "https://example.org/",
+      "standings": "https://example.org/standings"
+     },
+     "createdAt": 1790000000000,
+     "url": "https://lichess.org/broadcast/old-test-open/TourOLD1",
+     "tier": 3,
+     "dates": [
+      1789900000000
+     ],
+     "image": "https://image.lichess.org/display?path=x.webp",
+     "description": "Synthetic test tournament."
+    },
+    "round": {
+     "id": "RndOL001",
+     "name": "Round 9",
+     "slug": "round-9",
+     "createdAt": 1790000000000,
+     "startsAt": 1789990000000,
+     "finishedAt": 1790000000000,
+     "finished": true,
+     "url": "https://lichess.org/broadcast/old-test-open/round-9/RndOL001"
+    }
+   }
+  ],
+  "previousPage": null,
+  "nextPage": 2
+ }
+}
