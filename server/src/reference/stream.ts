@@ -93,31 +93,41 @@ export async function* decompressAuto(src: AsyncIterable<Uint8Array>, opts: { ma
     headLength += r.value.byteLength;
   }
   const first = Buffer.concat(head);
-  const compression = detectCompression(first);
+  // Closes the source on every exit (not awaited: a pending read finishes, or fails on the
+  // caller's abort signal, on its own time).
+  const closeSource = (): void => void Promise.resolve(it.return?.()).catch(() => {});
+  let compression: Compression;
+  try {
+    compression = detectCompression(first);
+  } catch (e) {
+    closeSource();
+    throw e;
+  }
   async function* replay(): AsyncGenerator<Uint8Array> {
-    if (first.byteLength) yield first;
-    if (done) return;
-    for (;;) {
-      const r = await it.next();
-      if (r.done) return;
-      yield r.value;
+    try {
+      if (first.byteLength) yield first;
+      if (done) return;
+      for (;;) {
+        const r = await it.next();
+        if (r.done) return;
+        yield r.value;
+      }
+    } finally {
+      closeSource();
     }
   }
+  const maxOutput = opts.maxOutput ?? REFERENCE_LIMITS.decompressedBytes;
   if (compression === 'none') {
-    yield* countBytes(replay(), { max: opts.maxOutput ?? REFERENCE_LIMITS.decompressedBytes, what: 'The PGN' });
+    yield* countBytes(replay(), { max: maxOutput, what: 'The PGN' });
     return;
   }
   const decoder = compression === 'zstd' ? createZstdDecompress() : createGunzip();
   const out = pipeline(Readable.from(replay(), { objectMode: false }), decoder, () => {});
   try {
-    yield* countBytes(out as AsyncIterable<Uint8Array>, {
-      max: opts.maxOutput ?? REFERENCE_LIMITS.decompressedBytes,
-      what: 'The decompressed PGN',
-    });
+    yield* countBytes(out as AsyncIterable<Uint8Array>, { max: maxOutput, what: 'The decompressed PGN' });
   } finally {
     decoder.destroy();
-    // Not awaited: a pending read finishes (or fails on the caller's abort signal) on its own time.
-    void Promise.resolve(it.return?.()).catch(() => {});
+    closeSource();
   }
 }
 

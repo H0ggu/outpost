@@ -228,6 +228,37 @@ describe('streams', () => {
     expect(await collect(decompressAuto(chunksOf(file, 5)))).toBe(text);
   });
 
+  it('closes the source when the consumer stops early or the format is refused', async () => {
+    for (const [input, compressed] of [
+      [Buffer.from(text), false],
+      [zstdCompressSync(Buffer.from(text.repeat(20))), true],
+    ] as const) {
+      let closed = false;
+      const source = async function* () {
+        try {
+          yield* chunksOf(input, 16);
+        } finally {
+          closed = true;
+        }
+      };
+      for await (const _ of decompressAuto(source())) break;
+      await new Promise(r => setTimeout(r, 10));
+      expect(closed, compressed ? 'zstd' : 'plain').toBe(true);
+    }
+    let closed = false;
+    const zip = async function* () {
+      try {
+        yield Buffer.from('PK\x03\x04');
+        yield Buffer.from('more');
+      } finally {
+        closed = true;
+      }
+    };
+    await expect(collect(decompressAuto(zip()))).rejects.toBeInstanceOf(UnsupportedFormatError);
+    await new Promise(r => setTimeout(r, 10));
+    expect(closed).toBe(true);
+  });
+
   it('refuses zip and bzip2 and caps the output', async () => {
     await expect(collect(decompressAuto(chunksOf(Buffer.from('PK\x03\x04rest'))))).rejects.toBeInstanceOf(UnsupportedFormatError);
     await expect(collect(decompressAuto(chunksOf(Buffer.from('BZh91AY'))))).rejects.toBeInstanceOf(UnsupportedFormatError);
