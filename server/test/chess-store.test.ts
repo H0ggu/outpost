@@ -9,6 +9,7 @@ import {
   getOpeningBook,
   insertGame,
   InvalidGameError,
+  isOnlineSiteGame,
   isReplayError,
   MAX_STORED_TAGS,
   MAX_TAG_VALUE_LENGTH,
@@ -28,6 +29,7 @@ import {
   type PgnGame,
 } from '../src/chess/index.ts';
 import { epdOf } from '@outpost/shared/chess';
+import { otbTimeControl } from '../src/reference/timeControl.ts';
 import { createSource, makeTestApp, testGame, type TestApp } from './helpers.ts';
 
 const PGN = `[Event "Rated Blitz game"]
@@ -144,6 +146,35 @@ describe('PGN helpers', () => {
     expect(pgnTimeClass('40/5400+30:1800+30')).toBe('classical');
     expect(pgnTimeClass('1/259200')).toBe('correspondence');
     expect(pgnTimeClass(null)).toBe('unknown');
+  });
+
+  it('classifies over-the-board games with the FIDE rule, like the reference DB, and online games like Lichess', async () => {
+    const tcOf = async (tc: string, extra = '') => {
+      const [g] = await collect(`[White "A"]\n[Black "B"]\n[Result "1-0"]\n[TimeControl "${tc}"]\n${extra}\n1. e4 e5 1-0\n`);
+      const n = pgnToNormalizedGame(g!, { origin: 'pgn', databaseId: 1 });
+      if ('skip' in n) throw new Error(n.skip);
+      return n.timeClass;
+    };
+    for (const [tc, want] of [
+      ['1800', 'rapid'],
+      ['1800+0', 'rapid'],
+      ['1500+10', 'rapid'],
+      ['2700+10', 'rapid'],
+      ['600+5', 'rapid'],
+      ['5400+30', 'classical'],
+      ['300+2', 'blitz'],
+      ['40/5400+30:1800+30', 'classical'],
+    ] as const) {
+      expect([tc, await tcOf(tc)]).toEqual([tc, want]);
+      expect([tc, otbTimeControl(tc).timeClass]).toEqual([tc, want]);
+    }
+    // Lichess and Chess.com exports keep Lichess's thresholds (as synced games do).
+    expect(await tcOf('1800', '[Site "https://lichess.org/abcdefgh"]')).toBe('classical');
+    expect(await tcOf('60+0', '[Site "https://lichess.org/abcdefgh"]')).toBe('bullet');
+    expect(await tcOf('600', '[Site "Chess.com"]\n[Link "https://www.chess.com/game/live/1"]')).toBe('rapid');
+    expect(await tcOf('600')).toBe('blitz');
+    // A Lichess broadcast is over the board.
+    expect(isOnlineSiteGame(new Map([['Site', 'https://lichess.org/broadcast/x/y/abcdefgh']]))).toBe(false);
   });
 });
 

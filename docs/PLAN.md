@@ -120,7 +120,7 @@ Migrations at integration (2026-11-23), applied in number order on a fresh datab
 later rebuild of `games` must recreate them), `500_databases_files`, `501_sources_autoincrement`,
 `503_files_quota`, `600_reference`, `601_reference_fide_dedupe` (the one FIDE rule: `fide` sources
 link reference games only, one copy per game; decision 1). There is no `502` (merged into `601`).
-Added after the review: `202_player_games_rating_pool` (UltraBullet's rating pool, DECISIONS R5), `203_games_clocks`, `204_chesscom_reported_ratings` (R6), `602_reference_private_fide` (FIDE sources link public reference databases only, DECISIONS R2).
+Added after the review: `202_player_games_rating_pool` (UltraBullet's rating pool, DECISIONS R5), `203_games_clocks`, `204_chesscom_reported_ratings` (R6), `205_pgn_fide_time_class` (R8), `602_reference_private_fide` (FIDE sources link public reference databases only, DECISIONS R2).
 
 - **users** `(id, username UNIQUE COLLATE NOCASE, password_hash, role 'admin'|'user', disabled, totp_secret, created_at, prefs_json)`
 - **sessions** `(id_hash PK, user_id, created_at, expires_at, last_seen_at, ip, user_agent)`
@@ -135,7 +135,7 @@ Added after the review: `202_player_games_rating_pool` (UltraBullet's rating poo
   - `clocks` (migration `203`): the time left after each ply in centiseconds, for Lichess, Chess.com and user PGN-database games (not reference games); the PGN writers emit it as `[%clk]` comments.
   - `white_rating` / `black_rating` are as the site reports them: pre-game, except Chess.com's post-game ratings (migration `204`; `player_games.rating` keeps the derived pre-game value).
   - `termination` is one of `mate|resign|timeout|abandon|agreement|repetition|stalemate|insufficient|fifty|timeout_vs_insufficient|other`.
-  - `time_class` is one of `bullet|blitz|rapid|classical|correspondence|unknown`.
+  - `time_class` is one of `bullet|blitz|rapid|classical|correspondence|unknown`: Lichess's thresholds for games played on Lichess or Chess.com, the FIDE rule for over-the-board PGN games (DECISIONS R8).
   - Only standard chess is stored: no variants, no games against engines, no from-position games.
 - **player_games**: one row per (source, game) from that player's side. This is the table the stats query.
   - Columns: `(source_id, game_id, color 'w'|'b', outcome 'w'|'d'|'l', rating, rating_after, opp_name, opp_key, opp_rating, opp_title, opp_source_kind, ended_at, time_class, rated, rating_pool NULL|'ultraBullet', PRIMARY KEY(source_id, game_id))`

@@ -18,9 +18,10 @@ import {
   epdOf,
   isTitle,
   parseResult,
+  parseTimeControl,
   playerKey,
   timeClassFromClock,
-  timeClassFromTimeControl,
+  type ClockSpec,
   type GameResult,
   type Termination,
   type TimeClass,
@@ -146,13 +147,47 @@ export function pgnDateTime(date: string | null, time: string | null): number | 
   return Number.isNaN(ms) ? null : ms;
 }
 
-/** Time class of a PGN TimeControl, including FIDE multi-period forms like `40/5400+30:1800+30`. */
-export function pgnTimeClass(tc: string | null): TimeClass {
-  const simple = timeClassFromTimeControl(tc);
-  if (simple !== 'unknown' || !tc) return simple;
+/**
+ * The FIDE rule (Laws of Chess, appendices A and B) on a clock in seconds: the time for 60 moves
+ * (base + 60 × increment) of at most 10 minutes is blitz, under 60 minutes rapid, else standard
+ * (`classical`); under 3 minutes counts as bullet. Over-the-board games use it wherever they are
+ * stored (user PGN databases and reference databases alike).
+ */
+export function fideTimeClass(clock: ClockSpec): TimeClass {
+  const t = clock.initial + 60 * clock.increment;
+  if (!(t > 0)) return 'unknown';
+  if (t < 180) return 'bullet';
+  if (t <= 600) return 'blitz';
+  if (t < 3600) return 'rapid';
+  return 'classical';
+}
+
+/**
+ * Time class of a PGN TimeControl (seconds, as the PGN standard says), including FIDE
+ * multi-period forms like `40/5400+30:1800+30` (first period). `rule`: `lichess` for games played
+ * on Lichess or Chess.com (Lichess's thresholds on `base + 40 × increment`, as for synced games),
+ * `fide` for over-the-board games (`fideTimeClass`).
+ */
+export function pgnTimeClass(tc: string | null, rule: 'lichess' | 'fide' = 'lichess'): TimeClass {
+  const classify = rule === 'fide' ? fideTimeClass : timeClassFromClock;
+  const simple = parseTimeControl(tc);
+  if (simple === 'correspondence') return 'correspondence';
+  if (simple !== null) return classify(simple);
+  if (!tc) return 'unknown';
   const m = /^\d+\/(\d+)(?:\+(\d+))?(?::|$)/.exec(tc);
-  if (m && (tc.includes(':') || m[2] !== undefined)) return timeClassFromClock({ initial: Number(m[1]), increment: Number(m[2] ?? 0) });
+  if (m && (tc.includes(':') || m[2] !== undefined)) return classify({ initial: Number(m[1]), increment: Number(m[2] ?? 0) });
   return 'unknown';
+}
+
+/** A game page on Lichess or Chess.com (not a broadcast or study): `Site` / `Link` of an online game. */
+const ONLINE_GAME_URL_RE =
+  /^https?:\/\/(?:lichess\.org\/(?!broadcast\/|study\/)[A-Za-z0-9]{8}(?:[A-Za-z0-9]{4})?(?:[/?#]|$)|(?:www\.)?chess\.com\/(?:game\/)?(?:live|daily)\/)/i;
+
+/** True for a PGN game played on Lichess or Chess.com (their exports), false for over-the-board games. */
+export function isOnlineSiteGame(headers: { get(name: string): string | undefined }): boolean {
+  const site = headers.get('Site')?.trim() ?? '';
+  const link = headers.get('Link')?.trim() ?? '';
+  return site === 'Chess.com' || ONLINE_GAME_URL_RE.test(site) || ONLINE_GAME_URL_RE.test(link);
 }
 
 /**
@@ -214,6 +249,8 @@ const ratingDiff = (s: string | null): number | null => (s && /^[+-]?\d{1,4}$/.t
  *   (Chess.com and Lichess wording), then the final position for draws (dead position, threefold
  *   repetition, 50-move rule, else agreement); decisive games default to resignation.
  * - ratings are as written (`WhiteElo`); `ratingAfter` = Elo + `WhiteRatingDiff` when present.
+ * - `timeClass`: Lichess's thresholds for games played on Lichess or Chess.com (their `Site` /
+ *   `Link`), the FIDE rule for every other (over-the-board) game (`pgnTimeClass`).
  * - `startedAt` from `UTCDate`/`UTCTime` (else `Date`), `endedAt` from Chess.com's
  *   `EndDate`/`EndTime` when present, else the start.
  */
@@ -288,7 +325,7 @@ export function pgnToNormalizedGame(
     black,
     result,
     termination: termination(game, result, final),
-    timeClass: pgnTimeClass(timeControl),
+    timeClass: pgnTimeClass(timeControl, isOnlineSiteGame(game.headers) ? 'lichess' : 'fide'),
     timeControl,
     rated,
     event,

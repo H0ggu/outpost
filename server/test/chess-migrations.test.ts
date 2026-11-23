@@ -44,3 +44,45 @@ describe('migration 204 (Chess.com game rows keep the ratings Chess.com reports)
     expect(db.value("SELECT COUNT(*) FROM pragma_table_info('games') WHERE name = 'clocks'")).toBe(1);
   });
 });
+
+describe('migration 205 (over-the-board PGN games: the FIDE rule)', () => {
+  it('reclassifies stored OTB games with a seconds TimeControl, and their player_games rows, but not online exports', () => {
+    const { db, dir } = migratedBelow(205);
+    try {
+      const src = db.run("INSERT INTO sources (kind, key, display_name, created_at) VALUES ('pgn', '1:a', 'A', 0)").lastInsertRowid;
+      const add = (originId: string, tc: string | null, timeClass: string, url: string | null = null, headers: Record<string, string> | null = null) => {
+        const id = db.run(
+          `INSERT INTO games (origin, origin_id, url, white, black, white_key, black_key, result, termination, time_class, time_control,
+             rated, ply_count, moves_san, headers_json)
+           VALUES ('pgn', ?, ?, 'A', 'B', 'a', 'b', '1-0', 'resign', ?, ?, 0, 2, 'e4 e5', ?)`,
+          [originId, url, timeClass, tc, headers ? JSON.stringify(headers) : null],
+        ).lastInsertRowid;
+        db.run(
+          `INSERT INTO player_games (source_id, game_id, color, outcome, opp_name, opp_key, opp_source_kind, time_class, rated)
+           VALUES (?, ?, 'w', 'w', 'B', 'b', 'pgn', ?, 0)`,
+          [src, id, timeClass],
+        );
+        return id;
+      };
+      const ids = [
+        add('a', '1800', 'classical'),
+        add('b', '2700+10', 'classical'),
+        add('c', '600', 'rapid'),
+        add('d', '5400+30', 'classical'),
+        add('e', '1800', 'classical', 'https://lichess.org/abcdefgh'),
+        add('f', '600', 'rapid', null, { Site: 'Chess.com', Link: 'https://www.chess.com/game/live/1' }),
+        add('g', '40/5400+30:1800+30', 'classical'),
+        add('h', null, 'unknown'),
+      ];
+      migrate(db);
+      const classes = (table: 'games' | 'player_games') =>
+        ids.map(id => db.value(`SELECT time_class FROM ${table} WHERE ${table === 'games' ? 'id' : 'game_id'} = ?`, [id]));
+      const want = ['rapid', 'rapid', 'blitz', 'classical', 'classical', 'rapid', 'classical', 'unknown'];
+      expect(classes('games')).toEqual(want);
+      expect(classes('player_games')).toEqual(want);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

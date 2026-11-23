@@ -9,7 +9,7 @@
  * standard (`classical`); under 3 minutes counts as bullet.
  */
 import type { TimeClass } from '@outpost/shared/chess';
-import { pgnTimeClass } from '../chess/index.ts';
+import { fideTimeClass, pgnTimeClass } from '../chess/index.ts';
 
 /** A parsed clock in seconds. */
 export interface OtbClock {
@@ -51,15 +51,8 @@ export function parseOtbTimeControl(tc: string | null | undefined): OtbClock | n
   return { initial: Number(base[1]) * (min ? 60 : 3600), increment: sec ? Number(sec[1]) : 0 };
 }
 
-/** FIDE classification of a clock (see the file comment). */
-export function otbTimeClass(clock: OtbClock): TimeClass {
-  const t = clock.initial + 60 * clock.increment;
-  if (t <= 0) return 'unknown';
-  if (t < 180) return 'bullet';
-  if (t <= 600) return 'blitz';
-  if (t < 3600) return 'rapid';
-  return 'classical';
-}
+/** FIDE classification of a clock (see the file comment; the one rule is chess/pgn.ts `fideTimeClass`). */
+export const otbTimeClass = (clock: OtbClock): TimeClass => fideTimeClass(clock);
 
 const CLASS_WORDS: ReadonlyArray<readonly [TimeClass, RegExp]> = [
   ['bullet', /\bbullet\b/i],
@@ -100,7 +93,7 @@ export function otbTimeControl(
 ): { timeClass: TimeClass; timeControl: string | null } {
   const raw = tc?.trim() || null;
   if (raw && /^\d+\/\d+/.test(raw)) {
-    const tcClass = pgnTimeClass(raw);
+    const tcClass = pgnTimeClass(raw, 'fide');
     if (tcClass !== 'unknown') return { timeClass: tcClass, timeControl: raw };
   }
   const clock = parseOtbTimeControl(raw);

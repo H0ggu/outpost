@@ -21,6 +21,8 @@ export {
 } from './openings.ts';
 export {
   DEDUPE_PLY,
+  fideTimeClass,
+  isOnlineSiteGame,
   MAX_STORED_TAGS,
   MAX_TAG_VALUE_LENGTH,
   parsePgnGames,
