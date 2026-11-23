@@ -2,7 +2,10 @@
 import { describe, expect, it } from 'vitest';
 import { getOpeningBook } from '../src/chess/openings.ts';
 import { openDb } from '../src/db/index.ts';
-import { migrate } from '../src/db/migrate.ts';
+import { migrate, MIGRATIONS_DIR } from '../src/db/migrate.ts';
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BudgetError, RequestBudget } from '../src/explorer/budget.ts';
 import { CACHE_POLICY, cacheKey, ExplorerCache, freshness } from '../src/explorer/cache.ts';
 import { Lru } from '../src/explorer/lru.ts';
@@ -175,6 +178,23 @@ describe('explorer http_cache', () => {
 });
 
 describe('Lru', () => {
+  it('bounds the total weight, dropping the least recently used entries', () => {
+    const lru = new Lru<number[]>({ max: 100, ttlMs: 1000, weigh: v => v.length, maxWeight: 10 });
+    lru.set('a', [1, 2, 3, 4]);
+    lru.set('b', [1, 2, 3, 4]);
+    lru.get('a');
+    lru.set('c', [1, 2, 3]);
+    expect([lru.get('a'), lru.get('b'), lru.get('c')].map(v => v?.length)).toEqual([4, undefined, 3]);
+    expect(lru.weight).toBe(7);
+    lru.set('huge', Array(11).fill(0));
+    expect(lru.get('huge')).toBeUndefined();
+    expect(lru.size).toBe(2);
+    lru.set('a', [1]);
+    expect(lru.weight).toBe(4);
+    lru.clear();
+    expect(lru.weight).toBe(0);
+  });
+
   it('evicts the least recently used entry and expires entries', () => {
     let now = 0;
     const lru = new Lru<number>({ max: 2, ttlMs: 100, now: () => now });
@@ -309,5 +329,26 @@ describe('PGN and performance helpers', () => {
       [0, null],
     ]);
     db.close();
+  });
+
+  it('backfills explorer_db_stats for games stored before migration 401', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'outpost-mig-'));
+    try {
+      const all = readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql'));
+      for (const f of all.filter(f => Number(f.slice(0, 3)) < 401)) copyFileSync(join(MIGRATIONS_DIR, f), join(dir, f));
+      const db = openDb(':memory:');
+      migrate(db, { dir });
+      const dbId = db.run("INSERT INTO databases (name, kind, created_at) VALUES ('old', 'reference', 0)").lastInsertRowid;
+      for (const k of ['a', 'b', 'c']) insertGame(db, testGame({ origin: 'reference', originId: `${dbId}:${k}`, databaseId: dbId }));
+      insertGame(db, testGame({ originId: 'online' }));
+      for (const f of all) copyFileSync(join(MIGRATIONS_DIR, f), join(dir, f));
+      migrate(db, { dir });
+      expect(db.all('SELECT database_id, games FROM explorer_db_stats')).toEqual([{ database_id: dbId, games: 3 }]);
+      insertGame(db, testGame({ origin: 'reference', originId: `${dbId}:d`, databaseId: dbId }));
+      expect(db.value('SELECT games FROM explorer_db_stats WHERE database_id = ?', [dbId])).toBe(4);
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

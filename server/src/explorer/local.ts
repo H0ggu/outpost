@@ -43,8 +43,9 @@ import { gamesPageDirect, scanPosition, setConditions, type ListedHit, type Posi
 import { emptyPlayerResponse, EXPLORER_LIMITS, mastersResponse, playerResponse } from './responses.ts';
 import { describeMove, normalizeFen, resolvePosition, type ExplorerPosition } from './position.ts';
 
-/** Cached results (versioned sets only): entries and lifetime. */
+/** Cached results (versioned sets only): entries, rows held (moves and listed games), lifetime. */
 export const RESULT_CACHE_MAX = 500;
+export const RESULT_CACHE_MAX_ROWS = 200_000;
 export const RESULT_TTL_MS = 60 * 60_000;
 /** Scans of sets larger than this many rows wait for one of `MAX_CONCURRENT_SCANS` slots. */
 export const SMALL_SCAN_ROWS = 50_000;
@@ -115,9 +116,15 @@ export interface LocalExplorer {
   games(input: ExplorerGamesInput): Promise<ExplorerGamesPage>;
   /** Drops cached results (tests, or after an import). */
   clearCache(): void;
-  /** Cached results, scans in flight and waiting for a slot (tests, admin). */
-  stats(): { cached: number; inFlight: number; running: number; queued: number };
+  /** Cached results (and the rows they hold), scans in flight and waiting for a slot (tests, admin). */
+  stats(): { cached: number; cachedRows: number; inFlight: number; running: number; queued: number };
 }
+
+/** Rows a cached result holds (its weight in the result cache). */
+const resultRows = (v: unknown): number => {
+  const r = v as { moves?: unknown[]; list?: unknown[]; topGames?: unknown[]; recentGames?: unknown[] };
+  return 1 + (r.moves?.length ?? 0) + (r.list?.length ?? 0) + (r.topGames?.length ?? 0) + (r.recentGames?.length ?? 0);
+};
 
 /** The error a cancelled scan ends with (the client is gone; nothing is logged as a failure). */
 const cancelled = (): HttpError => new HttpError(499, 'bad_request', 'The request was cancelled');
@@ -194,7 +201,7 @@ export function createLocalExplorer(deps: {
   const now = deps.now ?? Date.now;
   let book: OpeningBook | null = null;
   const openings = (): OpeningBook => (book ??= getOpeningBook(deps.openingsDir));
-  const results = new Lru<unknown>({ max: RESULT_CACHE_MAX, ttlMs: RESULT_TTL_MS, now });
+  const results = new Lru<unknown>({ max: RESULT_CACHE_MAX, ttlMs: RESULT_TTL_MS, now, weigh: resultRows, maxWeight: RESULT_CACHE_MAX_ROWS });
   const flights = new Map<string, Flight>();
   const gate = new ScanGate(deps.maxConcurrentScans ?? MAX_CONCURRENT_SCANS, MAX_QUEUED_SCANS);
   const smallScanRows = deps.smallScanRows ?? SMALL_SCAN_ROWS;
@@ -366,7 +373,7 @@ export function createLocalExplorer(deps: {
     },
 
     clearCache: () => results.clear(),
-    stats: () => ({ cached: results.size, inFlight: flights.size, running: gate.running, queued: gate.queued }),
+    stats: () => ({ cached: results.size, cachedRows: results.weight, inFlight: flights.size, running: gate.running, queued: gate.queued }),
   };
 }
 
