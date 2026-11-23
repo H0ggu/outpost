@@ -277,12 +277,16 @@ describe('reference routes', () => {
     expect((await json({ url: 'https://example.com/a.pgn', databaseName: 'Web', bogus: true })).statusCode).toBe(400);
 
     const generic = (await json({ url: 'https://example.com/a.pgn', databaseName: 'Web' })).json<ImportResponse>();
-    expect(generic.job).toMatchObject({ kind: 'referenceImport', status: 'queued' });
+    expect(generic.job).toMatchObject({ kind: 'referenceImport', status: 'queued', lane: 'local' });
     expect(JSON.parse(t.db.value<string>('SELECT payload_json FROM jobs WHERE id = ?', [generic.job.id])!)).toMatchObject({
       url: 'https://example.com/a.pgn',
     });
+    // Other Lichess exports (a study) run on the lichess lane too.
+    const study = (await json({ url: 'https://lichess.org/api/study/AbCdEfGh.pgn', databaseName: 'Studies' })).json<ImportResponse>();
+    expect(study.job).toMatchObject({ kind: 'referenceImport', lane: 'lichess' });
 
     const tour = (await json({ url: 'https://lichess.org/broadcast/outpost-test-open-2026/TourAAAA' })).json<ImportResponse>();
+    expect(tour.job).toMatchObject({ kind: 'referenceImport', lane: 'lichess' });
     expect(JSON.parse(t.db.value<string>('SELECT payload_json FROM jobs WHERE id = ?', [tour.job.id])!)).toEqual({
       databaseId: ensureBroadcastDatabase(t.db),
       url: 'https://lichess.org/api/broadcast/TourAAAA.pgn',

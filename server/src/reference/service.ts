@@ -13,6 +13,7 @@ import type {
 import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
 import { upstreamUnavailable, validationError } from '../http/errors.ts';
+import { LICHESS_TOKEN_HOSTS } from '../http/upstream.ts';
 import type { AuthUser } from '../http/types.ts';
 import { enqueueJob, JOB_PRIORITY } from '../jobs/index.ts';
 import { readSettings } from '../settings.ts';
@@ -125,9 +126,12 @@ export function enqueueReferenceImport(
       };
     });
   }
+  const target = lichess?.pgnUrl ?? url;
+  // Downloads from lichess.org itself share the lichess lane (one Lichess request at a time).
+  const lane = LICHESS_TOKEN_HOSTS.has(new URL(target).hostname) ? ({ lane: 'lichess' } as const) : {};
   return db.tx(() => {
     const databaseId = targetDatabase(db, req, lichess !== null);
     if (lichess) markBroadcastData(db, databaseId);
-    return { job: enqueueJob(db, 'referenceImport', { databaseId, url: lichess?.pgnUrl ?? url }, opts) };
+    return { job: enqueueJob(db, 'referenceImport', { databaseId, url: target }, { ...opts, ...lane }) };
   });
 }
