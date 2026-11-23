@@ -43,7 +43,8 @@ export function makeSocketSend(
     const params = new URLSearchParams({ ...query, multiPv: String(multiPv) });
     const job = fetchImpl(`${API_ROUTES.cloudEval}?${params}`, { credentials: 'same-origin', headers: { accept: 'application/json' } })
       .then(async res => {
-        if (!res.ok) return; // 404 (a server that ignores emptyOnMiss): no cloud eval for this position
+        // 404 (a server that ignores emptyOnMiss) or 204 No Content: no cloud eval for this position
+        if (!res.ok || res.status === 204) return;
         const ev = (await res.json()) as CloudEvalResponse;
         if (!ev || !Array.isArray(ev.pvs) || !ev.pvs.length) return; // pvs: [] — no cloud eval
         getReceive()?.('evalHit', { ...ev, fen: d.fen, path: d.path });

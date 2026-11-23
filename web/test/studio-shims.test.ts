@@ -42,6 +42,17 @@ describe('socket shim', () => {
     expect(receive).not.toHaveBeenCalled();
   });
 
+  it('treats 204 No Content as a miss without reading a body', async () => {
+    const receive = vi.fn();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    const send = makeSocketSend(() => receive, () => true, fetchMock as unknown as typeof fetch);
+    send('evalGet', { fen: FEN, path: '' });
+    await flush();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(receive).not.toHaveBeenCalled();
+  });
+
   it('clamps multi-PV, de-duplicates in-flight requests and drops misses', async () => {
     const receive = vi.fn();
     const fetchMock = vi.fn(ok({ error: { code: 'not_found', message: 'none' } }, 404));
