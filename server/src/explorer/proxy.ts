@@ -6,7 +6,7 @@
  * |--------------------------------------------|------------------------------|---------------|--------------|
  * | explorer.lichess.org/masters, /masters/pgn | none (token only after a 401)| 20/min, FIFO  | 3 h / 30 d   |
  * | explorer.lichess.org/lichess               | token required (503 without) | 20/min, FIFO  | 3 h          |
- * | tablebase.lichess.ovh/<variant>            | none                         | 120/min       | 30 d         |
+ * | tablebase.lichess.ovh/<variant>            | none                         | 120/min (30 per client) | 30 d |
  * | lichess.org/api/cloud-eval                 | none                         | 60/min        | 30 min (404: 10 min) |
  *
  * Every request first checks `http_cache` (fresh → answered without upstream), then joins an
@@ -20,7 +20,7 @@ import type { Db } from '../db/index.ts';
 import { HttpError } from '../http/errors.ts';
 import { UPSTREAM, UpstreamError, upstreamHttpError, type Upstream } from '../http/upstream.ts';
 import { readSettings } from '../settings.ts';
-import { BudgetError, RequestBudget, type BudgetOptions } from './budget.ts';
+import { BudgetError, ClientWindow, RequestBudget, type BudgetOptions } from './budget.ts';
 import { cacheKey, ExplorerCache, freshness, type CacheEntry, type CacheKind } from './cache.ts';
 
 /** Where an answer came from (sent as `x-outpost-cache`). */
@@ -44,6 +44,12 @@ export const DEFAULT_BUDGETS: Readonly<Record<BudgetName, BudgetOptions>> = {
   tablebase: { perWindow: 120, windowMs: 60_000, maxQueue: 100, maxWaitMs: 10_000 },
   cloudEval: { perWindow: 60, windowMs: 60_000, maxQueue: 30, maxWaitMs: 5_000 },
 };
+
+/**
+ * New (uncached) tablebase lookups one client may start per minute: a quarter of the instance's
+ * tablebase budget, so a single address can't starve everyone else's endgame lookups.
+ */
+export const TABLEBASE_PER_CLIENT_PER_MIN = 30;
 
 /** Time allowed until the upstream's response headers arrive. */
 export const UPSTREAM_HEADERS_TIMEOUT_MS = 15_000;
@@ -75,6 +81,8 @@ export interface ExplorerProxyDeps {
   budgets?: Partial<Record<BudgetName, BudgetOptions>>;
   /** Upstream timeouts (defaults: `UPSTREAM_HEADERS_TIMEOUT_MS`, `UPSTREAM_BODY_TIMEOUT_MS`). */
   timeouts?: { headersMs?: number; bodyMs?: number };
+  /** New tablebase lookups per client per minute (default `TABLEBASE_PER_CLIENT_PER_MIN`). */
+  tablebasePerClient?: number;
   log?: { warn(obj: object, msg: string): void };
 }
 
@@ -111,7 +119,12 @@ export interface ExplorerProxy {
   mastersPgn(id: string, signal?: AbortSignal): Promise<ProxyResult>;
   /** `params`: validated, normalised explorer.lichess.org/lichess query. */
   lichess(params: URLSearchParams, signal?: AbortSignal): Promise<ProxyResult>;
-  tablebase(variant: string, fen: string, signal?: AbortSignal): Promise<ProxyResult>;
+  /**
+   * `client` (the caller's address) gets a share of the upstream budget: at most
+   * `tablebasePerClient` new upstream lookups per minute (cache hits and joined flights are free),
+   * so one client can't use up the instance's tablebase budget.
+   */
+  tablebase(variant: string, fen: string, signal?: AbortSignal, client?: string): Promise<ProxyResult>;
   cloudEval(q: { fen: string; multiPv: number; variant: string | null }, signal?: AbortSignal): Promise<ProxyResult>;
   /** Budget state (admin/debug and tests). */
   budget(name: BudgetName): RequestBudget;
@@ -172,6 +185,7 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
     budgets[name] = new RequestBudget({ ...DEFAULT_BUDGETS[name], ...deps.budgets?.[name], now });
   }
   const flights = new Map<string, Flight>();
+  const tablebaseClients = new ClientWindow({ perWindow: deps.tablebasePerClient ?? TABLEBASE_PER_CLIENT_PER_MIN, windowMs: 60_000, now });
   const hasToken = (): boolean => readSettings(deps.db, deps.config).lichessToken !== null;
   const headersMs = deps.timeouts?.headersMs ?? UPSTREAM_HEADERS_TIMEOUT_MS;
   const bodyMs = deps.timeouts?.bodyMs ?? UPSTREAM_BODY_TIMEOUT_MS;
@@ -189,23 +203,49 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
     try {
       req.precheck?.();
       await req.budget.acquire(signal);
-      const res = await deps.upstream.fetch(req.url, {
-        auth: req.auth,
-        timeoutMs: headersMs,
-        signal: AbortSignal.any([signal, AbortSignal.timeout(bodyMs)]),
-        allowStatuses: [...req.answers, 400, 401],
-        headers: {
-          accept: req.kind === 'masters-pgn' ? 'application/x-chess-pgn' : 'application/json',
-          ...(entry?.etag ? { 'if-none-match': entry.etag } : {}),
-        },
-      });
+      const bodyTimeout = AbortSignal.timeout(bodyMs);
+      /** A failure of the call or of reading its body, as an UpstreamError (so routes answer 503, not 500). */
+      const transportError = (e: unknown): unknown => {
+        if (e instanceof HttpError) return e;
+        if (signal.aborted) {
+          return e instanceof UpstreamError && e.reason === 'aborted' ? e : new UpstreamError('aborted', host, `Request to ${host} was cancelled`, { cause: e });
+        }
+        if (bodyTimeout.aborted || (e instanceof Error && e.name === 'TimeoutError')) {
+          return new UpstreamError('timeout', host, `${host} did not send its whole answer within ${bodyMs} ms`, { cause: e });
+        }
+        if (e instanceof UpstreamError) return e;
+        return new UpstreamError('network', host, `Connection to ${host} failed while reading its answer: ${(e as Error)?.message ?? String(e)}`, {
+          cause: e,
+        });
+      };
+      let res: Response;
+      try {
+        res = await deps.upstream.fetch(req.url, {
+          auth: req.auth,
+          timeoutMs: headersMs,
+          signal: AbortSignal.any([signal, bodyTimeout]),
+          allowStatuses: [...req.answers, 400, 401],
+          headers: {
+            accept: req.kind === 'masters-pgn' ? 'application/x-chess-pgn' : 'application/json',
+            ...(entry?.etag ? { 'if-none-match': entry.etag } : {}),
+          },
+        });
+      } catch (e) {
+        throw transportError(e);
+      }
       if (res.status === 304 && entry) {
         void res.body?.cancel().catch(() => {});
         cache.touch(full);
         return fromEntry(req.kind, entry, 'revalidated');
       }
       if (res.status === 304) throw new UpstreamError('status', host, `${host} answered 304 without a cached copy`, { status: 304 });
-      const body = await readLimitedText(res, MAX_UPSTREAM_BODY_BYTES, host);
+      let body: string;
+      try {
+        body = await readLimitedText(res, MAX_UPSTREAM_BODY_BYTES, host);
+      } catch (e) {
+        void res.body?.cancel().catch(() => {});
+        throw transportError(e);
+      }
       if (res.status === 401) {
         if (req.auth === false) throw new NeedsToken();
         throw new HttpError(503, 'upstream_unavailable', 'Lichess rejected the API token; check it in the admin settings', {
@@ -270,19 +310,30 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
     });
   };
 
-  const fetchCached = (req: UpstreamRequest, signal?: AbortSignal): Promise<ProxyResult> => {
+  const fetchCached = (req: UpstreamRequest, signal?: AbortSignal, opts: { client?: string } = {}): Promise<ProxyResult> => {
     const full = cacheKey(req.kind, req.key);
     const entry = cache.get(full);
     if (entry && freshness(req.kind, entry, now()) === 'fresh') return Promise.resolve(fromEntry(req.kind, entry, 'hit'));
-    let flight = flights.get(full);
+    // The cache is shared, but an anonymous and a token request for the same key are separate
+    // flights: a token request must never inherit an anonymous flight's 401.
+    const flightKey = `${req.auth === false ? 'anon' : 'token'}|${full}`;
+    let flight = flights.get(flightKey);
     if (!flight) {
+      if (opts.client !== undefined && req.kind === 'tablebase' && !tablebaseClients.take(opts.client)) {
+        return Promise.reject(
+          new HttpError(429, 'rate_limited', 'Too many tablebase lookups from this address; try again in a minute', {
+            reason: 'client_limit',
+            retryAt: tablebaseClients.nextSlotAt(opts.client),
+          }),
+        );
+      }
       const controller = new AbortController();
       const f: Flight = { controller, waiters: 0, promise: run(req, full, entry, controller.signal) };
       const done = (): void => {
-        if (flights.get(full) === f) flights.delete(full);
+        if (flights.get(flightKey) === f) flights.delete(flightKey);
       };
       f.promise.then(done, done);
-      flights.set(full, f);
+      flights.set(flightKey, f);
       flight = f;
     }
     return join(flight, signal).catch((e: unknown) => {
@@ -352,7 +403,7 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
         throw proxyHttpError(e);
       }),
 
-    tablebase: (variant, fen, signal) =>
+    tablebase: (variant, fen, signal, client) =>
       fetchCached(
         {
           kind: 'tablebase',
@@ -363,6 +414,7 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
           answers: [],
         },
         signal,
+        client === undefined ? {} : { client },
       ).catch((e: unknown) => {
         throw proxyHttpError(e);
       }),

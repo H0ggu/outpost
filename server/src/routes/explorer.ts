@@ -5,6 +5,7 @@ import { ZodError } from 'zod';
 import { requireUser, requireViewer } from '../auth/session.ts';
 import { errorBody, notFound, validationError, zodIssues } from '../http/errors.ts';
 import { parseFiltersQuery, parseParams, parseQuery } from '../http/validate.ts';
+import { clientKey } from '../explorer/budget.ts';
 import { createLocalExplorer } from '../explorer/local.ts';
 import {
   cloudEvalFen,
@@ -171,10 +172,12 @@ const explorerRoutes: FastifyPluginAsync = async app => {
   });
 
   // --- Tablebase (no session: lila sends no cookie) -------------------------------------------
+  // The route limit counts every request (cache hits are cheap); the proxy also caps each
+  // address's new upstream lookups (TABLEBASE_PER_CLIENT_PER_MIN), well below the instance budget.
   app.get(API_ROUTES.tablebase(':variant'), { config: { rateLimit: { max: 120, timeWindow: MIN } } }, async (req, reply) => {
     const { variant } = parseParams(tablebaseParamsSchema, req.params);
     const { fen } = parseQuery(tablebaseQuerySchema, req.query);
-    const r = await proxy.tablebase(variant, tablebaseFen(variant, fen), clientSignal(reply));
+    const r = await proxy.tablebase(variant, tablebaseFen(variant, fen), clientSignal(reply), clientKey(req.ip));
     return sendProxy(reply, r, 'public, max-age=86400', 'Not found');
   });
 

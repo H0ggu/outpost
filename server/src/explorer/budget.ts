@@ -165,3 +165,79 @@ export class RequestBudget {
     this.#schedule();
   }
 }
+
+/**
+ * Per-client sliding windows (e.g. a client's share of an upstream budget): `take(key)` grants at
+ * most `perWindow` per `windowMs` for each key. Memory stays bounded: at most `maxKeys` keys are
+ * tracked, the least recently granted one is dropped first.
+ */
+export class ClientWindow {
+  readonly perWindow: number;
+  readonly windowMs: number;
+  readonly #now: () => number;
+  readonly #maxKeys: number;
+  readonly #grants = new Map<string, number[]>();
+
+  constructor(opts: { perWindow: number; windowMs: number; now?: () => number; maxKeys?: number }) {
+    if (opts.perWindow < 1) throw new Error('perWindow must be ≥ 1');
+    this.perWindow = opts.perWindow;
+    this.windowMs = opts.windowMs;
+    this.#now = opts.now ?? Date.now;
+    this.#maxKeys = opts.maxKeys ?? 10_000;
+  }
+
+  #live(key: string): number[] {
+    const list = this.#grants.get(key) ?? [];
+    const cutoff = this.#now() - this.windowMs;
+    let i = 0;
+    while (i < list.length && list[i]! <= cutoff) i++;
+    if (i) list.splice(0, i);
+    return list;
+  }
+
+  /** Grants one request to `key` if its window has room. */
+  take(key: string): boolean {
+    const list = this.#live(key);
+    if (list.length >= this.perWindow) return false;
+    list.push(this.#now());
+    this.#grants.delete(key); // re-insert: Map order = least recently granted first
+    this.#grants.set(key, list);
+    if (this.#grants.size > this.#maxKeys) {
+      for (const k of this.#grants.keys()) {
+        if (this.#grants.size <= this.#maxKeys) break;
+        if (k !== key) this.#grants.delete(k);
+      }
+    }
+    return true;
+  }
+
+  /** When `key` may take again (now if it has room). */
+  nextSlotAt(key: string): number {
+    const list = this.#live(key);
+    if (list.length < this.perWindow) return this.#now();
+    return list[list.length - this.perWindow]! + this.windowMs;
+  }
+
+  /** Keys tracked (tests). */
+  get size(): number {
+    return this.#grants.size;
+  }
+}
+
+/**
+ * A client's key for per-address limits: the IPv4 address, or the /64 prefix of an IPv6 one (a
+ * single host usually controls a whole /64).
+ */
+export function clientKey(ip: string): string {
+  const v4 = /^(?:::ffff:)?(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (v4) return v4[1]!;
+  if (!ip.includes(':')) return ip;
+  const [head = '', tail = ''] = ip.toLowerCase().split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups = ip.includes('::') ? [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right] : left;
+  return `${groups
+    .slice(0, 4)
+    .map(g => g.replace(/^0+(?=.)/, ''))
+    .join(':')}::/64`;
+}

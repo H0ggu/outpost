@@ -17,6 +17,10 @@ import { createNnueStore, NNUE_NAME_RE, NnueError, parseRange } from '../explore
  * A cached network is public, immutable data and is served to anyone (with Range support). A
  * download costs bandwidth and disk, so starting one needs a viewer (signed in, or anonymous
  * browsing on) — lila's ceval fetches it same-origin with the session cookie.
+ *
+ * The global @fastify/compress is off for this route: network weights barely compress, and a
+ * compressed answer has no Content-Length, which lila's download progress (`xhr.onprogress`
+ * `e.total`) needs to show "Downloaded x% of N MB".
  */
 const nnueParams = z.object({ name: z.string().max(40) });
 
@@ -26,7 +30,10 @@ const emptyBody = (): Readable => Readable.from([]);
 const assetRoutes: FastifyPluginAsync = async app => {
   const store = createNnueStore({ dir: app.config.nnueDir, upstream: app.upstream, log: app.log });
 
-  app.get(API_ROUTES.nnue(':name'), { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+  await store.removeStaleTemps();
+
+  const routeOpts = { compress: false as const, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } };
+  app.get(API_ROUTES.nnue(':name'), routeOpts, async (req, reply) => {
     const parsed = nnueParams.safeParse(req.params);
     const name = parsed.success ? parsed.data.name : '';
     if (!NNUE_NAME_RE.test(name)) throw notFound('Unknown NNUE network');
@@ -52,6 +59,7 @@ const assetRoutes: FastifyPluginAsync = async app => {
       }
     }
 
+    store.markUsed(name);
     const etag = `"${name}"`;
     reply
       .header('cache-control', 'public, max-age=31536000, immutable')
