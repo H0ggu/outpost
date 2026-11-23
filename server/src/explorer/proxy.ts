@@ -131,8 +131,11 @@ export interface ExplorerProxy {
   cache: ExplorerCache;
 }
 
-/** Reads a response body as text, refusing more than `max` bytes. */
-async function readLimitedText(res: Response, max: number, host: string): Promise<string> {
+/**
+ * Reads a response body as text, refusing more than `max` bytes. `signal` ends the read (the body
+ * timeout or the caller leaving) even when the fetch implementation doesn't abort its body stream.
+ */
+async function readLimitedText(res: Response, max: number, host: string, signal?: AbortSignal): Promise<string> {
   const declared = Number(res.headers.get('content-length') ?? 'NaN');
   if (Number.isFinite(declared) && declared > max) {
     void res.body?.cancel().catch(() => {});
@@ -140,17 +143,27 @@ async function readLimitedText(res: Response, max: number, host: string): Promis
   }
   if (!res.body) return '';
   const reader = res.body.getReader();
+  const onAbort = (): void => {
+    void reader.cancel(signal?.reason).catch(() => {});
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > max) {
-      await reader.cancel().catch(() => {});
-      throw new UpstreamError('status', host, `${host} sent more than ${max} bytes`, { status: res.status });
+  try {
+    for (;;) {
+      if (signal?.aborted) throw signal.reason;
+      const { done, value } = await reader.read();
+      if (signal?.aborted) throw signal.reason;
+      if (done) break;
+      total += value.byteLength;
+      if (total > max) {
+        await reader.cancel().catch(() => {});
+        throw new UpstreamError('status', host, `${host} sent more than ${max} bytes`, { status: res.status });
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
   return new TextDecoder().decode(Buffer.concat(chunks));
 }
@@ -204,6 +217,7 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
       req.precheck?.();
       await req.budget.acquire(signal);
       const bodyTimeout = AbortSignal.timeout(bodyMs);
+      const callSignal = AbortSignal.any([signal, bodyTimeout]);
       /** A failure of the call or of reading its body, as an UpstreamError (so routes answer 503, not 500). */
       const transportError = (e: unknown): unknown => {
         if (e instanceof HttpError) return e;
@@ -223,7 +237,7 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
         res = await deps.upstream.fetch(req.url, {
           auth: req.auth,
           timeoutMs: headersMs,
-          signal: AbortSignal.any([signal, bodyTimeout]),
+          signal: callSignal,
           allowStatuses: [...req.answers, 400, 401],
           headers: {
             accept: req.kind === 'masters-pgn' ? 'application/x-chess-pgn' : 'application/json',
@@ -241,7 +255,7 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
       if (res.status === 304) throw new UpstreamError('status', host, `${host} answered 304 without a cached copy`, { status: 304 });
       let body: string;
       try {
-        body = await readLimitedText(res, MAX_UPSTREAM_BODY_BYTES, host);
+        body = await readLimitedText(res, MAX_UPSTREAM_BODY_BYTES, host, callSignal);
       } catch (e) {
         void res.body?.cancel().catch(() => {});
         throw transportError(e);

@@ -105,6 +105,8 @@ export function createNnueStore(deps: {
   const touchedAt = new Map<string, number>();
   /** Serialises slot reservations (count + evict) so concurrent downloads of different names can't overshoot. */
   let slotLock: Promise<unknown> = Promise.resolve();
+  /** Downloads holding a slot (reserved, not yet renamed into place or failed). */
+  const reserved = new Set<string>();
 
   const check = (name: string): void => {
     if (!NNUE_NAME_RE.test(name)) throw new NnueError('not_found', `Not an NNUE network name: ${name}`);
@@ -139,11 +141,16 @@ export function createNnueStore(deps: {
    */
   const reserveSlot = (name: string): Promise<void> => {
     const run = async (): Promise<void> => {
+      if (recentDownloads() >= maxPerHour) throw tooMany();
       await mkdir(deps.dir, { recursive: true });
       const files = (await readdir(deps.dir)).filter(f => NNUE_NAME_RE.test(f) && f !== name);
-      const pending = [...downloads.keys()].filter(n => n !== name && !files.includes(n)).length;
+      const pending = [...reserved].filter(n => n !== name && !files.includes(n)).length;
       let excess = files.length + pending + 1 - maxFiles;
-      if (excess <= 0) return;
+      if (excess <= 0) {
+        reserved.add(name);
+        started.push(now());
+        return;
+      }
       const candidates: Array<{ f: string; used: number }> = [];
       for (const f of files) {
         try {
@@ -164,8 +171,13 @@ export function createNnueStore(deps: {
         excess--;
       }
       if (excess > 0) {
-        throw new NnueError('quota', `At most ${maxFiles} NNUE networks are kept and all of them were used within the last ${Math.round(keepRecentMs / 60_000)} minutes`);
+        throw new NnueError(
+          'quota',
+          `At most ${maxFiles} NNUE networks are kept and all of them are downloading or were used within the last ${Math.round(keepRecentMs / 60_000)} minutes`,
+        );
       }
+      reserved.add(name);
+      started.push(now());
     };
     const p = slotLock.then(run, run);
     slotLock = p.catch(() => {});
@@ -209,8 +221,6 @@ export function createNnueStore(deps: {
     }
     if (!res.body) throw new NnueError('upstream', `Empty response for ${name}`);
     try {
-      if (recentDownloads() >= maxPerHour) throw tooMany();
-      started.push(now());
       await reserveSlot(name);
     } catch (e) {
       void res.body.cancel().catch(() => {});
@@ -242,6 +252,8 @@ export function createNnueStore(deps: {
       await rm(tmp, { force: true }).catch(() => {});
       if (e instanceof NnueError) throw e;
       throw new NnueError('upstream', `Download of ${name} failed: ${(e as Error).message}`, { cause: e });
+    } finally {
+      reserved.delete(name);
     }
     deps.log?.info({ name, size }, 'nnue: downloaded and verified');
     const file = await cached(name);

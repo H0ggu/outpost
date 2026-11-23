@@ -22,8 +22,10 @@ import { Chess } from 'chessops/chess';
 import { makeSan } from 'chessops/san';
 import type { Move } from 'chessops/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { getOpeningBook } from '../src/chess/openings.ts';
 import { insertGame } from '../src/chess/store.ts';
 import { referenceGameSet, resolveGameSet } from '../src/explorer/gameSet.ts';
+import { resolvePosition } from '../src/explorer/position.ts';
 import { choosePlan, hitsSql, setConditions } from '../src/explorer/query.ts';
 import { writeSettings } from '../src/settings.ts';
 import { createDatabase, createProfile, lastNdjsonLine } from './explorer-support.ts';
@@ -222,7 +224,7 @@ describe(`local explorer performance (50k-game profile, ${OTHER_GAMES.toLocaleSt
   it('drives the set plan from player_games and seeks positions by (pos_key, game_id)', async () => {
     const set = resolveGameSet(t.db, { kind: 'profile', slug: 'perf' }, { id: 0, username: 'x', role: 'admin', totpEnabled: false, prefs: {} as never });
     const where = setConditions(set, {}, { timeClasses: null, rated: null, from: null, to: null }, { color: 'white' });
-    const start = t.db.value<number>('SELECT pos_key FROM positions WHERE ply = 0 LIMIT 1')!;
+    const start = resolvePosition(undefined, '', getOpeningBook()).key;
     const q = { set, where, key: start, color: 'white' as const };
     expect((await choosePlan(t.db, q)).plan).toBe('set');
     const h = hitsSql(q, 'set', 1, 1_000_000);
@@ -255,16 +257,28 @@ describe(`local explorer performance (50k-game profile, ${OTHER_GAMES.toLocaleSt
     const report: string[] = [];
     afterAll(() => console.info(`reference explorer timings (${OTHER_GAMES.toLocaleString('en')} games):\n  ${report.join('\n  ')}`));
 
+    /**
+     * The first request at a position reads its pages from disk (how long that takes depends on the
+     * machine's page cache); the same scan again (a no-op restriction bypasses the result cache) is
+     * the explorer's own cost, which the budgets check.
+     */
+    const coldAndWarm = async (url: string) => {
+      const first = await cold(url);
+      const again = await cold(`${url}${url.includes('?') ? '&' : '?'}since=1952-01`);
+      expect(again.body).toBe(first.body);
+      return { first, again, text: `${first.ms.toFixed(0)} ms first (stall ≤ ${first.lag.toFixed(0)} ms), ${again.ms.toFixed(0)} ms again (stall ≤ ${again.lag.toFixed(0)} ms)` };
+    };
+
     it('answers the reference explorer along the main line without holding the event loop', async () => {
       let line: string[] = [];
       for (let depth = 0; depth <= 6; depth++) {
-        const { ms, lag, body } = await cold(`/api/explorer/reference?play=${line.join(',')}`);
-        const r = JSON.parse(body) as ExplorerMastersResponse;
-        report.push(`reference ply ${depth}: ${total(r).toLocaleString('en')} games, ${ms.toFixed(0)} ms (event loop stalled ≤ ${lag.toFixed(0)} ms)`);
+        const { first, again, text } = await coldAndWarm(`/api/explorer/reference?play=${line.join(',')}`);
+        const r = JSON.parse(first.body) as ExplorerMastersResponse;
+        report.push(`reference ply ${depth}: ${total(r).toLocaleString('en')} games, ${text}`);
         if (depth === 0) expect(total(r)).toBe(OTHER_GAMES);
         expect(r.topGames.length).toBeGreaterThan(0);
-        expect(ms, report.at(-1)).toBeLessThan(depth < 2 ? REFERENCE_SHALLOW_BUDGET_MS : BUDGET_MS);
-        expect(lag, report.at(-1)).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
+        expect(again.ms, report.at(-1)).toBeLessThan(depth < 2 ? REFERENCE_SHALLOW_BUDGET_MS : BUDGET_MS);
+        expect(again.lag, report.at(-1)).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
         if (!r.moves[0]) break;
         line = [...line, r.moves[0].uci];
       }
@@ -273,26 +287,26 @@ describe(`local explorer performance (50k-game profile, ${OTHER_GAMES.toLocaleSt
     it('serves masters from the reference DB, and db:<ref> in the player explorer and games list', async () => {
       writeSettings(t.db, { mastersSource: `reference:${refDb}` });
       try {
-        const masters = await cold('/api/explorer/masters?variant=standard&play=');
-        expect(total(JSON.parse(masters.body) as ExplorerMastersResponse)).toBe(OTHER_GAMES);
-        report.push(`masters (reference DB) start: ${masters.ms.toFixed(0)} ms (stall ≤ ${masters.lag.toFixed(0)} ms)`);
-        expect(masters.ms).toBeLessThan(REFERENCE_SHALLOW_BUDGET_MS);
-        expect(masters.lag).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
+        const masters = await coldAndWarm('/api/explorer/masters?variant=standard&play=');
+        expect(total(JSON.parse(masters.first.body) as ExplorerMastersResponse)).toBe(OTHER_GAMES);
+        report.push(`masters (reference DB) start: ${masters.text}`);
+        expect(masters.again.ms).toBeLessThan(REFERENCE_SHALLOW_BUDGET_MS);
+        expect(masters.again.lag).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
       } finally {
         writeSettings(t.db, { mastersSource: 'lichess' });
       }
-      const player = await cold(`/api/explorer/player?player=db:${refDb}&color=white`);
-      report.push(`player db:<ref> start: ${player.ms.toFixed(0)} ms (stall ≤ ${player.lag.toFixed(0)} ms)`);
-      expect(total(lastNdjsonLine<ExplorerPlayerResponse>(player.body))).toBe(OTHER_GAMES);
-      expect(player.ms).toBeLessThan(REFERENCE_SHALLOW_BUDGET_MS);
-      expect(player.lag).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
-      const games = await cold(`/api/explorer/games?player=db:${refDb}`);
-      const page = JSON.parse(games.body) as ExplorerGamesPage;
-      report.push(`games db:<ref> start, page 1: ${games.ms.toFixed(0)} ms (stall ≤ ${games.lag.toFixed(0)} ms)`);
+      const player = await coldAndWarm(`/api/explorer/player?player=db:${refDb}&color=white`);
+      report.push(`player db:<ref> start: ${player.text}`);
+      expect(total(lastNdjsonLine<ExplorerPlayerResponse>(player.first.body))).toBe(OTHER_GAMES);
+      expect(player.again.ms).toBeLessThan(REFERENCE_SHALLOW_BUDGET_MS);
+      expect(player.again.lag).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
+      const games = await coldAndWarm(`/api/explorer/games?player=db:${refDb}`);
+      const page = JSON.parse(games.first.body) as ExplorerGamesPage;
+      report.push(`games db:<ref> start, page 1: ${games.text}`);
       expect(page.total).toBe(OTHER_GAMES);
       expect(page.games).toHaveLength(20);
-      expect(games.ms).toBeLessThan(REFERENCE_SHALLOW_BUDGET_MS);
-      expect(games.lag).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
+      expect(games.again.ms).toBeLessThan(REFERENCE_SHALLOW_BUDGET_MS);
+      expect(games.again.lag).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
       // The next page comes from the same scan.
       const next = await cold(`/api/explorer/games?player=db:${refDb}&page=2`);
       report.push(`games db:<ref> start, page 2: ${next.ms.toFixed(0)} ms`);
@@ -319,7 +333,7 @@ describe(`local explorer performance (50k-game profile, ${OTHER_GAMES.toLocaleSt
     it('reads the reference DB through its covering index', async () => {
       const set = referenceGameSet(t.db, refDb);
       const where = setConditions(set, {}, { timeClasses: null, rated: null, from: null, to: null }, { color: null });
-      const start = t.db.value<number>('SELECT pos_key FROM positions WHERE ply = 0 LIMIT 1')!;
+      const start = resolvePosition(undefined, '', getOpeningBook()).key;
       for (const plan of ['set', 'position'] as const) {
         const h = hitsSql({ set, where, key: start, color: null }, plan, 1, 1_000_000);
         const steps = t.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${h.sql}`, h.params).map(r => r.detail).join('\n');

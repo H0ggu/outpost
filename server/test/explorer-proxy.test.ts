@@ -321,10 +321,12 @@ describe('explorer proxies', () => {
 });
 
 describe('explorer proxy budgets and timeouts', () => {
-  const setup = (opts: { perWindow?: number; windowMs?: number; maxQueue?: number; maxWaitMs?: number; headersMs?: number } = {}) => {
+  const setup = (
+    opts: { perWindow?: number; windowMs?: number; maxQueue?: number; maxWaitMs?: number; headersMs?: number; bodyMs?: number; tablebasePerClient?: number; token?: boolean } = {},
+  ) => {
     const db = openDb(':memory:');
     migrate(db);
-    const config = loadConfig({ NODE_ENV: 'test', LICHESS_TOKEN: 'lip_test' });
+    const config = loadConfig({ NODE_ENV: 'test', ...(opts.token === false ? {} : { LICHESS_TOKEN: 'lip_test' }) });
     const up = fakeUpstream();
     up.on(() => new Response('{"white":0,"draws":0,"black":0,"moves":[],"topGames":[],"recentGames":[]}'));
     const budget = { perWindow: opts.perWindow ?? 2, windowMs: opts.windowMs ?? 200, maxQueue: opts.maxQueue ?? 5, maxWaitMs: opts.maxWaitMs ?? 2000 };
@@ -333,7 +335,8 @@ describe('explorer proxy budgets and timeouts', () => {
       config,
       upstream: createUpstream({ config, db, fetch: up.fetch }),
       budgets: { lichess: budget, masters: budget },
-      timeouts: { headersMs: opts.headersMs ?? 1000, bodyMs: 2000 },
+      timeouts: { headersMs: opts.headersMs ?? 1000, bodyMs: opts.bodyMs ?? 2000 },
+      ...(opts.tablebasePerClient !== undefined ? { tablebasePerClient: opts.tablebasePerClient } : {}),
     });
     const q = (play: string) => new URLSearchParams({ play, variant: 'standard' });
     return { db, up, proxy, q };
@@ -411,5 +414,85 @@ describe('explorer proxy budgets and timeouts', () => {
     expect((await proxy.lichess(q('e2e4')).catch(e => e)).statusCode).toBe(502);
     up.on(() => new Response('x', { headers: { 'content-length': String(10 * 1024 * 1024) } }));
     expect((await proxy.lichess(q('d2d4')).catch(e => e)).statusCode).toBe(502);
+  });
+
+  /** A body that sends `first` and then stalls, or fails with `error`. */
+  const partialBody = (first: string, error?: Error): ReadableStream<Uint8Array> => {
+    let sent = false;
+    return new ReadableStream({
+      pull(c) {
+        if (!sent) {
+          sent = true;
+          c.enqueue(new TextEncoder().encode(first));
+          return;
+        }
+        if (error) c.error(error);
+        return new Promise<void>(() => {}); // stall
+      },
+    });
+  };
+
+  it('answers 503 (not 500) when the upstream stalls in the middle of its body', async () => {
+    const { up, proxy, q } = setup({ bodyMs: 100 });
+    up.on(() => new Response(partialBody('{"white":'), { headers: { 'content-type': 'application/json' } }));
+    const err = await proxy.lichess(q('e2e4')).catch(e => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.statusCode).toBe(503);
+    expect(err.details).toMatchObject({ reason: 'timeout', host: 'explorer.lichess.org' });
+    const tb = await proxy.tablebase('standard', '4k3/8/8/8/8/8/8/4K3 w - - 0 1').catch(e => e);
+    expect(tb.statusCode).toBe(503);
+  });
+
+  it('answers 503 when the connection drops in the middle of the body', async () => {
+    const { up, proxy, q } = setup();
+    up.on(() => new Response(partialBody('{"white":', new TypeError('terminated'))));
+    const err = await proxy.lichess(q('e2e4')).catch(e => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.statusCode).toBe(503);
+    expect(err.details).toMatchObject({ reason: 'network' });
+  });
+
+  it('caps each client’s new tablebase lookups below the instance budget', async () => {
+    const { up, proxy } = setup({ tablebasePerClient: 2 });
+    up.on(() => new Response('{"category":"draw","moves":[]}'));
+    const fen = (file: string) => `4k3/8/8/8/8/8/8/${file} w - - 0 1`;
+    await proxy.tablebase('standard', fen('4K3'), undefined, '203.0.113.7');
+    await proxy.tablebase('standard', fen('3K4'), undefined, '203.0.113.7');
+    const third = await proxy.tablebase('standard', fen('2K5'), undefined, '203.0.113.7').catch(e => e);
+    expect(third).toBeInstanceOf(HttpError);
+    expect(third.statusCode).toBe(429);
+    expect(third.details).toMatchObject({ reason: 'client_limit' });
+    expect(third.details.retryAt).toBeGreaterThan(Date.now());
+    // Cached answers cost nothing, and other clients have their own share.
+    await expect(proxy.tablebase('standard', fen('4K3'), undefined, '203.0.113.7')).resolves.toMatchObject({ cache: 'hit' });
+    await expect(proxy.tablebase('standard', fen('2K5'), undefined, '198.51.100.1')).resolves.toMatchObject({ status: 200 });
+    expect(up.calls).toHaveLength(3);
+  });
+
+  it('never lets a token request inherit an anonymous request’s 401 (separate flights)', async () => {
+    const { up, proxy, q } = setup({ perWindow: 50 });
+    up.on((url, init) => {
+      const auth = new Headers(init.headers).get('authorization');
+      if (auth) return new Response('{"white":1,"draws":0,"black":0,"moves":[],"topGames":[]}');
+      // Anonymous requests are refused, slowly for 1. e4.
+      return delayed(url.searchParams.get('play') === 'e2e4' ? 80 : 0, () => new Response('unauthorized', { status: 401 }), init.signal);
+    });
+    const slowAnonymous = proxy.masters(q('e2e4'));
+    // Another request learns that anonymous requests are refused, then retries with the token.
+    await expect(proxy.masters(q('d2d4'))).resolves.toMatchObject({ status: 200 });
+    // Same key as the anonymous flight still running: goes straight to the token, on its own.
+    await expect(proxy.masters(q('e2e4'))).resolves.toMatchObject({ status: 200 });
+    await expect(slowAnonymous).resolves.toMatchObject({ status: 200 });
+    const e4 = up.calls.filter(c => c.url.searchParams.get('play') === 'e2e4').map(c => c.headers.get('authorization'));
+    expect(e4[0]).toBeNull();
+    expect(e4).toContain('Bearer lip_test');
+  });
+
+  it('answers 503 no_token for a refused anonymous request without a token', async () => {
+    const { up, proxy, q } = setup({ token: false });
+    up.on(() => new Response('unauthorized', { status: 401 }));
+    const err = await proxy.masters(q('e2e4')).catch(e => e);
+    expect(err.statusCode).toBe(503);
+    expect(err.details).toMatchObject({ reason: 'no_token' });
   });
 });

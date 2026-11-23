@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -135,6 +135,17 @@ describe('GET /assets/lifat/nnue/:name', () => {
     }
   });
 
+  it('is never compressed, so the Content-Length (lila’s download progress) survives', async () => {
+    await get(good.name);
+    for (const enc of ['br', 'gzip', 'br, gzip, deflate']) {
+      const res = await get(good.name, { headers: { 'accept-encoding': enc } });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-encoding'], enc).toBeUndefined();
+      expect(res.headers['content-length'], enc).toBe(String(good.bytes.length));
+      expect(res.rawPayload.equals(good.bytes)).toBe(true);
+    }
+  });
+
   it('supports Range, If-None-Match and HEAD', async () => {
     await get(good.name);
     const part = await get(good.name, { headers: { range: 'bytes=10-19' } });
@@ -163,7 +174,10 @@ describe('NNUE store limits', () => {
     for (const d of dirs) rmSync(d, { recursive: true, force: true });
   });
 
-  const setup = (fetch: typeof globalThis.fetch, opts: { maxBytes?: number; maxFiles?: number } = {}) => {
+  const setup = (
+    fetch: typeof globalThis.fetch,
+    opts: { maxBytes?: number; maxFiles?: number; keepRecentMs?: number; maxDownloadsPerHour?: number } = {},
+  ) => {
     const dir = mkdtempSync(join(tmpdir(), 'outpost-nnue-'));
     dirs.push(dir);
     const db = openDb(':memory:');
@@ -201,5 +215,71 @@ describe('NNUE store limits', () => {
     // Still remembered as failed.
     await expect(store.ensure(net.name)).rejects.toMatchObject({ reason: 'upstream' });
     expect(store.inFlight()).toEqual([]);
+  });
+
+  /** A fetch serving the given networks (404 otherwise), optionally slowly. */
+  const serving = (nets: Array<{ name: string; bytes: Buffer }>, delayMs = 0): typeof globalThis.fetch => async input => {
+    const name = new URL(String(input instanceof Request ? input.url : input)).pathname.split('/').pop();
+    const net = nets.find(n => n.name === name);
+    if (delayMs) await new Promise(r => setTimeout(r, delayMs));
+    return net ? new Response(net.bytes) : new Response('not found', { status: 404 });
+  };
+  const ageFile = (path: string, msAgo: number) => {
+    const t = new Date(Date.now() - msAgo);
+    utimesSync(path, t, t);
+  };
+
+  it('evicts the least recently used network to make room', async () => {
+    const [a, b, c] = [network(128), network(128), network(128)];
+    const { dir, store } = setup(serving([a, b, c]), { maxFiles: 2, keepRecentMs: 60_000 });
+    await store.ensure(a.name);
+    await store.ensure(b.name);
+    ageFile(join(dir, a.name), 3 * 3_600_000);
+    ageFile(join(dir, b.name), 2 * 3_600_000);
+    // a is served again: it becomes the most recently used.
+    store.markUsed(a.name);
+    await store.ensure(c.name);
+    expect(readdirSync(dir).sort()).toEqual([a.name, c.name].sort());
+  });
+
+  it('refuses (quota) rather than evict a network used within the last hour', async () => {
+    const [a, b] = [network(128), network(128)];
+    const { dir, store } = setup(serving([a, b]), { maxFiles: 1 });
+    await store.ensure(a.name);
+    await expect(store.ensure(b.name)).rejects.toMatchObject({ reason: 'quota' });
+    expect(readdirSync(dir)).toEqual([a.name]);
+    // Not remembered as a failure: it can be fetched once room is made.
+    ageFile(join(dir, a.name), 2 * 3_600_000);
+    await expect(store.ensure(b.name)).resolves.toMatchObject({ size: 128 });
+    expect(readdirSync(dir)).toEqual([b.name]);
+  });
+
+  it('reserves slots for concurrent downloads of different networks', async () => {
+    const [a, b] = [network(128), network(128)];
+    const { dir, store } = setup(serving([a, b], 30), { maxFiles: 1, keepRecentMs: 0 });
+    const results = await Promise.allSettled([store.ensure(a.name), store.ensure(b.name)]);
+    expect(results.map(r => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect((results.find(r => r.status === 'rejected') as PromiseRejectedResult).reason).toMatchObject({ reason: 'quota' });
+    expect(readdirSync(dir)).toHaveLength(1);
+  });
+
+  it('caps new downloads per hour', async () => {
+    const [a, b] = [network(128), network(128)];
+    const { store } = setup(serving([a, b]), { maxDownloadsPerHour: 1 });
+    await store.ensure(a.name);
+    await expect(store.ensure(b.name)).rejects.toMatchObject({ reason: 'quota' });
+    // A cached network is still served.
+    await expect(store.ensure(a.name)).resolves.toMatchObject({ size: 128 });
+  });
+
+  it('removes temp files left by an interrupted download, and nothing else', async () => {
+    const net = network(128);
+    const { dir, store } = setup(serving([net]));
+    const stale = '.nn-0123456789ab.nnue.a1b2c3d4e5f6.tmp';
+    writeFileSync(join(dir, stale), 'half a network');
+    writeFileSync(join(dir, net.name), net.bytes);
+    writeFileSync(join(dir, 'notes.txt'), 'keep me');
+    expect(await store.removeStaleTemps()).toBe(1);
+    expect(readdirSync(dir).sort()).toEqual([net.name, 'notes.txt'].sort());
   });
 });
