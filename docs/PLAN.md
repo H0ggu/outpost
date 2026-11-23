@@ -174,7 +174,7 @@ Every row is in scope. "Lila" means the feature is reused from vendored lila cod
 | Studio: board, notation with variations, glyphs and comments, engine (multi-PV, threat, arrows), explorers (masters, online, player, my DBs), PGN/FEN import and export, keyboard shortcuts, themes and piece sets | **Lila analysis board vendored** (all of these come from lila), plus Outpost chrome: My Files sidebar (folders, open/save/save-as, import, recycle bin, search the current position across files), board tabs, layout presets, and settings for board theme, piece set and sound set |
 | My Files / repertoires, synced to mobile | `files` table (PGN with variations) behind the authenticated API. The PWA works on phones, so the same files are available everywhere. |
 | Tournament preparation (Pro) | **Prep** page: a list of opponents, then per-opponent report cards with their White and Black repertoire (top lines), worst-scoring lines, recent games, activity by time and a jump-to-explorer link. Printable. |
-| Elo estimate | Only if we can cite a published conversion; otherwise left out and documented. |
+| Elo estimate | Only if we can cite a published conversion; otherwise left out and documented. **Left out** (no citable conversion found): README "Not included". |
 | Mobile app | Responsive layouts + PWA manifest. Lila's analysis board is already mobile-ready. |
 | Subscriptions, voting, Discord, partner programme | Not applicable (self-hosted, no tiers) |
 | Free-form panel docking (Studio) | Partial: layout presets instead of drag-and-dock |
@@ -382,7 +382,7 @@ Follow `docs/research/lila-ui-extraction.md`, option A.
 - **Access.** Public profiles and their stats can be read anonymously only when `anonymousBrowsing` is on. Everything else needs a session, and owners or admins for mutations. Databases follow one rule wherever their games are read (DECISIONS R1): user databases need a session (owner, or anyone signed in while public); reference databases are open to every viewer unless an admin makes one private (then admins only, and it never feeds FIDE players, R2).
 - **Secrets.** The Lichess token never reaches the browser. All upstream calls go through the server.
 - **Uploads.** Size limits: PGN 50 MB (pasted PGN 5 MB), reference import 2 GB streamed to disk.
-- **Per-user limits** (decision 7): 2,000,000 games across a user's PGN databases (admins: none), 3 pending imports, 10 database exports per minute; Studio files 100 MB of PGN (recycle bin included), 10,000 files, 2,000,000 indexed positions; prep lines from each opponent's latest 5,000 games.
+- **Per-user limits** (decision 7): 2,000,000 games across a user's PGN databases (admins: none), 200 profiles (admins: none), 3 pending imports, 10 database exports and 60 database game lists / searches per minute, 20 prep reports per minute (one at a time), 30 profile creations / account additions and 30 manual updates per minute; Studio files 100 MB of PGN (recycle bin included), 10,000 files, 2,000,000 indexed positions; prep lines from each opponent's latest 5,000 games. Upstream budgets are shared fairly between clients (DECISIONS R9).
 
 ## 11. Testing and verification
 - **Unit tests (Vitest):**

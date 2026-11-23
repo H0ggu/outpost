@@ -72,11 +72,25 @@ Set in `.env` (or the environment). Relative paths resolve against the repositor
 
 ## Limits
 
-Per user (admins have no game allowance): 2,000,000 games across their PGN databases, 3 imports
-pending at a time, PGN uploads up to 50 MB (pasted PGN 5 MB), 10 database exports per minute; Studio
-files up to 100 MB of PGN (recycle bin included). Profile PGN exports hold at most 10,000 games.
-Chess.com opponent lookups (country and title for the world map) stop at 1,000 requests per run and
-continue in the next hourly run. Decisions behind these and other defaults: `docs/DECISIONS.md`.
+Per user (admins have no game allowance or profile limit): 2,000,000 games across their PGN
+databases, 200 profiles, 3 imports pending at a time, PGN uploads up to 50 MB (pasted PGN 5 MB),
+10 database exports per minute, 20 prep reports per minute (one at a time); Studio files up to
+100 MB of PGN (recycle bin included). Profile PGN exports hold at most 10,000 games. Requests to
+Lichess's services are shared fairly: one user (or address) may use at most half of the instance's
+masters, Lichess-explorer and cloud-eval budgets, and searches and account checks have their own
+budget. Chess.com opponent lookups (country and title for the world map) stop at 1,000 requests
+per run and continue in the next hourly run. Decisions behind these and other defaults:
+`docs/DECISIONS.md`.
+
+## Not included
+
+- **Elo estimate.** ChessMonitor shows an online-rating → FIDE estimate on its overview. Outpost
+  doesn't: no published, citable conversion between Lichess / Chess.com ratings and FIDE ratings
+  was found (PLAN §5 only allows one with a source), and an uncited regression would look more
+  precise than it is. Profiles show the FIDE ratings the sites themselves report (Lichess profile
+  field, Chess.com stats) and those of FIDE profiles.
+- **Separate UltraBullet ratings.** Lichess UltraBullet games count as bullet games, but their
+  ratings (another pool) stay out of the bullet rating chart and current rating.
 
 ## Licence
 
