@@ -53,6 +53,12 @@
   min-width: 0;
 }
 
+/* The kit turns the input's own outline off (the pill is the field), so the pill shows focus. */
+.site-search:focus-within {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 1px var(--c-primary);
+}
+
 /* Search inside the phone menu: hidden while the header has room for its own. */
 .site-search--menu {
   display: none;
