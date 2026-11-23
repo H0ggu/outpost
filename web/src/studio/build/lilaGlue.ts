@@ -212,9 +212,10 @@ export function lilaCssAssetPath(url: string): string | null {
   if (m) return `/lichess/font/${m[1]}`;
   m = /^\.\.\/images\/board\/([\w.-]+)$/.exec(url);
   if (m) return `/lichess/board/${m[1]}`;
-  // Material-difference pieces: lila uses the monochrome set; the cburnett black pieces are the closest free set we ship.
+  // Material-difference pieces: lila uses its grey "mono" set, which isn't vendored. The white cburnett
+  // pieces (black outline) read on every theme; studio.css dims them like mono.
   m = /^\.\.\/piece\/mono\/([PNBRQK])\.svg$/.exec(url);
-  if (m) return `/lichess/piece/cburnett/b${m[1]}.svg`;
+  if (m) return `/lichess/piece/cburnett/w${m[1]}.svg`;
   m = /^\.\.\/piece\/([\w-]+)\/([\w.-]+)$/.exec(url);
   if (m) return `/lichess/piece/${m[1]}/${m[2]}`;
   return null;

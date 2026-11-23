@@ -92,6 +92,11 @@ body #top {
   position: relative;
 }
 
+/* Material difference beside the board: lila's grey mono pieces are replaced by cburnett white ones. */
+.material mpiece {
+  opacity: 0.75;
+}
+
 /* lila's "indexing" loader sprite isn't vendored: three dots instead. */
 .ddloader {
   background: radial-gradient(circle, currentColor 1.5px, transparent 2.5px) 0 50% / 8px 8px repeat-x !important;
