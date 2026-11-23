@@ -49,6 +49,8 @@ export const DEFAULT_BUDGETS: Readonly<Record<BudgetName, BudgetOptions>> = {
 export const UPSTREAM_HEADERS_TIMEOUT_MS = 15_000;
 /** Time allowed for the whole upstream response. */
 export const UPSTREAM_BODY_TIMEOUT_MS = 30_000;
+/** How long a 401 on an anonymous masters request sends later ones straight to the token. */
+export const ANONYMOUS_REFUSED_MEMORY_MS = 60 * 60_000;
 /** Largest upstream body accepted (explorer answers are a few KB). */
 export const MAX_UPSTREAM_BODY_BYTES = 4 * 1024 * 1024;
 
@@ -291,16 +293,27 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
   /** Keeps NeedsToken as is (callers retry with the token); maps everything else. */
   const proxyHttpErrorKeepTokenHint = (e: unknown): unknown => (e instanceof NeedsToken ? e : proxyHttpError(e));
 
-  /** Anonymous first; after a 401, once more with the token (on the token's budget) when one is configured. */
+  /** Until when anonymous masters requests are known to be refused (then the token goes first). */
+  let anonymousRefusedUntil = 0;
+
+  /**
+   * Anonymous first; after a 401, once more with the token (on the token's budget) when one is
+   * configured — and for the next hour straight with the token, so a re-closed endpoint doesn't
+   * cost two requests each time.
+   */
   const anonymousThenToken = async (req: Omit<UpstreamRequest, 'auth' | 'budget'>, signal?: AbortSignal): Promise<ProxyResult> => {
+    const withToken = (): Promise<ProxyResult> =>
+      fetchCached({ ...req, auth: 'required', budget: budgets.lichess }, signal).catch((err: unknown) => {
+        throw proxyHttpError(err);
+      });
+    if (now() < anonymousRefusedUntil && hasToken()) return withToken();
     try {
       return await fetchCached({ ...req, auth: false, budget: budgets.masters }, signal);
     } catch (e) {
       if (!(e instanceof NeedsToken)) throw e;
+      anonymousRefusedUntil = now() + ANONYMOUS_REFUSED_MEMORY_MS;
       if (!hasToken()) throw proxyHttpError(e);
-      return fetchCached({ ...req, auth: 'required', budget: budgets.lichess }, signal).catch((err: unknown) => {
-        throw proxyHttpError(err);
-      });
+      return withToken();
     }
   };
 

@@ -104,9 +104,10 @@ function sourceVisible(db: Db, sourceId: Id, viewer: AuthUser | null): boolean {
   return row !== undefined;
 }
 
-/** Parses a `player` parameter or throws 400. */
+/** Parses a `player` parameter or throws 400. Slugs are lowercase, so a bare name is lowercased first. */
 export function parseSpecOrThrow(player: string): PlayerSpec {
-  const spec = parsePlayerSpec(player.trim());
+  const raw = player.trim();
+  const spec = parsePlayerSpec(raw.includes(':') ? raw : raw.toLowerCase());
   if (!spec) {
     throw validationError('player: expected a profile slug, lichess:<user>, chesscom:<user>, db:<id> or ref:<fideId>');
   }

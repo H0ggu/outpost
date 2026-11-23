@@ -126,18 +126,23 @@ describe('explorer proxies', () => {
       expect(gone.json().error.code).toBe('upstream_error');
     });
 
-    it('retries with the token after a 401, and fails cleanly (503 no_token) without one', async () => {
+    it('retries with the token after a 401, then uses it first; 503 no_token without one', async () => {
       up.on((_u, init) =>
         new Headers(init.headers).get('authorization') ? new Response(mastersSample) : new Response('unauthorized', { status: 401 }),
       );
-      const noToken = await get('/api/explorer/masters?play=c2c4');
-      expect(noToken.statusCode).toBe(503);
-      expect(noToken.json().error).toMatchObject({ code: 'upstream_unavailable', details: { reason: 'no_token' } });
-      up.reset();
       writeSettings(t.db, { lichessToken: 'lip_secret' });
       const withToken = await get('/api/explorer/masters?play=c2c4');
       expect(withToken.statusCode).toBe(200);
       expect(up.calls.map(c => c.headers.get('authorization'))).toEqual([null, 'Bearer lip_secret']);
+      // Lichess refused anonymous requests: the next ones use the token straight away.
+      up.reset();
+      expect((await get('/api/explorer/masters?play=b2b3')).statusCode).toBe(200);
+      expect(up.calls.map(c => c.headers.get('authorization'))).toEqual(['Bearer lip_secret']);
+      // Without a token: a clean 503 with the reason.
+      writeSettings(t.db, { lichessToken: null });
+      const noToken = await get('/api/explorer/masters?play=a2a3');
+      expect(noToken.statusCode).toBe(503);
+      expect(noToken.json().error).toMatchObject({ code: 'upstream_unavailable', details: { reason: 'no_token' } });
     });
 
     it('makes one upstream call for concurrent identical requests', async () => {

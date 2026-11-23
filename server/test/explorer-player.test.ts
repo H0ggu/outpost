@@ -305,6 +305,8 @@ describe('player explorer (/api/explorer/player)', () => {
     expect((await get('player=secret&color=white', owner)).statusCode).toBe(200);
     expect((await get('player=secret&color=white', admin)).statusCode).toBe(200);
     expect((await get('player=nobody-here&color=white')).statusCode).toBe(404);
+    // Slugs are lowercase: a capitalised name typed in lila's player box still finds the profile.
+    expect((await get('player=Alice&color=white')).statusCode).toBe(200);
     const anon = await get('player=alice&color=white', null);
     expect(anon.statusCode).toBe(401);
     writeSettings(t.db, { anonymousBrowsing: true });
