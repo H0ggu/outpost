@@ -109,3 +109,38 @@ export const unavailableSet = (r: SearchResults | undefined): ReadonlySet<Search
 
 /** True when `q` could be a Lichess / Chess.com username (offer to add it by hand). */
 export const looksLikeUsername = (q: string): boolean => /^[A-Za-z0-9_-]{2,30}$/.test(q.trim());
+
+/** One of the per-site lists of a search. */
+export type SiteList = 'lichess' | 'chesscom' | 'reference';
+
+const SITE_NAMES = { lichess: 'Lichess', chesscom: 'Chess.com' } as const;
+
+/**
+ * The site lists in the order to show them: the list holding the best hit first (an exact
+ * username or name, then one with a profile here, seen in imported games, titled), empty lists
+ * last, Lichess · Chess.com · reference among equals. "hikaru" then shows Chess.com's GM Hikaru
+ * before ten Lichess prefix matches. (Each list is already ordered best first by the server.)
+ */
+export function siteListOrder(r: SearchResults): SiteList[] {
+  const q = r.q.trim().toLowerCase();
+  const external = (hits: readonly ExternalPlayerHit[]) =>
+    Math.min(9, ...hits.map(h => (h.username.toLowerCase() === q ? 0 : h.profileSlug ? 1 : h.known ? 2 : h.title && h.title !== 'BOT' ? 3 : 4)));
+  const rank: Record<SiteList, number> = {
+    lichess: external(r.lichess),
+    chesscom: external(r.chesscom),
+    reference: Math.min(9, ...r.reference.map(p => (p.name.toLowerCase() === q || p.fideId === q ? 0 : p.profileSlug ? 1 : 2))),
+  };
+  return (['lichess', 'chesscom', 'reference'] as const).slice().sort((a, b) => rank[a] - rank[b]);
+}
+
+/**
+ * What an empty Lichess / Chess.com list means: the site wasn't asked (`SearchResults.notSearched`:
+ * the query can't be a username there), or it was and nothing matched (`noMatch`).
+ */
+export function emptySiteText(r: SearchResults, site: SearchSite, noMatch: string): string {
+  if (!r.notSearched?.includes(site)) return noMatch;
+  const name = SITE_NAMES[site];
+  return r.q.trim().length < 3
+    ? `${name} wasn't searched: type at least 3 characters.`
+    : `${name} wasn't searched: “${r.q}” can't be a ${name} username.`;
+}

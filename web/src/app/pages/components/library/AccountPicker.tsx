@@ -2,14 +2,24 @@
  * Adds accounts to a new profile: search (Lichess, Chess.com, reference players with a FIDE id) or
  * enter one by hand — a username, a FIDE id, or a player name inside one of your PGN databases.
  */
-import { useId, useMemo, useState, type FormEvent } from 'react';
+import { Fragment, useId, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import type { DatabaseInfo, SourceKind } from '@outpost/shared/api';
 import { useSearch } from '../../../api/hooks.ts';
 import { Button, licon } from '../../../components/index.ts';
 import { useDatabaseGames, useDatabases, useDebouncedValue } from '../../library-hooks.ts';
 import { SearchField } from './controls.tsx';
 import { sourceIdentity, type PickedSource } from './newProfileQuery.ts';
-import { ExternalHitRow, externalSource, HitSection, ReferenceHitRow, referenceSource, unavailableSet } from './SearchHits.tsx';
+import {
+  emptySiteText,
+  ExternalHitRow,
+  externalSource,
+  HitSection,
+  ReferenceHitRow,
+  referenceSource,
+  siteListOrder,
+  unavailableSet,
+  type SiteList,
+} from './SearchHits.tsx';
 
 const USERNAME_RE = /^[A-Za-z0-9_-]{2,50}$/;
 const FIDE_RE = /^\d{1,12}$/;
@@ -57,23 +67,32 @@ export function AccountPicker({ picked, onAdd }: { picked: readonly PickedSource
       />
       {term.length >= 2 && r && (
         <div className={search.isPlaceholderData ? 'lib-results lib-results--stale' : 'lib-results'}>
-          <HitSection title="Lichess" count={r.lichess.length} unavailable={down.has('lichess')} empty="No match.">
-            {r.lichess.map(h => (
-              <ExternalHitRow key={h.username} hit={h} actions={addButton(externalSource(h), h.username)} />
-            ))}
-          </HitSection>
-          <HitSection title="Chess.com" count={r.chesscom.length} unavailable={down.has('chesscom')} empty="No exact match.">
-            {r.chesscom.map(h => (
-              <ExternalHitRow key={h.username} hit={h} actions={addButton(externalSource(h), h.username)} />
-            ))}
-          </HitSection>
-          {r.reference.length > 0 && (
-            <HitSection title="Reference database" count={r.reference.length}>
-              {r.reference.map(p => (
-                <ReferenceHitRow key={`${p.fideId ?? ''}:${p.name}`} player={p} actions={addButton(referenceSource(p), p.name)} />
-              ))}
-            </HitSection>
-          )}
+          {siteListOrder(r).map(site => {
+            const lists: Record<SiteList, ReactNode> = {
+              lichess: (
+                <HitSection title="Lichess" count={r.lichess.length} unavailable={down.has('lichess')} empty={emptySiteText(r, 'lichess', 'No match.')}>
+                  {r.lichess.map(h => (
+                    <ExternalHitRow key={h.username} hit={h} actions={addButton(externalSource(h), h.username)} />
+                  ))}
+                </HitSection>
+              ),
+              chesscom: (
+                <HitSection title="Chess.com" count={r.chesscom.length} unavailable={down.has('chesscom')} empty={emptySiteText(r, 'chesscom', 'No exact match.')}>
+                  {r.chesscom.map(h => (
+                    <ExternalHitRow key={h.username} hit={h} actions={addButton(externalSource(h), h.username)} />
+                  ))}
+                </HitSection>
+              ),
+              reference: r.reference.length > 0 && (
+                <HitSection title="Reference database" count={r.reference.length}>
+                  {r.reference.map(p => (
+                    <ReferenceHitRow key={`${p.fideId ?? ''}:${p.name}`} player={p} actions={addButton(referenceSource(p), p.name)} />
+                  ))}
+                </HitSection>
+              ),
+            };
+            return <Fragment key={site}>{lists[site]}</Fragment>;
+          })}
         </div>
       )}
       {search.isError && term.length >= 2 && <p className="form-error">Search failed: {search.error.message}</p>}

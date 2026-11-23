@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import type { ExternalPlayerHit } from '@outpost/shared/api';
 import { useSearch, useSession } from '../api/hooks.ts';
@@ -9,13 +9,16 @@ import { newProfileHref, sourceIdentity, type PickedSource } from './components/
 import { ProfileRows } from './components/library/ProfileList.tsx';
 import { QueryView } from './components/library/QueryView.tsx';
 import {
+  emptySiteText,
   ExternalHitRow,
   externalSource,
   HitSection,
   looksLikeUsername,
   ReferenceHitRow,
   referenceSource,
+  siteListOrder,
   unavailableSet,
+  type SiteList,
 } from './components/library/SearchHits.tsx';
 import { useDebouncedValue } from './library-hooks.ts';
 import './components/library/library.css';
@@ -24,7 +27,8 @@ import './SearchPage.css';
 /**
  * PLAN §9 `/search?q=`, §6 GET /api/search: one box over local profiles, Lichess, Chess.com and
  * the reference database. Typing is debounced into the URL; each upstream list is independent, so
- * one site failing (`SearchResults.unavailable`) only flags its own section. Accounts can be opened
+ * one site failing (`SearchResults.unavailable`) only flags its own section, and a site the query
+ * wasn't sent to (`notSearched`) says so. The list with the best hit comes first. Accounts can be opened
  * (when a profile exists), turned into a profile, or picked together into one merged profile.
  */
 export default function SearchPage() {
@@ -67,7 +71,7 @@ export default function SearchPage() {
           <input type="checkbox" checked={isPicked(source)} onChange={() => togglePick(source)} aria-label={`Pick ${label}`} />
           <span className="lib-pick__text">Pick</span>
         </label>
-        <ButtonLink to={newProfileHref([source])} size="sm" icon={licon.PlusButton} aria-label={`Create a profile for ${label}`}>
+        <ButtonLink to={newProfileHref([source])} size="sm" variant="secondary" icon={licon.PlusButton} aria-label={`Create a profile for ${label}`}>
           Profile
         </ButtonLink>
       </>
@@ -108,46 +112,34 @@ export default function SearchPage() {
               const down = unavailableSet(r);
               const total = r.profiles.length + r.lichess.length + r.chesscom.length + r.reference.length;
               const retry = () => void search.refetch();
-              return (
-                <div className={search.isPlaceholderData ? 'lib-results lib-results--stale' : 'lib-results'} aria-busy={search.isFetching}>
-                  {total === 0 && down.size === 0 && (
-                    <EmptyState icon={licon.Search} title={`No players found for “${r.q}”`}>
-                      <p>Check the spelling, or add the account by hand below.</p>
-                    </EmptyState>
-                  )}
-
-                  {r.profiles.length > 0 && (
-                    <HitSection title="Profiles on this server" count={r.profiles.length}>
-                      <li className="lib-hits__plist">
-                        <ProfileRows profiles={r.profiles} bookmarkable={signedIn} />
-                      </li>
-                    </HitSection>
-                  )}
-
+              const lists: Record<SiteList, ReactNode> = {
+                lichess: (
                   <HitSection
                     title="Lichess"
                     count={r.lichess.length}
                     unavailable={down.has('lichess')}
                     onRetry={retry}
-                    empty="No Lichess accounts match."
+                    empty={emptySiteText(r, 'lichess', 'No Lichess accounts match.')}
                   >
                     {r.lichess.map(h => (
                       <ExternalHitRow key={h.username} hit={h} actions={externalActions(h)} />
                     ))}
                   </HitSection>
-
+                ),
+                chesscom: (
                   <HitSection
                     title="Chess.com"
                     count={r.chesscom.length}
                     unavailable={down.has('chesscom')}
                     onRetry={retry}
-                    empty="No Chess.com account with exactly this username."
+                    empty={emptySiteText(r, 'chesscom', 'No Chess.com account with exactly this username.')}
                   >
                     {r.chesscom.map(h => (
                       <ExternalHitRow key={h.username} hit={h} actions={externalActions(h)} />
                     ))}
                   </HitSection>
-
+                ),
+                reference: (
                   <HitSection title="Reference database" count={r.reference.length} empty="No over-the-board players match.">
                     {r.reference.map(p => {
                       const src = referenceSource(p);
@@ -168,6 +160,27 @@ export default function SearchPage() {
                       );
                     })}
                   </HitSection>
+                ),
+              };
+              return (
+                <div className={search.isPlaceholderData ? 'lib-results lib-results--stale' : 'lib-results'} aria-busy={search.isFetching}>
+                  {total === 0 && down.size === 0 && (
+                    <EmptyState icon={licon.Search} title={`No players found for “${r.q}”`}>
+                      <p>Check the spelling, or add the account by hand below.</p>
+                    </EmptyState>
+                  )}
+
+                  {r.profiles.length > 0 && (
+                    <HitSection title="Profiles on this server" count={r.profiles.length}>
+                      <li className="lib-hits__plist">
+                        <ProfileRows profiles={r.profiles} bookmarkable={signedIn} />
+                      </li>
+                    </HitSection>
+                  )}
+
+                  {siteListOrder(r).map(site => (
+                    <Fragment key={site}>{lists[site]}</Fragment>
+                  ))}
 
                   {signedIn && looksLikeUsername(r.q) && <ManualAdd q={r.q} />}
                   {!signedIn && (

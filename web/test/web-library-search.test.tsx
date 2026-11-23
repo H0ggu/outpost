@@ -56,6 +56,36 @@ describe('SearchPage', () => {
     expect(within(anon).queryByRole('link')).toBeNull();
   });
 
+  it('puts the list with the best hit first and tells "not searched" from "no match"', async () => {
+    const prefix = (n: number) => ({ kind: 'lichess' as const, username: `Hikaru${n}`, title: null, exists: true, known: false, profileSlug: null });
+    api()
+      .on('GET', '/api/session', session(USER))
+      .on('GET', '/api/search', req =>
+        req.query.get('q') === 'hikaru'
+          ? results('hikaru', {
+              lichess: [prefix(1), prefix(2), prefix(3)],
+              chesscom: [{ kind: 'chesscom', username: 'Hikaru', title: 'GM', exists: true, known: false, profileSlug: null }],
+            })
+          : results('McShane, Luke', {
+              notSearched: ['lichess', 'chesscom'],
+              reference: [{ fideId: '404853', name: 'McShane, Luke J', title: 'GM', federation: 'ENG', games: 20, lastPlayed: null, maxRating: 2713, profileSlug: null }],
+            }),
+      );
+    const { unmount } = renderPage(<SearchPage />, { route: '/search', path: '/search?q=hikaru' });
+    await screen.findByText('Hikaru1');
+    const headings = () => screen.getAllByRole('heading', { level: 3 }).map(h => h.textContent?.replace(/\d+$/, ''));
+    expect(headings()).toEqual(['Chess.com', 'Lichess', 'Reference database']);
+    // The create buttons don't shout: secondary, not ten primary buttons in a row.
+    expect(screen.getByRole('link', { name: 'Create a profile for Hikaru1' }).className).toContain('button-secondary');
+    unmount();
+
+    renderPage(<SearchPage />, { route: '/search', path: '/search?q=McShane%2C%20Luke' });
+    await screen.findByText('McShane, Luke J');
+    expect(headings()).toEqual(['Reference database', 'Lichess', 'Chess.com']);
+    expect(screen.getByText('Lichess wasn’t searched: “McShane, Luke” can’t be a Lichess username.'.replace(/’/g, "'"))).toBeTruthy();
+    expect(screen.queryByText('No Lichess accounts match.')).toBeNull();
+  });
+
   it('merges picked accounts into one new profile', async () => {
     api()
       .on('GET', '/api/session', session(USER))

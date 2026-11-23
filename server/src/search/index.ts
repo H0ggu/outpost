@@ -260,7 +260,23 @@ export function searchProfiles(db: Db, q: string, viewer: AuthUser | null, limit
   return profileSummaries(db, ids, viewer);
 }
 
-/** Merges upstream hits (first, in upstream order, exact match on top) with local ones. */
+/**
+ * How relevant a hit is, best first: the exact username, an account with a profile here, one
+ * seen in imported games, a titled player (Lichess bots don't count), then the rest.
+ */
+export function hitRank(hit: ExternalPlayerHit, q: string): number {
+  if (playerKey(hit.username) === playerKey(q)) return 0;
+  if (hit.profileSlug) return 1;
+  if (hit.known) return 2;
+  if (hit.title && hit.title !== 'BOT') return 3;
+  return 4;
+}
+
+/**
+ * Merges upstream hits with local ones (one row per account), then orders them by `hitRank`,
+ * keeping upstream order (then local key order) among equals, so the exact or known account isn't
+ * buried under ten prefix matches from Lichess's autocomplete.
+ */
 function mergeHits(
   db: Db,
   kind: 'lichess' | 'chesscom',
@@ -269,25 +285,17 @@ function mergeHits(
   local: readonly UpstreamHit[],
   viewer: AuthUser | null,
 ): ExternalPlayerHit[] {
-  const exact = playerKey(q);
   const confirmed = new Set(upstreamHits.map(h => playerKey(h.username)));
   const seen = new Set<string>();
   const ordered: UpstreamHit[] = [];
-  for (const h of [...upstreamHits].sort((a, b) => Number(playerKey(b.username) === exact) - Number(playerKey(a.username) === exact))) {
+  for (const h of [...upstreamHits, ...local]) {
     const k = playerKey(h.username);
     if (!seen.has(k)) {
       seen.add(k);
       ordered.push(h);
     }
   }
-  for (const h of local) {
-    const k = playerKey(h.username);
-    if (!seen.has(k)) {
-      seen.add(k);
-      ordered.push(h);
-    }
-  }
-  return ordered.slice(0, SEARCH_LIMIT).map(h => {
+  const hits = ordered.map((h): ExternalPlayerHit => {
     const key = playerKey(h.username);
     const localTitle = local.find(l => playerKey(l.username) === key)?.title ?? null;
     return {
@@ -299,6 +307,8 @@ function mergeHits(
       profileSlug: visibleProfileSlugFor(db, kind, key, viewer),
     };
   });
+  // Array.prototype.sort is stable: equals keep the merged order.
+  return hits.sort((a, b) => hitRank(a, q) - hitRank(b, q)).slice(0, SEARCH_LIMIT);
 }
 
 /** Fills `profileSlug` of reference players from local FIDE profiles the viewer may see. */
@@ -313,6 +323,10 @@ export async function search(deps: SearchDeps, q: string, viewer: AuthUser | nul
   const unavailable: Array<'lichess' | 'chesscom'> = [];
   if (lichess.status === 'rejected') unavailable.push('lichess');
   if (chesscom.status === 'rejected') unavailable.push('chesscom');
+  // Not asked at all: `q` can't be a username there (or is too short for Lichess's autocomplete).
+  const notSearched: Array<'lichess' | 'chesscom'> = [];
+  if (lichess.status === 'fulfilled' && lichess.value === null) notSearched.push('lichess');
+  if (chesscom.status === 'fulfilled' && chesscom.value === null) notSearched.push('chesscom');
   const upstreamOf = (r: PromiseSettledResult<UpstreamHit[] | null>): UpstreamHit[] => (r.status === 'fulfilled' && r.value ? r.value : []);
   const result: SearchResults = {
     q,
@@ -324,5 +338,6 @@ export async function search(deps: SearchDeps, q: string, viewer: AuthUser | nul
     reference: withProfileSlugs(db, searchReferencePlayers(db, q, { limit: SEARCH_LIMIT, viewer }), viewer),
   };
   if (unavailable.length) result.unavailable = unavailable;
+  if (notSearched.length) result.notSearched = notSearched;
   return result;
 }

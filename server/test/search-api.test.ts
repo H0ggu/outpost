@@ -75,13 +75,13 @@ describe('search API', () => {
     expect(r.q).toBe('ali');
     expect(up.calls.sort()).toEqual(['GET api.chess.com/pub/player/ali', 'GET lichess.org/api/player/autocomplete']);
     expect(r.profiles.map(p => p.slug)).toEqual(['my-alibaba', 'alice-public']);
+    // Best first (an account with a profile here, then one seen in imported games), upstream order
+    // among equals. The hidden account of someone else's profile (no games yet) is not known to me.
     expect(r.lichess).toEqual([
       { kind: 'lichess', username: 'Alice', title: 'FM', exists: true, known: true, profileSlug: 'alice-public' },
+      { kind: 'lichess', username: 'Alistair', title: 'CM', exists: false, known: true, profileSlug: null },
       { kind: 'lichess', username: 'Alina', title: null, exists: true, known: false, profileSlug: null },
       { kind: 'lichess', username: 'Alibi_Bot', title: 'BOT', exists: true, known: false, profileSlug: null },
-      // Known locally only (in key order). The hidden account of someone else's profile (no games
-      // yet) is not known to me.
-      { kind: 'lichess', username: 'Alistair', title: 'CM', exists: false, known: true, profileSlug: null },
     ]);
     // Chess.com has no search: the exact check found nothing, local accounts match by prefix.
     expect(r.chesscom).toEqual([
@@ -90,6 +90,16 @@ describe('search API', () => {
     ]);
     expect(r.reference).toEqual([]);
     expect(r.unavailable).toBeUndefined();
+    expect(r.notSearched).toBeUndefined();
+  });
+
+  it('says which sites a name that cannot be a username was not sent to', async () => {
+    const r = await results(me, 'McShane, Luke');
+    expect(up.calls).toEqual([]);
+    expect(r.notSearched).toEqual(['lichess', 'chesscom']);
+    expect([r.lichess, r.chesscom]).toEqual([[], []]);
+    // Two characters: too short for Lichess's autocomplete and the Chess.com check; local hits still count.
+    expect((await results(me, 'al')).notSearched).toEqual(['lichess', 'chesscom']);
   });
 
   it('finds reference players for the viewer: private reference databases for admins, own profiles', async () => {

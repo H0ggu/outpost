@@ -767,6 +767,13 @@ export interface SearchResults {
   reference: ReferencePlayer[];
   /** Sites whose upstream lookup failed this time; their lists then hold local hits only. */
   unavailable?: Array<'lichess' | 'chesscom'>;
+  /**
+   * Sites that were not asked because `q` can't be a username there (spaces, commas…; Lichess's
+   * autocomplete also needs 3 characters). Their lists hold local hits only, often none, which
+   * then means "not searched" rather than "no match". Lists are ordered best hit first: the
+   * exact username, an account with a profile here, one seen in imported games, titled players.
+   */
+  notSearched?: Array<'lichess' | 'chesscom'>;
 }
 
 // ===========================================================================

@@ -4,7 +4,7 @@
  * first, then added).
  */
 import { useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { API_ROUTES, type Id, type ProfileHeader, type ProfileSummary } from '@outpost/shared/api';
 import { api } from '../../../api/client.ts';
 import { queryKeys, useBookmarks, useProfiles, useSearch } from '../../../api/hooks.ts';
@@ -13,7 +13,17 @@ import { useCreateProfile, useDebouncedValue } from '../../library-hooks.ts';
 import { SearchField } from './controls.tsx';
 import type { PickedSource } from './newProfileQuery.ts';
 import { ProfileRows } from './ProfileList.tsx';
-import { ExternalHitRow, externalSource, HitSection, ReferenceHitRow, referenceSource, unavailableSet } from './SearchHits.tsx';
+import {
+  emptySiteText,
+  ExternalHitRow,
+  externalSource,
+  HitSection,
+  ReferenceHitRow,
+  referenceSource,
+  siteListOrder,
+  unavailableSet,
+  type SiteList,
+} from './SearchHits.tsx';
 
 export function OpponentPicker({
   existing,
@@ -146,23 +156,32 @@ export function OpponentPicker({
               <ProfileRows profiles={r.profiles} bookmarkable={false} action={profileAction} />
             </li>
           </HitSection>
-          <HitSection title="Lichess" count={r.lichess.length} unavailable={down.has('lichess')} empty="No match.">
-            {r.lichess.map(h => (
-              <ExternalHitRow key={h.username} hit={h} actions={accountAction(h.profileSlug, externalSource(h), h.username)} />
-            ))}
-          </HitSection>
-          <HitSection title="Chess.com" count={r.chesscom.length} unavailable={down.has('chesscom')} empty="No exact match.">
-            {r.chesscom.map(h => (
-              <ExternalHitRow key={h.username} hit={h} actions={accountAction(h.profileSlug, externalSource(h), h.username)} />
-            ))}
-          </HitSection>
-          {r.reference.length > 0 && (
-            <HitSection title="Reference database" count={r.reference.length}>
-              {r.reference.map(p => (
-                <ReferenceHitRow key={`${p.fideId ?? ''}:${p.name}`} player={p} actions={accountAction(p.profileSlug, referenceSource(p), p.name)} />
-              ))}
-            </HitSection>
-          )}
+          {siteListOrder(r).map(site => {
+            const lists: Record<SiteList, ReactNode> = {
+              lichess: (
+                <HitSection title="Lichess" count={r.lichess.length} unavailable={down.has('lichess')} empty={emptySiteText(r, 'lichess', 'No match.')}>
+                  {r.lichess.map(h => (
+                    <ExternalHitRow key={h.username} hit={h} actions={accountAction(h.profileSlug, externalSource(h), h.username)} />
+                  ))}
+                </HitSection>
+              ),
+              chesscom: (
+                <HitSection title="Chess.com" count={r.chesscom.length} unavailable={down.has('chesscom')} empty={emptySiteText(r, 'chesscom', 'No exact match.')}>
+                  {r.chesscom.map(h => (
+                    <ExternalHitRow key={h.username} hit={h} actions={accountAction(h.profileSlug, externalSource(h), h.username)} />
+                  ))}
+                </HitSection>
+              ),
+              reference: r.reference.length > 0 && (
+                <HitSection title="Reference database" count={r.reference.length}>
+                  {r.reference.map(p => (
+                    <ReferenceHitRow key={`${p.fideId ?? ''}:${p.name}`} player={p} actions={accountAction(p.profileSlug, referenceSource(p), p.name)} />
+                  ))}
+                </HitSection>
+              ),
+            };
+            return <Fragment key={site}>{lists[site]}</Fragment>;
+          })}
         </div>
       ) : null}
     </div>
