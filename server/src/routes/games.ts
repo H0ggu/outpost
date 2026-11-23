@@ -14,8 +14,12 @@ import { loadGameForViewer } from '../stats/index.ts';
  * databases included) or have been played by a source of a profile the viewer may see; otherwise
  * 404 (src/stats/gameDetail.ts).
  */
+
+/** Requests per client and minute (the same budget as each stats route). */
+export const GAME_RATE_LIMIT = { max: 300, timeWindow: 60_000 } as const;
+
 const gameRoutes: FastifyPluginAsync = async app => {
-  app.get(API_ROUTES.game(':id'), { preHandler: requireViewer }, async (req): Promise<GameResponse> => {
+  app.get(API_ROUTES.game(':id'), { preHandler: requireViewer, config: { rateLimit: GAME_RATE_LIMIT } }, async (req): Promise<GameResponse> => {
     const { id } = parseParams(idParams, req.params);
     return loadGameForViewer(app.db, id, req.user);
   });

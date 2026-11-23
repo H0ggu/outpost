@@ -33,4 +33,5 @@ export { PGN_EXPORT_MAX, prepareProfilePgnExport, type PgnExport } from './pgnEx
 export { gameToPgn, PGN_GAME_COLUMNS, type PgnGameRecord } from './pgnWriter.ts';
 export { ratingAverages, ratingSeries, ratingStats } from './rating.ts';
 export { resolveTimeZone } from './tz.ts';
-export { normalizeCountry, worldMapStats } from './worldmap.ts';
+export { normalizeCountry } from './country.ts';
+export { worldMapStats } from './worldmap.ts';

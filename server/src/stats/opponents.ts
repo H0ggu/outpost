@@ -13,7 +13,7 @@ import { isTitle } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
 import type { AuthUser } from '../http/types.ts';
 import { PLAYER_GAMES_BY_PK, scopeWhere, wdlColumns, type StatsScope } from './common.ts';
-import { normalizeCountry } from './worldmap.ts';
+import { normalizeCountry } from './country.ts';
 
 /** Default and largest page sizes. */
 export const OPPONENTS_PAGE_SIZE = 20;

@@ -126,7 +126,13 @@ describe('country codes', () => {
     expect(normalizeCountry('XK')).toBe('XK');
     expect(normalizeCountry('GB-ENG')).toBe('GB');
     expect(normalizeCountry('XE')).toBe('GB');
-    for (const bad of [null, '', '_earth', 'EU', 'UN', 'XX', 'XA', 'ZZ', 'QZ', 'USA', '12']) expect(normalizeCountry(bad), String(bad)).toBeNull();
+    expect(normalizeCountry(' xs ')).toBe('GB');
+    expect(normalizeCountry('XC')).toBe('ES'); // Catalonia (Chess.com)
+    expect(normalizeCountry('XP')).toBe('PS');
+    expect(normalizeCountry('ES-CT')).toBe('ES');
+    for (const bad of [null, '', '_earth', '_pirate', 'EU', 'UN', 'XX', 'XY', 'ZZ', 'AA', 'QZ', 'USA', '12', 'G1']) {
+      expect(normalizeCountry(bad), String(bad)).toBeNull();
+    }
   });
 });
 

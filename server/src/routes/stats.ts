@@ -53,8 +53,14 @@ import {
  *
  * Every route: requireViewer, then loadProfileForViewer (404 for private profiles of others; hidden
  * sources only for editors); filters through playerGamesWhere (src/stats/filterSql.ts). The
- * queries live in src/stats/.
+ * queries live in src/stats/. Each route has a per-client budget (`STATS_RATE_LIMIT`, the PGN
+ * export `PGN_EXPORT_RATE_LIMIT`): a large profile costs up to a few hundred ms per request.
  */
+
+/** Requests per client and minute, per stats route (a profile page with filters uses a handful). */
+export const STATS_RATE_LIMIT = { max: 300, timeWindow: 60_000 } as const;
+/** Requests per client and minute of the PGN export (up to 10,000 games each). */
+export const PGN_EXPORT_RATE_LIMIT = { max: 20, timeWindow: 60_000 } as const;
 
 const boundedInt = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
 
@@ -87,7 +93,7 @@ const statsRoutes: FastifyPluginAsync = async app => {
     const filters = parseFiltersQuery(req.query);
     return { profile, scope: { db: app.db, sourceIds: profile.sourceIds, filters } };
   };
-  const opts = { preHandler: requireViewer };
+  const opts = { preHandler: requireViewer, config: { rateLimit: STATS_RATE_LIMIT } };
 
   app.get(API_ROUTES.stats.overview(':slug'), opts, async (req): Promise<OverviewStats> => overviewStats(scopeOf(req).scope, book()));
 
@@ -97,7 +103,14 @@ const statsRoutes: FastifyPluginAsync = async app => {
     return gamesPage(scope, page, pageSize);
   });
 
-  app.get(API_ROUTES.stats.gamesPgn(':slug'), opts, async (req, reply) => {
+  // PGN is not in mime-db's compressible list, so the export opts in to compression itself
+  // (a 10,000-game file shrinks about sixfold).
+  const pgnOpts = {
+    ...opts,
+    config: { rateLimit: PGN_EXPORT_RATE_LIMIT },
+    compress: { customTypes: /^application\/x-chess-pgn\b/, encodings: ['br', 'gzip'] as Array<'br' | 'gzip'> },
+  };
+  app.get(API_ROUTES.stats.gamesPgn(':slug'), pgnOpts, async (req, reply) => {
     const { profile, scope } = scopeOf(req);
     const exp = prepareProfilePgnExport(scope, profile.displayName);
     return reply

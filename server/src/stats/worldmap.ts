@@ -10,26 +10,7 @@
  */
 import type { WorldMapCountry, WorldMapStats } from '@outpost/shared/api';
 import { PLAYER_GAMES_BY_PK, scopeWhere, wdlColumns, type StatsScope } from './common.ts';
-
-/** Chess.com's user-assigned codes for the UK nations, which the map draws as GB. */
-const ALIASES: Readonly<Record<string, string>> = { XE: 'GB', XS: 'GB', XW: 'GB', UK: 'GB' };
-
-/**
- * A stored country → ISO 3166-1 alpha-2 (`XK` for Kosovo), or null when it is not a country the
- * map can draw: subdivisions (`GB-ENG`) become their country; Lichess's non-country flags
- * (`_earth`, `EU`, `UN`, …) and the remaining user-assigned `X?` codes become null.
- */
-export function normalizeCountry(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  let c = raw.trim().toUpperCase();
-  const sub = /^([A-Z]{2})-[A-Z0-9]{1,3}$/.exec(c);
-  if (sub) c = sub[1]!;
-  c = ALIASES[c] ?? c;
-  if (!/^[A-Z]{2}$/.test(c)) return null;
-  if (c === 'EU' || c === 'UN' || c === 'ZZ' || c === 'AA' || /^Q[M-Z]$/.test(c)) return null;
-  if (c.startsWith('X') && c !== 'XK') return null;
-  return c;
-}
+import { normalizeCountry } from './country.ts';
 
 interface CountryRecord {
   country: string | null;

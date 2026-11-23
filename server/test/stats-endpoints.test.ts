@@ -105,7 +105,9 @@ describe('stats endpoints on a seeded profile', () => {
         openingName: 'Ruy Lopez: Morphy Defense',
         plies: 6,
       });
-      const page2 = (await get<GamesPage>(t, url('games', 'page=2&pageSize=2'), cookie)).body;
+      // dave's cached Chess.com code XE (England) is reported as the country GB.
+      expect(body.games[2]!.opponent).toMatchObject({ key: 'dave', kind: 'chesscom', country: 'GB' });
+      const page2 =(await get<GamesPage>(t, url('games', 'page=2&pageSize=2'), cookie)).body;
       expect(page2).toMatchObject({ total: 5, page: 2, pageSize: 2 });
       expect(page2.games.map(g => g.id)).toEqual([w.g.g3, w.g.g4]);
       const past = (await get<GamesPage>(t, url('games', 'page=9&pageSize=2'), cookie)).body;

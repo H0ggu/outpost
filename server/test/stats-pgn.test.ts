@@ -1,3 +1,4 @@
+import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { API_ROUTES } from '@outpost/shared/api';
 import { insertGame, parsePgnGames, type PgnGame } from '../src/chess/index.ts';
@@ -176,5 +177,58 @@ describe('PGN export in batches', () => {
     expect(list.every(g => tag(g, 'White') === 'Bulk Player' || tag(g, 'Black') === 'Bulk Player')).toBe(true);
     expect(tag(list[0]!, 'Black')).toBe('opp619');
     expect(tag(list.at(-1)!, 'White')).toBe('opp0');
+  });
+});
+
+describe('PGN export transport', () => {
+  let t: TestApp;
+  let cookie: string;
+
+  beforeAll(async () => {
+    t = await makeTestApp();
+    const src = createSource(t.db, { kind: 'lichess', key: 'zipper' });
+    createProfile(t.db, { slug: 'zipper', displayName: 'Zip Player', ownerUserId: null, sources: [{ id: src }] });
+    t.db.tx(() => {
+      for (let i = 0; i < 300; i++) {
+        insertGame(t.db, testGame({ endedAt: Date.UTC(2025, 0, 1) + i * 60_000, white: { name: 'zipper' }, black: { name: `opp${i}` }, moves: RUY }));
+      }
+    });
+    cookie = createUserSession(t.db, { username: 'zip-viewer' }).cookie;
+  });
+  afterAll(async () => t.close());
+
+  it.each([
+    ['gzip', gunzipSync],
+    ['br', brotliDecompressSync],
+  ] as const)('compresses the stream with %s', async (encoding, decompress) => {
+    const res = await t.app.inject({ method: 'GET', url: API_ROUTES.stats.gamesPgn('zipper'), headers: { cookie, 'accept-encoding': encoding } });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-encoding']).toBe(encoding);
+    const text = decompress(res.rawPayload).toString('utf8');
+    expect(res.rawPayload.length).toBeLessThan(text.length / 4);
+    const list = await games(text);
+    expect(list).toHaveLength(300);
+    expect(list.every(g => tag(g, 'White') === 'Zip Player')).toBe(true);
+  });
+
+  it('sends plain text to clients without compression', async () => {
+    const res = await t.app.inject({ method: 'GET', url: API_ROUTES.stats.gamesPgn('zipper'), headers: { cookie } });
+    expect(res.headers['content-encoding']).toBeUndefined();
+    expect(res.body.startsWith('[Event "Rated Blitz game"]')).toBe(true);
+  });
+
+  it('limits exports per client', async () => {
+    // Earlier tests in this block used 3 of the 20 per minute.
+    const statuses: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      statuses.push((await t.app.inject({ method: 'GET', url: `${API_ROUTES.stats.gamesPgn('zipper')}?period=24h`, headers: { cookie } })).statusCode);
+    }
+    expect(statuses.slice(0, 17).every(s => s === 200)).toBe(true);
+    expect(statuses.slice(17)).toEqual([429, 429, 429]);
+    const res = await get<{ error: { code: string } }>(t, API_ROUTES.stats.gamesPgn('zipper'), cookie);
+    expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe('rate_limited');
+    // Other stats routes have their own budget.
+    expect((await get(t, API_ROUTES.stats.games('zipper'), cookie)).status).toBe(200);
   });
 });
