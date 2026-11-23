@@ -258,12 +258,18 @@ describe('broadcast helpers', () => {
     expect(res.active[0]!.defaultRoundId).toBeNull();
   });
 
-  it('TtlCache drops failures so the next call retries', async () => {
+  it('TtlCache drops failures so the next call retries, and stays bounded', async () => {
     let n = 0;
-    const cache = new TtlCache<number>(1000);
+    let now = 0;
+    const cache = new TtlCache<number>(1000, { now: () => now, maxEntries: 2 });
     await expect(cache.get('k', async () => Promise.reject(new Error(`fail ${++n}`)))).rejects.toThrow('fail 1');
     expect(await cache.get('k', async () => ++n)).toBe(2);
     expect(await cache.get('k', async () => ++n)).toBe(2);
+    await cache.get('a', async () => 10);
+    await cache.get('b', async () => 11);
+    expect(await cache.get('k', async () => ++n)).toBe(3); // evicted as the oldest
+    now = 5000;
+    expect(await cache.get('k', async () => ++n)).toBe(4); // expired
   });
 });
 

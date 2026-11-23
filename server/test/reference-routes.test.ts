@@ -244,6 +244,19 @@ describe('reference routes', () => {
         .statusCode,
     ).toBe(404);
 
+    const truncated = multipart([
+      { name: 'databaseName', value: 'X' },
+      { name: 'file', filename: 'a.pgn', content: fixture('broadcast-2026-02.pgn') },
+    ]);
+    const cut = await t.app.inject({
+      method: 'POST',
+      url: '/api/admin/reference/import',
+      headers: { ...truncated.headers, cookie: admin },
+      payload: truncated.payload.subarray(0, truncated.payload.length - 300),
+    });
+    expect(cut.statusCode).toBe(400);
+    expect(cut.json().error.message).toMatch(/Malformed upload/);
+
     REFERENCE_LIMITS.uploadBytes = 1000;
     const tooBig = await send([
       { name: 'databaseName', value: 'X' },

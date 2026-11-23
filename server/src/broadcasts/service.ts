@@ -27,25 +27,29 @@ export const BROADCAST_CACHE_MS = {
   pgn: 10_000,
 } as const;
 
-/** Most entries kept per cache (oldest dropped first). */
+/** Most entries kept per cache by default (oldest dropped first). */
 const MAX_ENTRIES = 300;
+/** Round PGNs can be large: keep only a few. */
+const MAX_PGN_ENTRIES = 8;
 
-/** A tiny TTL cache of promises (in-flight requests are shared). */
+/** A tiny TTL cache of promises (in-flight requests are shared), bounded in size. */
 export class TtlCache<T> {
   readonly #ttl: number;
   readonly #now: () => number;
+  readonly #max: number;
   readonly #entries = new Map<string, { expires: number; value: Promise<T> }>();
 
-  constructor(ttlMs: number, now: () => number = Date.now) {
+  constructor(ttlMs: number, opts: { now?: () => number; maxEntries?: number } = {}) {
     this.#ttl = ttlMs;
-    this.#now = now;
+    this.#now = opts.now ?? Date.now;
+    this.#max = opts.maxEntries ?? MAX_ENTRIES;
   }
 
   get(key: string, load: () => Promise<T>): Promise<T> {
     const now = this.#now();
     const hit = this.#entries.get(key);
     if (hit && hit.expires > now) return hit.value;
-    if (hit) this.#entries.delete(key);
+    for (const [k, e] of this.#entries) if (e.expires <= now) this.#entries.delete(k);
     const value = load();
     const entry = { expires: Number.POSITIVE_INFINITY, value };
     this.#entries.set(key, entry);
@@ -57,7 +61,7 @@ export class TtlCache<T> {
         if (this.#entries.get(key) === entry) this.#entries.delete(key);
       },
     );
-    while (this.#entries.size > MAX_ENTRIES) {
+    while (this.#entries.size > this.#max) {
       const oldest = this.#entries.keys().next().value;
       if (oldest === undefined) break;
       this.#entries.delete(oldest);
@@ -101,10 +105,10 @@ export class BroadcastService {
     this.#upstream = deps.upstream;
     this.#db = deps.db;
     this.#now = deps.now ?? Date.now;
-    this.#list = new TtlCache(BROADCAST_CACHE_MS.list, this.#now);
-    this.#tours = new TtlCache(BROADCAST_CACHE_MS.tour, this.#now);
-    this.#rounds = new TtlCache(BROADCAST_CACHE_MS.round, this.#now);
-    this.#pgns = new TtlCache(BROADCAST_CACHE_MS.pgn, this.#now);
+    this.#list = new TtlCache(BROADCAST_CACHE_MS.list, { now: this.#now });
+    this.#tours = new TtlCache(BROADCAST_CACHE_MS.tour, { now: this.#now });
+    this.#rounds = new TtlCache(BROADCAST_CACHE_MS.round, { now: this.#now });
+    this.#pgns = new TtlCache(BROADCAST_CACHE_MS.pgn, { now: this.#now, maxEntries: MAX_PGN_ENTRIES });
   }
 
   /** `GET /api/broadcasts`. */

@@ -35,8 +35,8 @@ export const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -
 export const BROADCAST_LIST_SIZE = 80;
 /** Finished tours shown under "recent". */
 export const RECENT_BROADCASTS = 20;
-/** Largest round PGN accepted from upstream. */
-export const MAX_ROUND_PGN_BYTES = 64 * 1024 * 1024;
+/** Largest round PGN served from upstream (a 400-board round with clocks is a few MB). */
+export const MAX_ROUND_PGN_BYTES = 32 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Upstream shapes (only the fields Outpost reads; everything is checked at runtime)

@@ -12,7 +12,7 @@ import { pipeline } from 'node:stream/promises';
 import type { FastifyRequest } from 'fastify';
 import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
-import { badRequest } from '../http/errors.ts';
+import { badRequest, HttpError } from '../http/errors.ts';
 import { REFERENCE_LIMITS, SizeLimitError } from './stream.ts';
 
 const UPLOAD_NAME_RE = /^reference-\d+-[0-9a-f]{16}\.upload$/;
@@ -82,10 +82,15 @@ export async function receiveReferenceUpload(req: FastifyRequest, config: Config
     }
   } catch (e) {
     if (out.file) await removeUpload(config, out.file);
-    const code = (e as { code?: string }).code;
+    if (e instanceof HttpError) throw e;
+    const code = (e as { code?: string }).code ?? '';
     if (code === 'FST_REQ_FILE_TOO_LARGE') throw new SizeLimitError('The upload', limit);
     if (code === 'FST_FILES_LIMIT') throw badRequest('Send exactly one file');
     if (code === 'FST_FIELDS_LIMIT' || code === 'FST_PARTS_LIMIT') throw badRequest('Too many form fields');
+    // Other plugin errors and busboy's parse errors are the client's malformed body or abort.
+    if (code.startsWith('FST_') || /multipart|boundary|end of form|part header|terminated early/i.test((e as Error).message ?? '')) {
+      throw badRequest(`Malformed upload: ${(e as Error).message}`);
+    }
     throw e;
   }
   if (out.file && out.bytes === 0) {
