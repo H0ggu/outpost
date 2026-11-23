@@ -86,6 +86,7 @@ describe('prep API', () => {
     expect(invisible.json().error.message).toBe(`Unknown profiles ${privateOfOther}, 999999`);
     expect((await req(me, 'POST', '/api/prep', { name: '', profileIds: [] })).statusCode).toBe(400);
     expect((await req(null, 'POST', '/api/prep', { name: 'x', profileIds: [] })).statusCode).toBe(401);
+    for (const url of ['/api/prep', `/api/prep/${set.id}`, `/api/prep/${set.id}/report`]) expect((await req(null, 'GET', url)).statusCode, url).toBe(401);
 
     expect((await req(me, 'GET', '/api/prep')).json<PrepListResponse>().sets.map(s => s.id)).toEqual([set.id]);
     expect((await req(other, 'GET', '/api/prep')).json<PrepListResponse>().sets).toEqual([]);

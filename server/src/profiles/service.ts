@@ -34,7 +34,7 @@ import type {
   Visibility,
 } from '@outpost/shared/api';
 import { SLUG_RE, slugify } from '@outpost/shared/api';
-import { isTitle } from '@outpost/shared/chess';
+import { isTitle, playerKey } from '@outpost/shared/chess';
 import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { z } from 'zod';
 import { rebuildPlayerGames } from '../chess/store.ts';
@@ -420,10 +420,20 @@ export function uniqueSlug(db: Db, base: string, exceptProfileId: Id | null = nu
   }
 }
 
+/** Identity of a requested source before resolving it (usernames are case-insensitive). */
+const inputIdentity = (s: NewSourceInput): string => {
+  const key = s.key.trim();
+  return s.kind === 'fide' ? `fide|${key}` : `${s.kind}|${s.databaseId ?? ''}|${playerKey(key)}`;
+};
+
 /** Resolves every requested source (upstream checks run one at a time) and drops duplicates. */
 async function resolveAll(ctx: ProfilesCtx, viewer: AuthUser, inputs: readonly NewSourceInput[]): Promise<ResolvedSource[]> {
   const out: ResolvedSource[] = [];
+  const asked = new Set<string>();
   for (const [i, input] of inputs.entries()) {
+    const id = inputIdentity(input);
+    if (asked.has(id)) continue;
+    asked.add(id);
     const r = await resolveSource({ db: ctx.db, upstream: ctx.upstream, viewer }, input, i);
     if (!out.some(o => o.kind === r.kind && o.key === r.key)) out.push(r);
   }

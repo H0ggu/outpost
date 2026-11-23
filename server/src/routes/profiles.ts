@@ -52,7 +52,7 @@ import {
  */
 
 /** Creating profiles and adding accounts call Lichess / Chess.com: throttled per IP. */
-export const ACCOUNT_CHECK_RATE_LIMIT = { max: 30, timeWindow: 60_000 } as const;
+export const ACCOUNT_CHECK_RATE_LIMIT = { max: 60, timeWindow: 60_000 } as const;
 
 const sourceParams = z.object({ slug: slugParams.shape.slug, sourceId: zId });
 
@@ -80,7 +80,7 @@ const profileRoutes: FastifyPluginAsync = async app => {
     const { slug } = parseParams(slugParams, req.params);
     const profile = loadProfileForViewer(app.db, slug, req.user);
     const header = profileHeader(app.db, app.config, profile, req.user);
-    recordView(app.db, profile, req.user, { views: anonymousViews, ip: req.ip });
+    if (req.method === 'GET') recordView(app.db, profile, req.user, { views: anonymousViews, ip: req.ip });
     return header;
   });
 

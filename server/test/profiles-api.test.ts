@@ -124,6 +124,22 @@ describe('profiles API', () => {
     expect(t.db.value('SELECT COUNT(*) FROM jobs WHERE dedupe_key = ?', [`sync:${h.sources[0]!.id}`])).toBe(1);
   });
 
+  it('checks each requested account once', async () => {
+    up.routes['GET lichess.org/api/user/ivy'] = () => json(lichessUser('Ivy'));
+    const h = await create(owner, {
+      displayName: 'Ivy',
+      sources: [
+        { kind: 'lichess', key: 'Ivy' },
+        { kind: 'lichess', key: ' ivy ' },
+      ],
+    });
+    expect(up.calls).toEqual(['GET lichess.org/api/user/ivy']);
+    expect(h.sources.map(s => s.key)).toEqual(['ivy']);
+    // HEAD requests are not views.
+    await t.app.inject({ method: 'HEAD', url: `/api/profiles/${h.slug}`, headers: { cookie: other.cookie } });
+    expect(t.db.value('SELECT COUNT(*) FROM profile_views WHERE profile_id = ?', [h.id])).toBe(0);
+  });
+
   it('makes slugs unique and validates explicit ones', async () => {
     const a = await create(owner, { displayName: 'Same Name', sources: [{ kind: 'lichess', key: 'bob' }] });
     const b = await create(owner, { displayName: 'Same Name', sources: [{ kind: 'lichess', key: 'bob' }] });

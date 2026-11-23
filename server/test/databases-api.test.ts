@@ -334,6 +334,34 @@ describe('databases API', () => {
     expect((await req(admin, 'PATCH', `/api/databases/${ref}`, { licence: 'CC BY-SA 4.0' })).json<DatabaseInfo>().licence).toBe('CC BY-SA 4.0');
   });
 
+  it('refuses every route on a private database to others and anonymous visitors', async () => {
+    const d = await createDb(owner, { name: 'Private stash' });
+    await importPgn(owner, d.id, MIXED_PGN);
+    const gameId = t.db.value<number>('SELECT id FROM games WHERE database_id = ? LIMIT 1', [d.id])!;
+    writeSettings(t.db, { anonymousBrowsing: true });
+    try {
+      for (const s of [other, null]) {
+        for (const [method, url, body] of [
+          ['GET', `/api/databases/${d.id}`, undefined],
+          ['GET', `/api/databases/${d.id}/games`, undefined],
+          ['GET', `/api/databases/${d.id}/export.pgn`, undefined],
+          ['PATCH', `/api/databases/${d.id}`, { name: 'x' }],
+          ['DELETE', `/api/databases/${d.id}`, undefined],
+          ['POST', `/api/databases/${d.id}/import`, { pgn: RUY }],
+          ['DELETE', `/api/databases/${d.id}/games/${gameId}`, undefined],
+        ] as const) {
+          const res = await req(s, method, url, body);
+          expect(res.statusCode, `${s ? 'other' : 'anonymous'} ${method} ${url}`).toBe(s === null && method !== 'GET' ? 401 : 404);
+        }
+      }
+    } finally {
+      writeSettings(t.db, { anonymousBrowsing: false });
+    }
+    expect((await req(admin, 'GET', `/api/databases/${d.id}/export.pgn`)).statusCode).toBe(200);
+    expect((await req(owner, 'GET', '/api/databases/999999')).statusCode).toBe(404);
+    expect((await req(owner, 'GET', '/api/databases/abc')).statusCode).toBe(400);
+  });
+
   it('summarises counters for the UI', () => {
     expect(importSummary({ imported: 1, duplicates: 0, skipped: 0 })).toBe('1 imported, 0 duplicates, 0 skipped');
   });
