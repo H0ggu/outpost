@@ -9,6 +9,8 @@
 //   - activity.ts: activityStats(scope, tz) (by hour / weekday / grid in an IANA zone; prep uses
 //     byHour and byWeekday) with tz.ts resolveTimeZone to validate the zone.
 //   - openings.ts: openingsStats (opening rows per colour), pgnWriter.ts: gameToPgn.
+//   - country.ts: normalizeCountry (players_cache country → ISO 3166-1 alpha-2 or null; GameRow,
+//     opponents and the world map all report countries this way).
 // Parse filters with parseFiltersQuery (../http/validate.ts); resolve the profile and its visible
 // sources with loadProfileForViewer (../profiles/access.ts). A StatsScope is
 // { db, sourceIds: profile.sourceIds, filters }.
