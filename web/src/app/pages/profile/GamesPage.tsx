@@ -1,7 +1,7 @@
 import { API_ROUTES } from '@outpost/shared/api';
 import { filtersToQuery, isEmptyFilters, withQuery } from '@outpost/shared/filters';
 import { useProfileGames, useUrlFilters } from '../../api/hooks.ts';
-import { Box, EmptyState, ErrorBox, licon, perspectiveWdl, Spinner, WdlBar } from '../../components/index.ts';
+import { Box, EmptyState, ErrorBox, licon, Spinner, WdlBar } from '../../components/index.ts';
 import { Pager, ScoreText, StatTile } from './components/bits.tsx';
 import { GameTable } from './components/GameTable.tsx';
 import { fmtInt, scoreOfWdl } from './format.ts';
@@ -16,7 +16,7 @@ const PAGE_SIZE = 20;
  * filtered games, and a paged table whose rows expand into a pgn-viewer preview.
  */
 export default function GamesPage() {
-  const { slug, header, timeZone, prefs } = useProfile();
+  const { slug, header, timeZone } = useProfile();
   const [filters, setFilters] = useUrlFilters();
   const [page, setPage] = usePageParam();
   const games = useProfileGames(slug, filters, page, PAGE_SIZE);
@@ -38,7 +38,7 @@ export default function GamesPage() {
           <StatTile value={<span className={g.summary.l ? 'bad' : undefined}>{fmtInt(g.summary.l)}</span>} label="Losses" />
           <StatTile value={<ScoreText score={scoreOfWdl(g.summary)} />} label="Score" />
         </div>
-        {total > 0 && <WdlBar {...perspectiveWdl(g.summary, filters.color, prefs.winratePerspective)} className="games-summary__bar" />}
+        {total > 0 && <WdlBar w={g.summary.w} d={g.summary.d} l={g.summary.l} side={filters.color} className="games-summary__bar" />}
         <div className="games-summary__export">
           {g.total > 0 ? (
             <a

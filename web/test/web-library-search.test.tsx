@@ -56,6 +56,53 @@ describe('SearchPage', () => {
     expect(within(anon).queryByRole('link')).toBeNull();
   });
 
+  it('shows what each site says about an account, to tell lookalikes apart', async () => {
+    const day = 86_400_000;
+    api()
+      .on('GET', '/api/session', session(USER))
+      .on('GET', '/api/search', req =>
+        results(req.query.get('q')!, {
+          lichess: [
+            {
+              kind: 'lichess',
+              username: 'Hikaru5',
+              title: null,
+              exists: true,
+              known: false,
+              profileSlug: null,
+              ratings: [
+                { timeClass: 'rapid', rating: 1500, games: 2, provisional: true },
+                { timeClass: 'blitz', rating: 1812, games: 340, provisional: false },
+                { timeClass: 'bullet', rating: 1700, games: 90, provisional: false },
+                { timeClass: 'classical', rating: 1600, games: 1, provisional: true },
+              ],
+              seenAt: Date.now() - 3 * day,
+              games: 433,
+              country: 'NO',
+              closed: false,
+            },
+            { kind: 'lichess', username: 'HikaruB', title: null, exists: true, known: false, profileSlug: null, ratings: [], seenAt: null, games: 0, country: null, closed: true },
+            { kind: 'lichess', username: 'Hikaru9', title: null, exists: false, known: true, profileSlug: null },
+          ],
+        }),
+      );
+    renderPage(<SearchPage />, { route: '/search', path: '/search?q=hikaru' });
+    const row = (await screen.findByText(/^Hikaru5/, { selector: '.lib-hit__name' })).closest('li')!;
+    expect(within(row).getByText('account found · 433 games · seen 3 days ago')).toBeTruthy();
+    expect(within(row).getByRole('img', { name: 'Norway' })).toBeTruthy();
+    // The three most played time classes, provisional ratings marked.
+    expect([...row.querySelectorAll('.lib-rating')].map(r => r.getAttribute('title'))).toEqual([
+      'Blitz 1812 on Lichess, 340 games',
+      'Bullet 1700 on Lichess, 90 games',
+      'Rapid 1500? on Lichess, 2 games',
+    ]);
+    const closed = screen.getByText(/^HikaruB/, { selector: '.lib-hit__name' }).closest('li')!;
+    expect(within(closed).getByText('closed')).toBeTruthy();
+    expect(within(closed).getByText('account found · 0 games')).toBeTruthy();
+    // Nothing known from the site: the row says only where it is known from.
+    expect(within(screen.getByText('Hikaru9').closest('li')!).getByText('seen in imported games')).toBeTruthy();
+  });
+
   it('puts the list with the best hit first and tells "not searched" from "no match"', async () => {
     const prefix = (n: number) => ({ kind: 'lichess' as const, username: `Hikaru${n}`, title: null, exists: true, known: false, profileSlug: null });
     api()

@@ -9,7 +9,8 @@
 //   databases (triggers in migration 601).
 // - Reference databases (./databases.ts): the built-in "Lichess broadcasts" DB (CC BY-SA 4.0, created
 //   on first import) and admin-named ones; attribution lines for the UI.
-// - The player index (./players.ts): FIDE ids, names, titles, federations, game counts.
+// - The player index (./players.ts): FIDE ids, names, titles, federations, game counts; a FIDE
+//   player's federation is also their country in `players_cache` (kind `fide`, ./federations.ts).
 // - Auto-import of finished broadcast rounds (./autoImport.ts), only with config.startWorkers and
 //   the admin setting `broadcastAutoImport`.
 //
@@ -24,4 +25,5 @@ export {
   listReferenceDatabases,
   referenceAttribution,
 } from './databases.ts';
+export { federationCountry } from './federations.ts';
 export { foldName, referencePlayerByFideId, searchReferencePlayers } from './players.ts';

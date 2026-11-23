@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { Tabs } from '../src/app/components/Tabs.tsx';
 import { flagEmoji } from '../src/app/components/FlagEmoji.tsx';
-import { WdlBar, wdlSegments } from '../src/app/components/WdlBar.tsx';
+import { WdlBar, WdlPerspectiveContext, wdlSegments } from '../src/app/components/WdlBar.tsx';
 import { scrollEdgesOf, scrollFadeClass } from '../src/app/components/scrollEdges.ts';
 import { paths, studioPlayerExplorer } from '../src/app/paths.ts';
 
@@ -36,6 +36,44 @@ describe('WdlBar', () => {
     expect(container.querySelector('.black')).not.toBeNull();
     rerender(<WdlBar w={0} d={0} l={0} />);
     expect(container.querySelector('.wdl-bar--empty')).not.toBeNull();
+  });
+
+  it("follows the viewer's winratePerspective where the player's colour is known", () => {
+    const segs = (el: Element) => [...el.querySelectorAll('.wdl-bar > span')].map(s => `${s.className}:${s.getAttribute('style')}`);
+    const { container, rerender } = render(
+      <WdlPerspectiveContext value="white">
+        <WdlBar w={6} d={1} l={3} side="black" />
+      </WdlPerspectiveContext>,
+    );
+    // As Black, the player's 6 wins are Black's: White wins 30%, draws 10%, Black wins 60%.
+    expect(segs(container)).toEqual(['white:width: 30%;', 'draws:width: 10%;', 'black:width: 60%;']);
+    expect(container.querySelector('.wdl-bar')?.getAttribute('title')).toBe('3 White wins (30.0%), 1 draw (10.0%), 6 Black wins (60.0%)');
+    rerender(
+      <WdlPerspectiveContext value="white">
+        <WdlBar w={6} d={1} l={3} side="white" />
+      </WdlPerspectiveContext>,
+    );
+    expect(segs(container)).toEqual(['white:width: 60%;', 'draws:width: 10%;', 'black:width: 30%;']);
+    // Both colours mixed (no side): the player's results stay.
+    rerender(
+      <WdlPerspectiveContext value="white">
+        <WdlBar w={6} d={1} l={3} />
+      </WdlPerspectiveContext>,
+    );
+    expect(segs(container)).toEqual(['win:width: 60%;', 'draw:width: 10%;', 'loss:width: 30%;']);
+    // The player's perspective ignores the side; a forced mode ignores the preference.
+    rerender(
+      <WdlPerspectiveContext value="player">
+        <WdlBar w={6} d={1} l={3} side="black" />
+      </WdlPerspectiveContext>,
+    );
+    expect(segs(container)).toEqual(['win:width: 60%;', 'draw:width: 10%;', 'loss:width: 30%;']);
+    rerender(
+      <WdlPerspectiveContext value="white">
+        <WdlBar w={6} d={1} l={3} side="black" mode="player" />
+      </WdlPerspectiveContext>,
+    );
+    expect(segs(container)).toEqual(['win:width: 60%;', 'draw:width: 10%;', 'loss:width: 30%;']);
   });
 });
 

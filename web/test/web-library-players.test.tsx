@@ -56,6 +56,45 @@ describe('PlayersPage', () => {
     await waitFor(() => expect(location()).toBe('/players'));
   });
 
+  it('shows each profile\'s main ratings and sorts by strength or games', async () => {
+    const strong = profile({
+      displayName: 'Strong',
+      slug: 'strong',
+      visibility: 'public',
+      gameCount: 50,
+      ratings: [
+        { kind: 'chesscom', timeClass: 'blitz', rating: 3100, games: 40 },
+        { kind: 'chesscom', timeClass: 'bullet', rating: 3200, games: 10 },
+        { kind: 'chesscom', timeClass: 'rapid', rating: 2900, games: 0 },
+      ],
+    });
+    const otb = profile({ displayName: 'Otb', slug: 'otb', visibility: 'public', gameCount: 900, ratings: [{ kind: 'fide', timeClass: 'unknown', rating: 2650, games: 20 }] });
+    const none = profile({ displayName: 'Unrated', slug: 'unrated', visibility: 'public', gameCount: 10, ratings: [] });
+    api()
+      .on('GET', '/api/session', session(USER))
+      .on('GET', '/api/profiles', { profiles: [none, otb, strong] });
+    renderPage(<PlayersPage />, { route: '/players' });
+    await screen.findByText('Strong');
+    const order = () => screen.getAllByRole('row').slice(1).map(r => r.querySelector('.lib-pname__text')!.textContent);
+    const rowOf = (name: string) => screen.getAllByRole('row').find(r => r.textContent?.includes(name))!;
+    // The two most played time classes, with their icons; FIDE games without a time control say so.
+    expect(within(rowOf('Strong')).getByTitle('Blitz 3100 (Chess.com, 40 games here)').textContent).toContain('3100');
+    expect(within(rowOf('Strong')).getByTitle('Bullet 3200 (Chess.com, 10 games here)')).toBeTruthy();
+    expect(within(rowOf('Strong')).queryByText('2900')).toBeNull();
+    expect(within(rowOf('Otb')).getByTitle('Over the board 2650 (FIDE, 20 games here)').textContent).toBe('FIDE2650');
+    expect(within(rowOf('Unrated')).getByText('—')).toBeTruthy();
+    expect(order()).toEqual(['Unrated', 'Otb', 'Strong']);
+
+    const byRating = screen.getByRole('button', { name: 'Rating' });
+    fireEvent.click(byRating);
+    expect(byRating.getAttribute('aria-pressed')).toBe('true');
+    expect(order()).toEqual(['Strong', 'Otb', 'Unrated']); // best rating first, unrated last
+    fireEvent.click(screen.getByRole('button', { name: 'Games' }));
+    expect(order()).toEqual(['Otb', 'Strong', 'Unrated']);
+    fireEvent.click(screen.getByRole('button', { name: 'Games' }));
+    expect(order()).toEqual(['Unrated', 'Otb', 'Strong']); // back to the list order
+  });
+
   it('filters by name or account and toggles bookmarks', async () => {
     api().on('GET', '/api/session', session(USER)).on('PUT', '/api/profiles/ben/bookmark', { bookmarked: true });
     lists();

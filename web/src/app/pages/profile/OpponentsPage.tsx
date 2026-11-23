@@ -3,7 +3,7 @@ import type { BehaviourRow, OpponentRow } from '@outpost/shared/api';
 import { OUTCOMES, type Outcome } from '@outpost/shared/chess';
 import { isEmptyFilters } from '@outpost/shared/filters';
 import { useBehaviour, useOpponents, useUrlFilters } from '../../api/hooks.ts';
-import { Box, Card, EmptyState, ErrorBox, licon, perspectiveWdl, Spinner, WdlBar, type WdlPerspective } from '../../components/index.ts';
+import { Box, Card, EmptyState, ErrorBox, licon, Spinner, WdlBar } from '../../components/index.ts';
 import { paths } from '../../paths.ts';
 import { OpponentName, Pager, ScoreText, Segmented, SiteIcon } from './components/bits.tsx';
 import { fmtDate, fmtInt, fmtPct100, fmtRating, OUTCOME_PLURAL, scoreOfWdl, TERMINATION_LABELS } from './format.ts';
@@ -20,7 +20,7 @@ const PAGE_SIZE = 20;
  * end (termination, share, average length).
  */
 export default function OpponentsPage() {
-  const { slug, timeZone, prefs, signedIn } = useProfile();
+  const { slug, timeZone, signedIn } = useProfile();
   const [filters] = useUrlFilters();
   const [view, setView] = useQueryParam<View>('view', oneOf(VIEWS, 'most'), 'most');
   const [page, setPage] = usePageParam();
@@ -51,7 +51,6 @@ export default function OpponentsPage() {
           rows={opponents.data.rows}
           timeZone={timeZone}
           filters={filters}
-          perspective={prefs.winratePerspective}
           canCreate={signedIn}
         />
         <Pager page={opponents.data.page} pageSize={opponents.data.pageSize} total={opponents.data.total} onPage={setPage} />
@@ -105,19 +104,15 @@ function OpponentsTable({
   rows,
   timeZone,
   filters,
-  perspective,
   canCreate,
 }: {
   slug: string;
   rows: readonly OpponentRow[];
   timeZone: string;
   filters: ReturnType<typeof useUrlFilters>[0];
-  perspective: WdlPerspective;
   /** Whether the viewer may create profiles (signed in): offers one for opponents without. */
   canCreate: boolean;
 }) {
-  // Every game of a row has the filtered colour, if any: only then can White / Black results be told.
-  const bar = (r: OpponentRow) => perspectiveWdl(r, filters.color, perspective);
   return (
     <div className="table-wrap">
       <table className="slist opponents-table">
@@ -145,12 +140,12 @@ function OpponentsTable({
                   showRating={false}
                   createHref={canCreate ? newProfileForOpponent(r) : null}
                 />
-                <WdlBar {...bar(r)} className="cell-bar" />
+                <WdlBar w={r.w} d={r.d} l={r.l} side={filters.color} className="cell-bar" />
               </td>
               <td className="num">{fmtInt(r.games)}</td>
               <td className="num opp-rating">{fmtRating(r.lastRating)}</td>
               <td className="opp-wdl col-wdl">
-                <WdlBar {...bar(r)} />
+                <WdlBar w={r.w} d={r.d} l={r.l} side={filters.color} />
               </td>
               <td className="num">
                 <ScoreText score={scoreOfWdl(r)} />

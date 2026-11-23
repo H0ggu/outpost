@@ -5,8 +5,9 @@ import { foldName } from '../src/reference/players.ts';
 import type { AuthUser } from '../src/http/types.ts';
 import { knownUsernames, search as runSearch, SearchCache, visibleProfileSlugFor } from '../src/search/index.ts';
 import { writeSettings } from '../src/settings.ts';
+import { chesscomSnapshot } from '../src/sync/chesscom.ts';
 import { createSource, createUserSession, makeTestApp, testGame, type TestApp } from './helpers.ts';
-import { fakeUpstream, HIKARU_PLAYER, json, networkDown, stalledJson } from './fixtures/profiles/upstream.ts';
+import { fakeUpstream, HIKARU_PLAYER, HIKARU_STATS, json, lichessUser, networkDown, stalledJson } from './fixtures/profiles/upstream.ts';
 
 type Session = { userId: number; cookie: string };
 
@@ -15,6 +16,8 @@ describe('search API', () => {
   let up: ReturnType<typeof fakeUpstream>;
   let me: Session;
   let other: Session;
+  /** Bodies of `POST /api/users`. */
+  const usersAsked: string[] = [];
 
   const search = async (s: Session | null, q: string) => {
     const res = await t.app.inject({ url: `/api/search?q=${encodeURIComponent(q)}`, headers: s ? { cookie: s.cookie } : {} });
@@ -47,6 +50,17 @@ describe('search API', () => {
         return json({ result: all.filter(u => u.id.startsWith(term)) });
       },
       'GET api.chess.com/pub/player/hikaru': () => json(HIKARU_PLAYER),
+      'GET api.chess.com/pub/player/hikaru/stats': () => json(HIKARU_STATS),
+      // Synthetic accounts; Alistair has no Lichess account.
+      'POST lichess.org/api/users': (_url, init) => {
+        usersAsked.push(String(init.body));
+        const known: Record<string, Record<string, unknown>> = {
+          alice: lichessUser('Alice', { title: 'FM', flag: 'GB-SCT', blitz: 2310, bulletGames: 40 }),
+          alina: lichessUser('Alina', { disabled: true }),
+          alibi_bot: lichessUser('Alibi_Bot', { title: 'BOT' }),
+        };
+        return json(String(init.body).split(',').flatMap(id => (known[id] ? [known[id]] : [])));
+      },
     });
     t = await makeTestApp({ fetch: up.fetch });
     me = createUserSession(t.db, { username: 'me' });
@@ -73,20 +87,51 @@ describe('search API', () => {
   it('combines local profiles, Lichess autocomplete, Chess.com and known usernames', async () => {
     const r = await results(me, 'ali');
     expect(r.q).toBe('ali');
-    expect(up.calls.sort()).toEqual(['GET api.chess.com/pub/player/ali', 'GET lichess.org/api/player/autocomplete']);
+    expect(up.calls.sort()).toEqual(['GET api.chess.com/pub/player/ali', 'GET lichess.org/api/player/autocomplete', 'POST lichess.org/api/users']);
+    // One request for every Lichess hit's facts.
+    expect(usersAsked.at(-1)).toBe('alice,alistair,alina,alibi_bot');
     expect(r.profiles.map(p => p.slug)).toEqual(['my-alibaba', 'alice-public']);
     // Best first (an account with a profile here, then one seen in imported games), upstream order
     // among equals. The hidden account of someone else's profile (no games yet) is not known to me.
+    // Each Lichess account carries its ratings (time classes played), last seen, games, flag.
+    const facts = (over: Record<string, unknown> = {}) => ({
+      ratings: [
+        { timeClass: 'blitz', rating: 1873, games: 120, provisional: false },
+        { timeClass: 'rapid', rating: 1640, games: 3, provisional: true },
+      ],
+      seenAt: 1_700_000_000_000,
+      games: 123,
+      country: null,
+      closed: false,
+      ...over,
+    });
     expect(r.lichess).toEqual([
-      { kind: 'lichess', username: 'Alice', title: 'FM', exists: true, known: true, profileSlug: 'alice-public' },
+      {
+        kind: 'lichess',
+        username: 'Alice',
+        title: 'FM',
+        exists: true,
+        known: true,
+        profileSlug: 'alice-public',
+        ...facts({
+          ratings: [
+            { timeClass: 'bullet', rating: 1500, games: 40, provisional: true },
+            { timeClass: 'blitz', rating: 2310, games: 120, provisional: false },
+            { timeClass: 'rapid', rating: 1640, games: 3, provisional: true },
+          ],
+          games: 163,
+          country: 'GB',
+        }),
+      },
       { kind: 'lichess', username: 'Alistair', title: 'CM', exists: false, known: true, profileSlug: null },
-      { kind: 'lichess', username: 'Alina', title: null, exists: true, known: false, profileSlug: null },
-      { kind: 'lichess', username: 'Alibi_Bot', title: 'BOT', exists: true, known: false, profileSlug: null },
+      { kind: 'lichess', username: 'Alina', title: null, exists: true, known: false, profileSlug: null, ...facts({ closed: true }) },
+      { kind: 'lichess', username: 'Alibi_Bot', title: 'BOT', exists: true, known: false, profileSlug: null, ...facts() },
     ]);
-    // Chess.com has no search: the exact check found nothing, local accounts match by prefix.
+    // Chess.com has no search: the exact check found nothing, local accounts match by prefix (with
+    // the country Outpost's opponent lookups found).
     expect(r.chesscom).toEqual([
       { kind: 'chesscom', username: 'AliBaba', title: null, exists: false, known: true, profileSlug: 'my-alibaba' },
-      { kind: 'chesscom', username: 'Aliyev', title: 'IM', exists: false, known: true, profileSlug: null },
+      { kind: 'chesscom', username: 'Aliyev', title: 'IM', exists: false, known: true, profileSlug: null, country: 'AZ' },
     ]);
     expect(r.reference).toEqual([]);
     expect(r.unavailable).toBeUndefined();
@@ -130,7 +175,24 @@ describe('search API', () => {
 
   it('puts the exact match first and confirms Chess.com accounts', async () => {
     const r = await results(me, 'Hikaru');
-    expect(r.chesscom[0]).toEqual({ kind: 'chesscom', username: 'Hikaru', title: 'GM', exists: true, known: false, profileSlug: null });
+    // The exact account with its profile and /stats: ratings, last seen, games, country.
+    expect(r.chesscom[0]).toEqual({
+      kind: 'chesscom',
+      username: 'Hikaru',
+      title: 'GM',
+      exists: true,
+      known: false,
+      profileSlug: null,
+      ratings: [
+        { timeClass: 'bullet', rating: 3250, games: 6, provisional: false },
+        { timeClass: 'blitz', rating: 3300, games: 15, provisional: false },
+      ],
+      seenAt: 1_763_000_000_000,
+      games: 21,
+      country: 'US',
+      closed: false,
+    });
+    expect(up.calls).toContain('GET api.chess.com/pub/player/hikaru/stats');
     const alice = await results(me, 'alice');
     expect(alice.lichess[0]!.username).toBe('Alice');
   });
@@ -140,7 +202,36 @@ describe('search API', () => {
     const n = up.calls.length;
     await results(other, 'ALINA');
     expect(up.calls.length).toBe(n);
+    // Autocomplete and Chess.com; Alina's Lichess facts are still cached from the first search.
     expect(n).toBe(2);
+    expect(up.calls).not.toContain('POST lichess.org/api/users');
+  });
+
+  it("uses Outpost's last sync of an account, and lists hits without facts when the lookup fails", async () => {
+    const snap = chesscomSnapshot(
+      { username: 'alibaba', url: 'https://www.chess.com/member/AliBaba', country: 'https://api.chess.com/pub/country/EG', last_online: 1_700_000 },
+      { chess_rapid: { last: { rating: 1999 }, record: { win: 7, loss: 2, draw: 1 } } },
+      1,
+    );
+    t.db.run("UPDATE sources SET profile_json = ? WHERE kind = 'chesscom' AND key = 'alibaba'", [JSON.stringify(snap)]);
+    const r = await results(me, 'alibab');
+    expect(r.chesscom[0]).toMatchObject({
+      username: 'AliBaba',
+      ratings: [{ timeClass: 'rapid', rating: 1999, games: 10, provisional: false }],
+      seenAt: 1_700_000_000,
+      games: 10,
+      country: 'EG',
+    });
+    // Lichess's users lookup down: the hits stay, without facts, and Lichess is not "unavailable".
+    const saved = up.routes['POST lichess.org/api/users']!;
+    up.routes['POST lichess.org/api/users'] = networkDown;
+    try {
+      const down = await runSearch({ db: t.db, upstream: t.app.upstream, cache: new SearchCache() }, 'alib', null);
+      expect(down.unavailable).toBeUndefined();
+      expect(down.lichess.map(h => [h.username, h.ratings])).toEqual([['Alibi_Bot', undefined]]);
+    } finally {
+      up.routes['POST lichess.org/api/users'] = saved;
+    }
   });
 
   it('keeps local results when an upstream fails', async () => {

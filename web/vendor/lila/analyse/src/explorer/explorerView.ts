@@ -19,18 +19,28 @@ import {
 } from './interfaces';
 import { showTablebase } from './tablebaseView';
 
-function resultBar(move: OpeningMoveStats): VNode {
+// outpost: `side` shows the bar from that player's side: wins, draws, losses (Outpost's player perspective)
+function resultBar(move: OpeningMoveStats, side?: Color): VNode {
   const sum = move.white + move.draws + move.black;
   const section = (key: 'white' | 'black' | 'draws') => {
     const percent = (move[key] * 100) / sum;
+    const cls = !side || key === 'draws' ? key : key === side ? 'win' : 'loss';
     return hl(
-      'span.' + key,
+      'span.' + cls,
       { attrs: { style: 'width: ' + Math.round((move[key] * 1000) / sum) / 10 + '%' } },
       percent > 12 ? Math.round(percent) + (percent > 20 ? '%' : '') : '',
     );
   };
-  return hl('div.bar', ['white', 'draws', 'black'].map(section));
+  const keys: Array<'white' | 'black' | 'draws'> =
+    side === 'black' ? ['black', 'draws', 'white'] : ['white', 'draws', 'black'];
+  return hl('div.bar', keys.map(section));
 }
+
+// outpost: the player database's bars from the explored player's side, when the user prefers it
+const barSide = (ctrl: AnalyseCtrl): Color | undefined =>
+  ctrl.explorer.db() === 'player' && ctrl.explorer.opts.outpost?.playerPerspective?.()
+    ? ctrl.explorer.config.data.color()
+    : undefined;
 
 function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
   if (!data.moves.length) return null;
@@ -55,12 +65,13 @@ function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
         ]
       : data.moves;
 
+  const side = barSide(ctrl);
   return hl(`table.moves${lastPlayed ? '.with-last' : ''}`, [
     hl('thead', [
       hl('tr', [
         hl('th', i18n.site.move),
         hl('th', { attrs: { colspan: 2 } }, i18n.site.games),
-        hl('th', i18n.site.whiteDrawBlack),
+        hl('th', side ? 'Win / Draw / Loss' : i18n.site.whiteDrawBlack),
         lastPlayed && hl('th.last', { attrs: { title: 'When the player last played the move' } }, 'Last'),
       ]),
     ]),
@@ -77,7 +88,7 @@ function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
           ),
           hl('td', ((total / sumTotal) * 100).toFixed(0) + '%'),
           hl('td', bigNumberFormatter ? bigNumberFormatter.format(total) : numberFormat(total)),
-          hl('td', { attrs: { title: moveStatsTooltip(ctrl, move) } }, resultBar(move)),
+          hl('td', { attrs: { title: moveStatsTooltip(ctrl, move) } }, resultBar(move, side)),
           lastPlayed && showLastPlayed(lastPlayed, move.lastPlayed),
         ]);
       }),
@@ -169,6 +180,45 @@ function showGameTable(ctrl: AnalyseCtrl, fen: FEN, title: string, games: Openin
       ),
     ),
   ]);
+}
+
+// outpost: "All N games" under the player database's recent games: every game at this position, in Outpost
+const gamesTotal = (data: OpeningData) => data.games ?? data.white + data.draws + data.black;
+
+function allGamesButton(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
+  const { explorer } = ctrl;
+  const outpost = explorer.opts.outpost;
+  if (!outpost?.showGames || explorer.db() !== 'player' || !explorer.config.data.playerName.value()) return null;
+  const total = gamesTotal(data);
+  if (!total) return null;
+  // `bind` keeps its first listener while the button stays: read what is shown at click time
+  const showGames = () => {
+    const shown = explorer.current();
+    const conf = explorer.config.data;
+    const player = conf.playerName.value();
+    if (!shown || !isOpening(shown) || !player) return;
+    const byDb = conf.byDb();
+    outpost.showGames!({
+      player,
+      color: conf.color(),
+      rootFen: ctrl.nodeList[0].fen,
+      play: ctrl.nodeList.slice(1).map(n => n.uci!),
+      fen: shown.fen,
+      speeds: conf.speed(),
+      modes: conf.mode(),
+      since: byDb.since(),
+      until: byDb.until(),
+      total: gamesTotal(shown),
+    });
+  };
+  return hl(
+    'button.button.button-empty.text.explorer__all-games',
+    {
+      attrs: { type: 'button', title: 'List every game of this player at this position', ...dataIcon(licon.List) },
+      hook: bind('click', showGames),
+    },
+    total === 1 ? 'The game at this position' : `All ${numberFormat(total)} games at this position`,
+  );
 }
 
 function openGame(ctrl: AnalyseCtrl, gameId: string) {
@@ -282,6 +332,7 @@ function show(ctrl: AnalyseCtrl): MaybeVNode {
         moveTable,
         topTable,
         recentTable,
+        recentTable && allGamesButton(ctrl, data),
       ]);
     else lastShow = showEmpty(ctrl, data);
   } else if (data && isTablebase(data)) {

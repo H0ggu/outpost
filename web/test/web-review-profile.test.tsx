@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { UserPrefs } from '@outpost/shared/api';
-import { perspectiveWdl, WdlBar } from '../src/app/components/WdlBar.tsx';
+import { perspectiveWdl, WdlBar, WdlPerspectiveContext } from '../src/app/components/WdlBar.tsx';
 import GamesPage from '../src/app/pages/profile/GamesPage.tsx';
 import OpeningsPage from '../src/app/pages/profile/OpeningsPage.tsx';
 import OpponentsPage from '../src/app/pages/profile/OpponentsPage.tsx';
@@ -31,7 +31,10 @@ afterEach(() => {
 
 const SLUG = '/u/test-player';
 
-/** The profile routes over the fixtures' fake API, with the viewer's prefs overridden. */
+/**
+ * The profile routes over the fixtures' fake API, with the viewer's prefs overridden. The site
+ * layout provides the W/D/L perspective to every bar (`WdlPerspectiveContext`); so does this.
+ */
 function renderAs(path: string, prefs: Partial<UserPrefs> = {}, opts: MockOptions = {}) {
   const base = mockFetch(opts);
   vi.stubGlobal('fetch', (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -64,7 +67,9 @@ function renderAs(path: string, prefs: Partial<UserPrefs> = {}, opts: MockOption
   return {
     ...render(
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <WdlPerspectiveContext value={prefs.winratePerspective ?? 'player'}>
+          <RouterProvider router={router} />
+        </WdlPerspectiveContext>
       </QueryClientProvider>,
     ),
     router,

@@ -6,8 +6,10 @@
  */
 import {
   API_ROUTES,
+  DEFAULT_PREFS,
   type Color,
   type EpochMs,
+  type ExplorerGamesPage,
   type FileKind,
   type FileSearchResponse,
   type FolderInfo,
@@ -41,6 +43,15 @@ import {
   splitPgnGames,
   treeToPgn,
 } from './pgn.ts';
+import type { EmbedPositionMessage, EmbedShowGamesMessage } from '../app/explorerEmbed.ts';
+import {
+  appendPage,
+  lineFilterOf,
+  positionGamesQuery,
+  sanOfLine,
+  type PositionGamesRequest,
+  type PositionGamesState,
+} from './positionGames.ts';
 import { savePrefs, applyStudioPrefs, type StudioPrefs } from './prefs.ts';
 import { cleanFen, type StudioParams } from './query.ts';
 import { SaveQueue } from './saveQueue.ts';
@@ -119,7 +130,13 @@ export class StudioCtrl {
   /** Open dropdown of the Studio bar. */
   menu: 'file' | null = null;
   /** View of the side panel. */
-  sidePanel: 'files' | 'annotate' | 'games' = 'files';
+  sidePanel: 'files' | 'annotate' | 'games' | 'position' = 'files';
+  /** The games at a position the player explorer listed ("All N games"), shown in the side panel. */
+  positionGames: PositionGamesState | null = null;
+  /** Display name of a player spec (the explorer's labels; set by boot.ts). */
+  playerLabel: (spec: string) => string = spec => spec;
+  /** The last position message sent to the embedding page (sent again only when it changes). */
+  private lastEmbedPosition = '';
   /** How many games the Games panel lists. */
   gamesShown = GAMES_PAGE;
   /** Chrome redraw, set by boot.ts. */
@@ -169,6 +186,11 @@ export class StudioCtrl {
       this.prefs = { ...this.prefs, ...pickStudioPrefs(user.prefs) };
       applyStudioPrefs(this.prefs);
     } else delete document.body.dataset.user;
+  }
+
+  /** How W/D/L is coloured for this viewer (`UserPrefs.winratePerspective`; anonymous: the default). */
+  get winratePerspective(): 'player' | 'white' {
+    return this.session?.user?.prefs.winratePerspective ?? DEFAULT_PREFS.winratePerspective;
   }
 
   async setPref<K extends keyof StudioPrefs>(key: K, value: StudioPrefs[K]): Promise<void> {
@@ -553,6 +575,129 @@ export class StudioCtrl {
       else void this.openGame(outpostId, { fen, orientation });
     } else void this.openMastersGame(id, fen, orientation, this.params.embed);
   };
+
+  // -------------------------------------------------------------------------
+  // Games at a position (the player explorer's "All N games", positionGames.ts)
+  // -------------------------------------------------------------------------
+
+  /** The filters segment that applies to a player: the profile the Studio was opened with only. */
+  private segmentFor(player: string): string | undefined {
+    const p = this.params;
+    return p.explorer?.db === 'player' && p.explorer.player === player ? p.filters : undefined;
+  }
+
+  /**
+   * "All N games" (scripts/lila-patches/002): the side panel lists them. In the embed (the profile
+   * Explorer tab) the page shows them in its Games tab at this line; another player picked inside
+   * the embed, or a line that can't be a filter, opens the full Studio there instead.
+   */
+  showPositionGames = (req: PositionGamesRequest): void => {
+    if (this.params.embed) {
+      const line = lineFilterOf(req.rootFen, req.play);
+      const own = !!this.params.explorer && this.params.explorer.db === 'player' && this.params.explorer.player === req.player;
+      if (own && line && window.parent !== window) {
+        const msg: EmbedShowGamesMessage = { type: 'outpost:show-games', player: req.player, color: req.color, line };
+        window.parent.postMessage(msg, location.origin);
+      } else {
+        const segment = this.segmentFor(req.player);
+        window.open(
+          paths.studio({ explorer: `player:${req.player}`, color: req.color, fen: req.fen, ...(segment ? { filters: segment } : {}) }),
+          '_blank',
+          'noopener',
+        );
+      }
+      return;
+    }
+    this.positionGames = {
+      req,
+      label: this.playerLabel(req.player),
+      san: sanOfLine(req.rootFen, req.play),
+      status: 'loading',
+      total: null,
+      pages: 0,
+      rows: { perspective: 'player', games: [] },
+    };
+    this.sidePanel = 'position';
+    // "Board only" hides the side panel: show it for this list (the saved layout stays).
+    if (document.body.dataset.studioLayout === 'focus') this.applyLayout('default');
+    this.redraw();
+    // On phones the side panel is below the board: bring the list into view (a no-op when visible).
+    setTimeout(() => document.querySelector('.studio-side')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+    void this.morePositionGames();
+  };
+
+  /** Loads the next page of the listed games. */
+  async morePositionGames(): Promise<void> {
+    const state = this.positionGames;
+    if (!state || (state.status === 'loading' && state.pages > 0)) return;
+    if (state.total !== null && state.rows.games.length >= state.total) return;
+    const page = state.pages + 1;
+    state.status = 'loading';
+    state.error = undefined;
+    this.redraw();
+    try {
+      const res = await api.get<ExplorerGamesPage>(API_ROUTES.explorer.games, positionGamesQuery(state.req, this.segmentFor(state.req.player), page));
+      if (this.positionGames !== state) return; // another list replaced it meanwhile
+      state.rows = appendPage(state, res);
+      state.total = res.total;
+      state.pages = page;
+      state.status = 'ready';
+    } catch (e) {
+      if (this.positionGames !== state) return;
+      state.status = 'error';
+      state.error = errorMessage(e);
+    }
+    this.redraw();
+  }
+
+  /** Closes the list. */
+  closePositionGames(): void {
+    this.positionGames = null;
+    if (this.sidePanel === 'position') this.sidePanel = 'files';
+    // back to "Board only" when the list had to show the side panel
+    if (document.body.dataset.studioLayout !== this.prefs.studioLayout) this.applyLayout();
+    this.redraw();
+  }
+
+  /** Opens a listed game at the position, from the explored player's side. */
+  openPositionGame(id: Id): void {
+    const state = this.positionGames;
+    if (!state) return;
+    void this.openGame(id, { fen: state.req.fen, orientation: state.req.color });
+  }
+
+  /**
+   * Embed: tells the page (the profile Explorer tab) where the board is and how many games the
+   * player explorer counted there, so its links follow the board. Sent after lila redraws, only
+   * when something changed.
+   */
+  postEmbedPosition(): void {
+    const a = this.analyse;
+    if (!this.params.embed || !a || window.parent === window) return;
+    const config = a.explorer.config.data;
+    const nodes = a.nodeList;
+    const root = nodes[0];
+    if (!root) return;
+    const data = a.explorer.enabled() ? a.explorer.current() : undefined;
+    const games =
+      data?.isOpening && data.fen === a.node.fen && config.db() === 'player'
+        ? (data.games ?? (data.white ?? 0) + (data.draws ?? 0) + (data.black ?? 0))
+        : null;
+    const player = config.db() === 'player' ? config.playerName.value() : '';
+    // lila redraws often (the engine, hovering): compare cheaply before replaying the line
+    const key = JSON.stringify([root.fen, a.path, player, config.color(), games]);
+    if (key === this.lastEmbedPosition) return;
+    this.lastEmbedPosition = key;
+    const msg: EmbedPositionMessage = {
+      type: 'outpost:position',
+      player,
+      color: config.color(),
+      line: lineFilterOf(root.fen, nodes.slice(1).map(n => n.uci ?? '')),
+      fen: a.node.fen,
+      games,
+    };
+    window.parent.postMessage(msg, location.origin);
+  }
 
   /**
    * A masters (or other non-Outpost) explorer game: its PGN comes from `/api/explorer/masters/pgn/:id`.

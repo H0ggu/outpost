@@ -7,7 +7,7 @@
 import { Link } from 'react-router';
 import type { Color, GameRow, PrepLine, PrepOpponentReport, PrepSide, SourceKind } from '@outpost/shared/api';
 import { encodeFiltersSegment, type ProfileFilters } from '@outpost/shared/filters';
-import { perspectiveWdl, TIME_CLASS_LABELS, TimeClassIcon, WdlBar, licon, type WdlPerspective } from '../../../components/index.ts';
+import { TIME_CLASS_LABELS, TimeClassIcon, WdlBar, licon } from '../../../components/index.ts';
 import { paths } from '../../../paths.ts';
 import { ActivityBars, busiestHours, peakIndex, WEEKDAYS } from './ActivityBars.tsx';
 import { formatDate, fullNumber, percent, plural, resultLabel, SOURCE_KIND_LABELS } from './format.ts';
@@ -33,15 +33,12 @@ export function PrepReportCard({
   filters,
   utc,
   minGames,
-  perspective = 'player',
 }: {
   report: PrepOpponentReport;
   filters: ProfileFilters;
   utc: boolean;
   /** Fewest games of a weakest line, as requested (shown in the heading). */
   minGames?: number;
-  /** The viewer's `winratePerspective`: each side's bars can show White / Black results. */
-  perspective?: WdlPerspective;
 }) {
   const p = report.profile;
   const totalGames = report.asWhite.games + report.asBlack.games;
@@ -79,8 +76,8 @@ export function PrepReportCard({
             </p>
           )}
           <div className="lib-prep-sides">
-            <SideReport side="white" data={report.asWhite} slug={p.slug} filters={filters} minGames={minGames} perspective={perspective} />
-            <SideReport side="black" data={report.asBlack} slug={p.slug} filters={filters} minGames={minGames} perspective={perspective} />
+            <SideReport side="white" data={report.asWhite} slug={p.slug} filters={filters} minGames={minGames} />
+            <SideReport side="black" data={report.asBlack} slug={p.slug} filters={filters} minGames={minGames} />
           </div>
           <div className="lib-prep-bottom">
             <RecentGames games={report.recentGames} utc={utc} />
@@ -131,14 +128,12 @@ function SideReport({
   slug,
   filters,
   minGames,
-  perspective,
 }: {
   side: Color;
   data: PrepSide;
   slug: string;
   filters: ProfileFilters;
   minGames: number | undefined;
-  perspective: WdlPerspective;
 }) {
   const total = data.wdl.w + data.wdl.d + data.wdl.l;
   const score = total ? (data.wdl.w + data.wdl.d / 2) / total : null;
@@ -151,14 +146,14 @@ function SideReport({
           {plural(data.games, 'game')} · {percent(score)}
         </span>
       </h3>
-      {total > 0 && <WdlBar {...perspectiveWdl(data.wdl, side, perspective)} />}
+      {total > 0 && <WdlBar w={data.wdl.w} d={data.wdl.d} l={data.wdl.l} side={side} />}
       <h4>Main lines</h4>
-      <LineTable lines={data.topLines} side={side} slug={slug} filters={filters} perspective={perspective} empty="No repeated lines yet." />
+      <LineTable lines={data.topLines} side={side} slug={slug} filters={filters} empty="No repeated lines yet." />
       <h4>
         Weakest lines
         {minGames !== undefined && <span className="muted lib-prep-side__min"> (min {plural(minGames, 'game')})</span>}
       </h4>
-      <LineTable lines={data.worstLines} side={side} slug={slug} filters={filters} perspective={perspective} empty="No weak spot stands out." />
+      <LineTable lines={data.worstLines} side={side} slug={slug} filters={filters} empty="No weak spot stands out." />
     </section>
   );
 }
@@ -168,14 +163,12 @@ function LineTable({
   side,
   slug,
   filters,
-  perspective,
   empty,
 }: {
   lines: readonly PrepLine[];
   side: Color;
   slug: string;
   filters: ProfileFilters;
-  perspective: WdlPerspective;
   empty: string;
 }) {
   if (lines.length === 0) return <p className="muted lib-prep-empty">{empty}</p>;
@@ -206,7 +199,7 @@ function LineTable({
               {fullNumber(l.games)}
             </td>
             <td className="lib-prep-lines__bar">
-              <WdlBar {...perspectiveWdl(l, side, perspective)} />
+              <WdlBar w={l.w} d={l.d} l={l.l} side={side} />
             </td>
             <td className="num lib-prep-lines__score">
               <strong>{percent(l.score)}</strong>

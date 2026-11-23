@@ -9,7 +9,9 @@
  *   - game links open in Outpost (stored games, masters PGN) or on lichess.org (Lichess database games);
  *   - with anonymous browsing on, a visitor reaches the local databases and masters, but the Lichess one
  *     (relayed with the server's token, `requireUser`) asks them to sign in;
- *   - the player database's move rows say when each move was last played (`ExplorerPlayerMove.lastPlayed`).
+ *   - the player database's move rows say when each move was last played (`ExplorerPlayerMove.lastPlayed`);
+ *   - "All N games" under the player database's recent games lists every game at the position
+ *     (positionGames.ts), and its W/D/L bars follow the viewer's `winratePerspective`.
  */
 import {
   API_ROUTES,
@@ -25,6 +27,7 @@ import {
 } from '@outpost/shared/api';
 import { parsePlayerSpec } from '@outpost/shared/filters';
 import { api } from '../app/api/client.ts';
+import type { PositionGamesRequest } from './positionGames.ts';
 
 // Structural copies of lila's explorer types (lila-types/analyse/interfaces.d.ts, patch 002), so this
 // module has no lila import and is unit-tested; boot.ts hands the result to lila, which checks them.
@@ -55,6 +58,8 @@ export interface ExplorerOpts {
     readonly loginUrl: string;
     unavailable(db: ExplorerDb): string | undefined;
     lastPlayed(at: EpochMs): LastPlayedCell;
+    showGames(req: PositionGamesRequest): void;
+    playerPerspective(): boolean;
   };
 }
 
@@ -77,6 +82,10 @@ export interface ExplorerDeps {
   loginUrl: () => string;
   redraw: () => void;
   openGame: (db: ExplorerDb, id: string, orientation: Color, fen: string) => void;
+  /** "All N games" under the player explorer's recent games (the games at the position). */
+  showGames: (req: PositionGamesRequest) => void;
+  /** The viewer's `winratePerspective` is `player`: the player database's bars show wins / draws / losses. */
+  playerPerspective: () => boolean;
 }
 
 const SITE_LABELS: Readonly<Record<string, string>> = { lichess: 'Lichess', chesscom: 'Chess.com' };
@@ -225,6 +234,8 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
         return suggestions;
       },
       openGame: deps.openGame,
+      showGames: req => deps.showGames(req),
+      playerPerspective: () => deps.playerPerspective(),
       // Anonymous browsing (PLAN §10) opens the local databases and the masters proxy, not the Lichess
       // database: the server relays it with its token for signed-in users only (`requireUser`). Without
       // a token, `unavailable` explains that instead, since signing in wouldn't help.

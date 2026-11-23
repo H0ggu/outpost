@@ -1,7 +1,9 @@
 import { useMutation } from '@tanstack/react-query';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { DEFAULT_PREFS } from '@outpost/shared/api';
 import { api as client } from '../src/app/api/client.ts';
+import { WdlBar } from '../src/app/components/WdlBar.tsx';
 import NotFoundPage from '../src/app/pages/NotFoundPage.tsx';
 import { ADMIN, apiError, job, renderAt, session, user, withFakeApi } from './web-account-helpers.tsx';
 
@@ -20,6 +22,14 @@ function UpdateButton() {
 }
 
 describe('Layout', () => {
+  it("gives every W/D/L bar the viewer's winratePerspective", async () => {
+    const me = user({ prefs: { ...DEFAULT_PREFS, winratePerspective: 'white' } });
+    api().on('GET', '/api/session', session(me));
+    // The player had Black: their 3 wins are Black's.
+    const { container } = renderAt(<WdlBar w={3} d={1} l={2} side="black" />, { layout: true, path: '/' });
+    await waitFor(() => expect(container.querySelector('.wdl-bar')?.getAttribute('aria-label')).toMatch(/^2 White wins .*3 Black wins/));
+  });
+
   it('has the main navigation, with the Studio as a full page link', async () => {
     api().on('GET', '/api/session', session(null));
     renderAt(<Page />, { layout: true, path: '/' });

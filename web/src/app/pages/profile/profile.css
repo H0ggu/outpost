@@ -1518,8 +1518,13 @@ html[data-theme='light'] {
   color: var(--c-font-clear);
 }
 
+.profile-page .profile-explorer__games,
 .profile-page .profile-explorer__open {
   margin-left: auto;
+}
+
+.profile-page .profile-explorer__games + .profile-explorer__open {
+  margin-left: 0;
 }
 
 .profile-page .profile-explorer__frame-wrap {
@@ -2273,6 +2278,7 @@ html[data-theme='light'] {
     font-size: 1.2rem;
   }
 
+  .profile-page .profile-explorer__games,
   .profile-page .profile-explorer__open {
     margin-left: 0;
   }

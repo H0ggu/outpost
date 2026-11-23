@@ -27,6 +27,22 @@ export interface ExplorerOutpost {
   loginUrl: string;
   unavailable?(db: ExplorerDb): string | undefined; // why the server can't serve db (e.g. Lichess without a token)
   lastPlayed?(at: number): { text: string; title: string }; // a player move's "last played" cell
+  showGames?(req: ExplorerGamesRequest): void; // "All N games" under the player db's recent games
+  playerPerspective?(): boolean; // player db bars as the player's wins / draws / losses
+}
+
+// outpost: the games of the player database at a position, as the explorer asked for them
+export interface ExplorerGamesRequest {
+  player: string;
+  color: Color;
+  rootFen: FEN;
+  play: Uci[];
+  fen: FEN;
+  speeds: ExplorerSpeed[];
+  modes: ExplorerMode[];
+  since: string;
+  until: string;
+  total: number;
 }
 
 export interface ExplorerPlayerChoice {
@@ -51,6 +67,7 @@ export interface OpeningData extends ExplorerData {
   recentGames?: OpeningGame[];
   opening?: Opening;
   queuePosition?: number;
+  games?: number; // outpost: every game reaching the position (those that ended there too)
 }
 
 export interface Opening {

@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router';
 import type { GameRow, OpeningRow, OverviewStats, ProfileHeader, TerminationRow } from '@outpost/shared/api';
 import type { Color } from '@outpost/shared/chess';
 import { useOverview } from '../../api/hooks.ts';
-import { Card, EmptyState, ErrorBox, licon, perspectiveWdl, Spinner, TIME_CLASS_LABELS, TimeClassIcon, WdlBar, type WdlPerspective } from '../../components/index.ts';
+import { Card, EmptyState, ErrorBox, licon, Spinner, TIME_CLASS_LABELS, TimeClassIcon, WdlBar } from '../../components/index.ts';
 import { paths } from '../../paths.ts';
 import { ColorDot, OpponentName, OutcomeMark, rowClick, ScoreText, SiteIcon } from './components/bits.tsx';
 import { ColumnChart, type ColumnDatum } from './components/charts/ColumnChart.tsx';
@@ -19,9 +19,8 @@ import { explorerTabAt, studioGameLink } from './links.ts';
  * a year of rating.
  */
 export default function OverviewPage() {
-  const { slug, header, timeZone, prefs } = useProfile();
+  const { slug, header, timeZone } = useProfile();
   const overview = useOverview(slug, {});
-  const perspective = prefs.winratePerspective;
 
   if (overview.isPending) return <Spinner center label="Loading overview" />;
   if (overview.isError) return <ErrorBox error={overview.error} onRetry={() => void overview.refetch()} title="Could not load the overview" />;
@@ -47,10 +46,10 @@ export default function OverviewPage() {
     <div className="overview-grid">
       <TimeClassCard slug={slug} o={o} header={header} />
       <RatingCard slug={slug} o={o} header={header} timeZone={timeZone} />
-      <ColorCard slug={slug} o={o} perspective={perspective} />
+      <ColorCard slug={slug} o={o} />
       <ActivityCard slug={slug} o={o} />
-      <OpeningsCard slug={slug} color="white" rows={o.topOpenings.white} perspective={perspective} />
-      <OpeningsCard slug={slug} color="black" rows={o.topOpenings.black} perspective={perspective} />
+      <OpeningsCard slug={slug} color="white" rows={o.topOpenings.white} />
+      <OpeningsCard slug={slug} color="black" rows={o.topOpenings.black} />
       <TerminationCard rows={o.terminations} />
       <LatestGamesCard slug={slug} games={o.latestGames} header={header} />
     </div>
@@ -161,7 +160,7 @@ function RatingCard({ slug, o, header, timeZone }: { slug: string; o: OverviewSt
   );
 }
 
-function ColorCard({ slug, o, perspective }: { slug: string; o: OverviewStats; perspective: WdlPerspective }) {
+function ColorCard({ slug, o }: { slug: string; o: OverviewStats }) {
   const navigate = useNavigate();
   const rows: Array<[Color, OverviewStats['byColor']['white']]> = [
     ['white', o.byColor.white],
@@ -177,7 +176,7 @@ function ColorCard({ slug, o, perspective }: { slug: string; o: OverviewStats; p
                 <ColorDot color={c} /> {c === 'white' ? 'White' : 'Black'}
               </span>
               <span className="ov-bars__count">{fmtInt(x.games)}</span>
-              <WdlBar {...perspectiveWdl(x, c, perspective)} />
+              <WdlBar w={x.w} d={x.d} l={x.l} side={c} />
               <ScoreText score={scoreOfWdl(x)} />
             </button>
           </li>
@@ -216,7 +215,7 @@ function ActivityCard({ slug, o }: { slug: string; o: OverviewStats }) {
   );
 }
 
-function OpeningsCard({ slug, color, rows, perspective }: { slug: string; color: Color; rows: readonly OpeningRow[]; perspective: WdlPerspective }) {
+function OpeningsCard({ slug, color, rows }: { slug: string; color: Color; rows: readonly OpeningRow[] }) {
   const navigate = useNavigate();
   const title = color === 'white' ? 'Openings as White' : 'Openings as Black';
   return (
@@ -245,7 +244,7 @@ function OpeningsCard({ slug, color, rows, perspective }: { slug: string; color:
                   {fmtInt(r.games)}
                   <span className="muted"> · {fmtMoves(r.avgPly)} mv</span>
                 </span>
-                <WdlBar {...perspectiveWdl(r, color, perspective)} />
+                <WdlBar w={r.w} d={r.d} l={r.l} side={color} />
               </button>
             </li>
           ))}

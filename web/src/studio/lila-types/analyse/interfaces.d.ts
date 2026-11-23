@@ -151,6 +151,24 @@ export interface ExplorerOutpost {
   unavailable?(db: ExplorerDb): string | undefined;
   /** The player database's "last played" cell for a move last played at `at` (epoch ms). */
   lastPlayed?(at: number): { text: string; title: string };
+  /** "All N games" under the player database's recent games: list every game at the position. */
+  showGames?(req: ExplorerGamesRequest): void;
+  /** True: the player database's bars show the player's wins / draws / losses (green / grey / red). */
+  playerPerspective?(): boolean;
+}
+
+/** scripts/lila-patches/002: what "All N games" asks for (as lila asked the player explorer). */
+export interface ExplorerGamesRequest {
+  player: string;
+  color: Color;
+  rootFen: string;
+  play: string[];
+  fen: string;
+  speeds: string[];
+  modes: string[];
+  since: string;
+  until: string;
+  total: number;
 }
 
 export interface ExplorerOpts {
@@ -201,6 +219,8 @@ export interface ExplorerCtrl {
   toggle(): void;
   reload(): void;
   db(): ExplorerDb;
+  /** The data shown for the current node (opening data has `isOpening`; `games` from Outpost's player explorer). */
+  current(): { fen: string; isOpening?: true; white?: number; draws?: number; black?: number; games?: number } | undefined;
   config: {
     data: {
       open(v?: boolean): boolean;

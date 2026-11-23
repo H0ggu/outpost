@@ -19,8 +19,8 @@ type SortKey = 'games' | 'opponents' | 'score' | 'name';
  */
 export default function WorldMapPage() {
   const { slug, header } = useProfile();
-  // Only Lichess and Chess.com opponents have a country to look up: PGN and reference-DB games
-  // name their players and nothing more.
+  // Only Lichess and Chess.com opponents have a country to look up: PGN games name their players
+  // and nothing more, reference-DB (FIDE) opponents only when their federation is known.
   const online = header.sources.some(s => s.kind === 'lichess' || s.kind === 'chesscom');
   const map = useWorldMap(slug, {});
   const [metric, setMetric] = useQueryParam<MapMetric>('show', oneOf(METRICS, 'games'), 'games');
@@ -112,7 +112,8 @@ export default function WorldMapPage() {
 
 /**
  * No country on the map: still being looked up (only promised while lookups are queued), or
- * unknown for good — PGN and over-the-board (reference) opponents carry no country.
+ * unknown for good — PGN opponents carry no country, over-the-board (reference) opponents only
+ * their FIDE federation when the games or broadcasts gave it.
  */
 function EmptyMap({ pending, online }: { pending: number; online: boolean }) {
   if (pending > 0)
@@ -126,7 +127,7 @@ function EmptyMap({ pending, online }: { pending: number; online: boolean }) {
       <p>
         {online
           ? 'None of these opponents has a country on Lichess or Chess.com.'
-          : 'Opponents from PGN databases and the reference database come with a name only, so their countries are unknown. Countries are shown for Lichess and Chess.com opponents.'}
+          : "Opponents from PGN databases come with a name only, and reference-database opponents have a country only when their FIDE federation is known (from the games' Fed tags or a broadcast). Countries are shown for Lichess and Chess.com opponents."}
       </p>
     </EmptyState>
   );

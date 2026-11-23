@@ -93,6 +93,12 @@ R7. **Clock times are stored** (`games.clocks`, migration `203`) for Lichess (`c
 R8. **One time-control rule per kind of game**: games played on Lichess or Chess.com (synced, or their PGN exports by `Site` / `Link`) use Lichess's thresholds (base + 40 × increment); every over-the-board PGN game — user databases and reference databases alike — uses the FIDE rule (base + 60 × increment: under 3 min bullet, up to 10 min blitz, under 60 min rapid, else classical). A PGN TimeControl is seconds, as the standard says; only Lichess broadcast tags are read as minutes below 180 (`90+30`, organiser style). Migration `205` reclassifies stored OTB games.
 R9. **Fair shares of the upstream budgets**: decision 26's instance budgets stay, but one client (a signed-in user, else an address) may start at most half of the masters, Lichess-explorer and cloud-eval budgets per minute (10, 10, 30) and a quarter of the tablebase one (30), getting 429 `client_limit` beyond it (a Studio cloud-eval request with `emptyOnMiss=1` gets an ordinary miss). User-triggered account lookups (search autocomplete, Chess.com exact-name checks, new-source checks) have their own instance budget (60 per site and minute, 30 per client), and accounts found missing are remembered for 10 minutes, so searches can't get lichess.org to throttle the instance's syncs.
 
+## Taken while merging the review fixes (2026-11-23)
+Same format. Where two fix branches overlapped.
+
+M1. **One W/D/L perspective mechanism**: the web and feature fixes both applied `winratePerspective` to the bars. The site layout provides the preference (`WdlPerspectiveContext`) and each bar passes the player's colour (`side`) when it is one colour; `WdlBar` turns that into White / Black results with `perspectiveWdl`. Pages no longer thread the preference through props.
+M2. **A search hit's follow-up lookups count against the lookup budget** (R9): Chess.com `/stats` and Lichess `POST /api/users` take a lookup from the searching client's share; without one the hits go without the site's facts (ratings, last seen) and the site is still not reported unavailable.
+
 ### Kept as the modules left them (open for the owner)
 - Chess.com geo lookups: after a capped run (1,000 requests) no new Chess.com lookup job starts for 50 minutes, so the hourly sweep continues; a fresh sync's new opponents wait for that too (about 1,000 lookups per hour at most).
 - Decision 8 is met at setup: `POST /api/me/totp/setup` needs the password, `enable` only a code for the secret that call created.

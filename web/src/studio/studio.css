@@ -1033,6 +1033,52 @@ body #top {
   margin: 0.8em;
 }
 
+/* Games at a position (the player explorer's "All N games"). */
+.studio-position__at,
+.studio-position__moved {
+  margin: 0;
+  padding: 0.5em 0.8em;
+  color: var(--c-font-dim);
+}
+
+.studio-position__at .san {
+  color: var(--c-font-clear);
+}
+
+.studio-position__at em {
+  font-style: normal;
+}
+
+.studio-position__moved {
+  padding-top: 0;
+  font-size: 0.9em;
+  color: var(--c-font-dim);
+}
+
+.studio-position__error {
+  padding: 0 0.8em 0.8em;
+}
+
+.studio-pgame {
+  align-items: center;
+}
+
+.studio-pgame__result {
+  flex: 0 0 2.4em;
+  font-style: normal;
+  font-weight: bold;
+  text-align: center;
+  color: var(--c-font-dim);
+}
+
+.studio-pgame__result.w {
+  color: var(--c-good);
+}
+
+.studio-pgame__result.l {
+  color: var(--c-bad);
+}
+
 .studio-games__more {
   display: block;
   margin-bottom: 0;
@@ -1206,6 +1252,29 @@ body #top {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Player database bars from the player's side (scripts/lila-patches/002, `winratePerspective: player`):
+   wins green, losses red, as on the profile pages. */
+.explorer-box .bar span.win,
+.explorer-box .bar span.loss {
+  color: #fff;
+  box-shadow: 0 5px 7px rgb(255 255 255 / 0.1) inset;
+}
+
+.explorer-box .bar span.win {
+  background: var(--c-good);
+}
+
+.explorer-box .bar span.loss {
+  background: var(--c-bad);
+}
+
+/* "All N games at this position" under the player database's recent games (patch 002). */
+.explorer-box .explorer__all-games {
+  display: block;
+  width: 100%;
+  margin: 0.3em 0 0.6em;
 }
 
 /* Player database active: the other databases are icons (scripts/lila-patches/002), the name gets the room. */

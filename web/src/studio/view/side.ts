@@ -5,18 +5,20 @@
  *   - My Files (PLAN §8.4): folders, open, rename/move, delete to the recycle bin, restore/purge,
  *     and "this position in My Files" (`/api/files/search`);
  *   - Annotate: glyphs and a comment on the current move, in lila's study panel markup;
- *   - Games: the games of a multi-game file.
+ *   - Games: the games of a multi-game file;
+ *   - Position: the games at a position the player explorer listed ("All N games", positionGames.ts).
  */
-import type { StudioFileMeta } from '@outpost/shared/api';
+import type { DbGameRow, GameRow, StudioFileMeta, Title } from '@outpost/shared/api';
 import { licon } from '../../lichess/licon.ts';
 import { GAMES_PAGE, type StudioCtrl } from '../ctrl.ts';
 import type { FolderNode } from '../fileTree.ts';
-import { gameTitle, GLYPH_GROUPS, quickHeaders } from '../pgn.ts';
+import { gameTitle, GLYPH_GROUPS, positionKey, quickHeaders } from '../pgn.ts';
+import { POSITION_GAMES_PAGE } from '../positionGames.ts';
 import { glyphOfNag } from 'lila/analyse/pgnImport';
 import { addFolderDialog, moveFileDialog } from './dialogs.ts';
 import { ago, button, dataIcon, h, moveName, type VNode } from './util.ts';
 
-export type SidePanel = 'files' | 'annotate' | 'games';
+export type SidePanel = 'files' | 'annotate' | 'games' | 'position';
 
 const spinner = (): VNode => h('div.studio-spinner', { attrs: { role: 'status', 'aria-label': 'Loading' } });
 
@@ -43,6 +45,7 @@ function panelTabs(ctrl: StudioCtrl): VNode {
     item('files', 'My Files', licon.StudyBoard),
     item('annotate', 'Annotate', licon.Pencil),
     games > 1 || tab?.source.kind === 'file' ? item('games', 'Games', licon.List, games) : null,
+    ctrl.positionGames ? item('position', 'Position', licon.Book, ctrl.positionGames.total ?? undefined) : null,
   ]);
 }
 
@@ -327,14 +330,101 @@ function gamesView(ctrl: StudioCtrl): VNode {
   ]);
 }
 
+// ---------------------------------------------------------------------------
+// Games at a position (the player explorer's "All N games")
+// ---------------------------------------------------------------------------
+
+const RESULT_TEXT = { '1-0': '1-0', '0-1': '0-1', '1/2-1/2': '½-½' } as const;
+
+const isoDay = (ms: number | null): string => (ms === null ? '' : new Date(ms).toISOString().slice(0, 10));
+
+const playerName = (p: { name: string; title: Title | null; rating: number | null }): string =>
+  `${p.title ? `${p.title} ` : ''}${p.name}${p.rating !== null ? ` (${p.rating})` : ''}`;
+
+const ucfirst = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** A game from the explored player's side: result (coloured by outcome), opponent, then date and speed. */
+function playerGameRow(ctrl: StudioCtrl, g: GameRow): VNode {
+  const opp = playerName(g.opponent);
+  const when = [isoDay(g.endedAt), g.timeClass === 'unknown' ? '' : ucfirst(g.timeClass)].filter(Boolean).join(' · ');
+  return h('li', { key: `p${g.id}` }, [
+    button(
+      '.studio-game.studio-pgame',
+      { title: `Open the game against ${opp}${g.openingName ? ` (${g.openingName})` : ''}`, onClick: () => ctrl.openPositionGame(g.id) },
+      [
+        h(`i.studio-pgame__result.${g.outcome}`, { attrs: { 'aria-label': g.outcome === 'w' ? 'won' : g.outcome === 'l' ? 'lost' : 'drawn' } }, RESULT_TEXT[g.result]),
+        h('span', opp),
+        h('em', when),
+      ],
+    ),
+  ]);
+}
+
+/** A database or reference game: both players, result, date and event. */
+function neutralGameRow(ctrl: StudioCtrl, g: DbGameRow): VNode {
+  const players = `${playerName(g.white)} – ${playerName(g.black)}`;
+  return h('li', { key: `n${g.id}` }, [
+    button(
+      '.studio-game.studio-pgame',
+      { title: `Open ${players}${g.event ? `, ${g.event}` : ''}`, onClick: () => ctrl.openPositionGame(g.id) },
+      [h('i.studio-pgame__result', RESULT_TEXT[g.result]), h('span', players), h('em', isoDay(g.endedAt) || (g.event ?? ''))],
+    ),
+  ]);
+}
+
+function positionView(ctrl: StudioCtrl): VNode {
+  const s = ctrl.positionGames;
+  if (!s) return h('p.studio-empty', 'Choose “All games” under the player explorer’s recent games to list them here.');
+  const current = ctrl.analyse?.node.fen;
+  const moved = !!current && positionKey(current) !== positionKey(s.req.fen);
+  const shown = s.rows.games.length;
+  const more = s.total === null ? 0 : s.total - shown;
+  const rows =
+    s.rows.perspective === 'player' ? s.rows.games.map(g => playerGameRow(ctrl, g)) : s.rows.games.map(g => neutralGameRow(ctrl, g));
+  return h('div.studio-games.studio-position', [
+    h('div.studio-files__head', [
+      h('strong', `${s.label}, as ${s.req.color === 'white' ? 'White' : 'Black'}`),
+      button('.studio-icon-btn', { icon: licon.X, title: 'Close this list', onClick: () => ctrl.closePositionGames() }),
+    ]),
+    h('p.studio-position__at', [
+      s.req.play.length === 0 ? 'At the starting position' : s.san ? 'After ' : 'At the explored position',
+      s.req.play.length && s.san ? h('span.san', s.san) : null,
+      s.total !== null ? h('em', ` · ${s.total === 1 ? '1 game' : `${s.total.toLocaleString('en')} games`}`) : null,
+    ]),
+    moved ? h('p.studio-position__moved', 'The board has moved on. “All games” under the explorer lists the games of its position.') : null,
+    shown ? h('ol.studio-list', rows) : s.status === 'ready' ? h('p.studio-empty', 'No game reaches this position any more.') : null,
+    s.status === 'loading' ? spinner() : null,
+    s.status === 'error'
+      ? h('div.studio-position__error', [
+          h('p.studio-error', `The games could not be loaded: ${s.error ?? 'unknown error'}`),
+          button('.button.button-empty', { onClick: () => void ctrl.morePositionGames() }, 'Try again'),
+        ])
+      : null,
+    s.status === 'ready' && more > 0
+      ? button(
+          '.button.button-empty.text.studio-games__more',
+          { icon: licon.List, onClick: () => void ctrl.morePositionGames() },
+          `Show ${Math.min(more, POSITION_GAMES_PAGE)} more (${shown.toLocaleString('en')} of ${(s.total ?? shown).toLocaleString('en')} shown)`,
+        )
+      : null,
+  ]);
+}
+
 export function renderSide(ctrl: StudioCtrl): VNode {
   const tab = ctrl.activeTab;
   if (ctrl.sidePanel === 'games' && (tab?.games.length ?? 1) < 2 && tab?.source.kind !== 'file') ctrl.sidePanel = 'files';
+  if (ctrl.sidePanel === 'position' && !ctrl.positionGames) ctrl.sidePanel = 'files';
   return h('aside.analyse__side.studio-side', [
     panelTabs(ctrl),
     h(
       'div.studio-side__body',
-      ctrl.sidePanel === 'annotate' ? annotateView(ctrl) : ctrl.sidePanel === 'games' ? gamesView(ctrl) : filesView(ctrl),
+      ctrl.sidePanel === 'annotate'
+        ? annotateView(ctrl)
+        : ctrl.sidePanel === 'games'
+          ? gamesView(ctrl)
+          : ctrl.sidePanel === 'position'
+            ? positionView(ctrl)
+            : filesView(ctrl),
     ),
   ]);
 }

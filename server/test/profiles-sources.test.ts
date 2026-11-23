@@ -1,9 +1,9 @@
-import type { ProfileHeader } from '@outpost/shared/api';
+import type { ProfileHeader, ProfileListResponse } from '@outpost/shared/api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { insertGame, rebuildPlayerGames } from '../src/chess/store.ts';
 import { HttpError } from '../src/http/errors.ts';
 import type { AuthUser } from '../src/http/types.ts';
-import { collectOrphanGames } from '../src/profiles/service.ts';
+import { collectOrphanGames, summaryRatings } from '../src/profiles/service.ts';
 import { chesscomDisplayName, fideRatings, resolveSource, snapshotRatings, sourceUrl } from '../src/profiles/sources.ts';
 import { chesscomSnapshot, lichessSnapshot } from '../src/sync/index.ts';
 import { createUserSession, makeTestApp, mutationHeaders, testGame, type TestApp } from './helpers.ts';
@@ -66,6 +66,24 @@ describe('FIDE sources and source helpers', () => {
     expect(t.db.value("SELECT COUNT(*) FROM jobs WHERE kind = 'sync'")).toBe(0);
   });
 
+  it('gives profile lists the ratings of each time class, most played first', async () => {
+    // The FIDE profile above: three classical reference games at 2600.
+    const list = (await t.app.inject({ url: '/api/profiles?scope=mine', headers: { cookie: me.cookie } })).json<ProfileListResponse>();
+    expect(list.profiles.find(p => p.displayName === 'Erik')?.ratings).toEqual([{ kind: 'fide', timeClass: 'classical', rating: 2600, games: 3 }]);
+    // Site snapshots without stored games: per time class the better-known account (games, then rating).
+    const lichess = {
+      id: 990_001,
+      kind: 'lichess' as const,
+      profile_json: JSON.stringify({ perfs: { bullet: { rating: 2650, games: 10 }, blitz: { rating: 2500, games: 40 }, rapid: { rating: 2400, games: 0 } } }),
+    };
+    const chesscom = { id: 990_002, kind: 'chesscom' as const, profile_json: JSON.stringify({ stats: { chess_blitz: { last: { rating: 2550 } } } }) };
+    expect(summaryRatings(t.db, [lichess, chesscom])).toEqual([
+      { kind: 'lichess', timeClass: 'bullet', rating: 2650, games: 0 },
+      { kind: 'chesscom', timeClass: 'blitz', rating: 2550, games: 0 },
+    ]);
+    expect(summaryRatings(t.db, [])).toEqual([]);
+  });
+
   it('accepts a FIDE id known to the FIDE directory, rejects unknown ids', async () => {
     const res = await create({ displayName: 'Sam', sources: [{ kind: 'fide', key: '1000001' }] });
     expect(res.statusCode, res.body).toBe(200);
@@ -74,6 +92,7 @@ describe('FIDE sources and source helpers', () => {
       title: 'IM',
       gameCount: 0,
       fide: { standard: 2450, rapid: 2400, blitz: null },
+      country: 'NO', // the FIDE directory's federation NOR
     });
     const unknown = await create({ displayName: 'Nobody', sources: [{ kind: 'fide', key: '999' }] });
     expect(unknown.statusCode).toBe(400);

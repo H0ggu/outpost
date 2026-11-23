@@ -37,6 +37,7 @@ import { HttpError, validationError } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import { UPSTREAM, upstreamHttpError, type Upstream } from '../http/upstream.ts';
 import { sourceSyncStatus } from '../jobs/index.ts';
+import { federationCountry } from '../reference/federations.ts';
 import { chesscomSnapshot, type ChesscomProfile, type ChesscomStats } from '../sync/chesscom.ts';
 import { lichessSnapshot, type LichessUser } from '../sync/lichess.ts';
 import { parseSourceProfile } from '../sync/profile.ts';
@@ -310,6 +311,10 @@ async function checkChesscomUser(
   };
 }
 
+/** A FIDE player's country from the reference index's federation (`players_cache`, reference/players.ts). */
+const referenceCountry = (db: Db, fideId: string): string | null =>
+  db.value<string | null>("SELECT country FROM players_cache WHERE kind = 'fide' AND key = ?", [fideId]) ?? null;
+
 /**
  * A FIDE source reads games of public reference databases only (PLAN §5; migrations 601 and 602
  * enforce it for `player_games`), so only those may name the player: a FideId tag in someone's
@@ -357,7 +362,7 @@ async function checkFideId(
     displayName: fideName ?? local!.name,
     siteUserId: fideId,
     title: titleOf(fide?.title) ?? titleOf(local?.title),
-    country: null,
+    country: federationCountry(typeof fide?.federation === 'string' ? fide.federation : null) ?? referenceCountry(db, fideId),
     databaseId: null,
     profileJson: fide ? JSON.stringify(fide) : null,
     existingId: null,

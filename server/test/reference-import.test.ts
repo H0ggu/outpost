@@ -8,7 +8,15 @@ import { getJobHandler } from '../src/jobs/index.ts';
 import { ensureBroadcastDatabase, findOrCreateReferenceDatabase } from '../src/reference/databases.ts';
 import { linkFideSources } from '../src/reference/importer.ts';
 import { DOWNLOAD_IDLE_MS } from '../src/reference/jobs.ts';
-import { indexReferencePlayer, referencePlayerByFideId, searchReferencePlayers } from '../src/reference/players.ts';
+import { federationCountry } from '../src/reference/federations.ts';
+import {
+  backfillFideCountries,
+  indexReferencePlayer,
+  referencePlayerByFideId,
+  searchReferencePlayers,
+  updateFederations,
+} from '../src/reference/players.ts';
+import { opponentsPage, worldMapStats } from '../src/stats/index.ts';
 import { sweepReferenceUploads } from '../src/reference/upload.ts';
 import { IMPORT_DNS } from '../src/reference/urls.ts';
 import { createSource, makeJobContext, makeTestApp, testGame, type TestApp } from './helpers.ts';
@@ -327,6 +335,57 @@ describe('reference imports', () => {
     expect(searchReferencePlayers(t.db, 'Nakamura, H')).toHaveLength(1);
     expect(searchReferencePlayers(t.db, 'hik')).toHaveLength(1);
     expect(t.db.all('SELECT word FROM reference_player_words ORDER BY word').map(r => (r as { word: string }).word)).toEqual(['hikaru', 'nakamura']);
+  });
+
+  it("gives FIDE players their federation's country: world map, opponents' flags, FIDE sources", async () => {
+    expect([federationCountry('GER'), federationCountry(' ned '), federationCountry('ENG'), federationCountry('KOS')]).toEqual(['DE', 'NL', 'GB', 'XK']);
+    expect([federationCountry('FID'), federationCountry('XYZ'), federationCountry(null)]).toEqual([null, null, null]);
+
+    const dbId = ensureBroadcastDatabase(t.db);
+    const me = createSource(t.db, { kind: 'fide', key: '900201', displayName: 'Me, Test' });
+    const opps = [
+      { name: 'Opp, German', fideId: '900202', federation: 'GER' },
+      { name: 'Opp, English', fideId: '900203', federation: null },
+      { name: 'Opp, Flagless', fideId: '900204', federation: 'FID' },
+    ];
+    t.db.tx(() => {
+      for (const [i, o] of opps.entries()) {
+        insertGame(
+          t.db,
+          testGame({
+            origin: 'reference',
+            originId: `${dbId}:fed${i}`,
+            databaseId: dbId,
+            timeClass: 'classical',
+            white: { name: 'Me, Test', fideId: '900201' },
+            black: { name: o.name, fideId: o.fideId },
+          }),
+        );
+        indexReferencePlayer(t.db, dbId, { name: o.name, fideId: o.fideId, title: null, rating: 2400, federation: o.federation }, Date.UTC(2026, 0, i + 1));
+      }
+    });
+    // The English player's federation arrives later, from a broadcast round's previews.
+    updateFederations(t.db, new Map([['900203', 'ENG']]));
+    const scope = { db: t.db, sourceIds: [me], filters: {} };
+    const map = worldMapStats(scope);
+    expect(map.countries.map(c => [c.code, c.games, c.opponents]).sort()).toEqual([
+      ['DE', 1, 1],
+      ['GB', 1, 1],
+    ]);
+    expect(map.unknownGames).toBe(1); // under the FIDE flag
+    expect(map.pendingLookups).toBe(0);
+    const rows = opponentsPage(scope, { view: 'most', page: 1, pageSize: 20, viewer: null }).rows;
+    expect(Object.fromEntries(rows.map(r => [r.name, r.country]))).toEqual({ 'Opp, German': 'DE', 'Opp, English': 'GB', 'Opp, Flagless': null });
+
+    // Federations indexed before countries were cached are copied at startup, once; so is a FIDE
+    // source's own federation from the FIDE directory (kept in profile_json).
+    t.db.run("DELETE FROM players_cache WHERE kind = 'fide'");
+    t.db.run('UPDATE sources SET profile_json = ? WHERE id = ?', [JSON.stringify({ id: 900201, federation: 'NOR' }), me]);
+    expect(worldMapStats(scope).countries).toEqual([]);
+    expect(backfillFideCountries(t.db)).toBe(3);
+    expect(backfillFideCountries(t.db)).toBe(0);
+    expect(worldMapStats(scope).countries).toHaveLength(2);
+    expect(t.db.value('SELECT country FROM sources WHERE id = ?', [me])).toBe('NO');
   });
 
   it('links FIDE sources: insertGame matches by FIDE id, and sources created mid-way are rebuilt', async () => {

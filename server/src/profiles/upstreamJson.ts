@@ -15,6 +15,8 @@ export interface JsonWithinOptions {
   /** Statuses answered with `{status, body: null}` instead of an error (the body is discarded). */
   allowStatuses?: readonly number[];
   auth?: UpstreamInit['auth'];
+  /** A POST with this plain-text body (Lichess `POST /api/users`) instead of a GET. */
+  postText?: string;
 }
 
 /** Settles with `p`, or rejects with the signal's reason as soon as it aborts. */
@@ -43,7 +45,7 @@ function untilAborted<T>(p: Promise<T>, signal: AbortSignal, onAbort: () => void
 }
 
 /**
- * GETs `url` and parses its JSON body within `timeoutMs`. Throws `UpstreamError`: `timeout` when the
+ * GETs `url` (or POSTs `postText`) and parses its JSON body within `timeoutMs`. Throws `UpstreamError`: `timeout` when the
  * deadline passes (headers or body), `aborted` when `signal` fires, `status` for unexpected
  * statuses or invalid JSON, `network` / `rate_limited` as `app.upstream` does.
  */
@@ -68,7 +70,9 @@ export async function upstreamJsonWithin(
       ...(opts.allowStatuses ? { allowStatuses: [...opts.allowStatuses] } : {}),
       timeoutMs: opts.timeoutMs,
       signal,
-      headers: { accept: 'application/json' },
+      ...(opts.postText !== undefined
+        ? { method: 'POST' as const, body: opts.postText, headers: { accept: 'application/json', 'content-type': 'text/plain' } }
+        : { headers: { accept: 'application/json' } }),
     });
   } catch (e) {
     if (e instanceof UpstreamError && e.reason === 'aborted') throw mapAbort(e);

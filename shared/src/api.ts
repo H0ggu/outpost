@@ -647,7 +647,25 @@ export interface ProfileSummary {
   gameCount: number;
   lastUpdated: EpochMs | null;
   bookmarked: boolean;
+  /**
+   * Current ratings of the visible accounts (as in `SourceSummary.ratings`), one per time class: the
+   * account with the most games in it. Most played first, at most `PROFILE_SUMMARY_RATINGS`. `unknown`
+   * only for FIDE and PGN accounts (over-the-board games without a time control).
+   */
+  ratings: ProfileSummaryRating[];
 }
+
+/** One rating of a `ProfileSummary`. */
+export interface ProfileSummaryRating {
+  kind: SourceKind;
+  timeClass: TimeClass;
+  rating: number;
+  /** Games in this time class in Outpost's data. */
+  games: number;
+}
+
+/** Most ratings a `ProfileSummary` carries. */
+export const PROFILE_SUMMARY_RATINGS = 3;
 
 /** `GET /api/profiles` query. `recent` = profiles I viewed recently. */
 export interface ProfileListQuery {
@@ -766,6 +784,28 @@ export interface ExternalPlayerHit {
   known: boolean;
   /** A visible local profile that already includes this account. */
   profileSlug: string | null;
+  // What the site says about the account, to tell lookalikes apart. Present when known: Lichess
+  // answers for every hit (`POST /api/users`), Chess.com for the exact username (profile and
+  // stats); other hits use Outpost's last sync of the account or its opponent lookups.
+  /** Current site ratings per standard time class played there. */
+  ratings?: ExternalHitRating[];
+  /** Last seen online on the site. */
+  seenAt?: EpochMs | null;
+  /** Games on the site (Lichess: standard rated and casual games of the rated time classes; Chess.com: its records). */
+  games?: number | null;
+  /** ISO 3166-1 alpha-2 (the site's profile, or Outpost's opponent lookups). */
+  country?: string | null;
+  /** The site closed the account. */
+  closed?: boolean;
+}
+
+/** A site rating shown with a search hit. */
+export interface ExternalHitRating {
+  timeClass: TimeClass;
+  rating: number;
+  /** Games in this time class on the site, when reported. */
+  games: number | null;
+  provisional: boolean;
 }
 
 /** `GET /api/search`. Each list is independent; an upstream failure leaves its list empty. */
@@ -1240,6 +1280,11 @@ export interface ExplorerPlayerResponse {
   black: number;
   moves: ExplorerPlayerMove[];
   recentGames: ExplorerGameRef[];
+  /**
+   * Outpost extension (lila ignores it): every game reaching the position, including those that
+   * ended there (which no move counts), so `GET /api/explorer/games` lists exactly this many.
+   */
+  games?: number;
 }
 
 /**
