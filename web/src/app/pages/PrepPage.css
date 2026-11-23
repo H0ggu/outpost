@@ -1,0 +1,680 @@
+/* Prep list (`/prep`) and prep report (`/prep/:id`), on screen and on paper. */
+
+.lib-prep-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* --- List of sets --------------------------------------------------------- */
+
+.lib-prep-create {
+  margin-bottom: 1.5rem;
+}
+
+.lib-prep-create .error-box {
+  margin-top: 0.75rem;
+}
+
+.lib-prepsets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.lib-prepset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  border-top: 1px solid var(--c-border);
+}
+
+.lib-prepset__main {
+  flex: 1 1 14rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.85rem 0.5rem;
+  margin: 0 -0.5rem;
+  border-radius: var(--box-radius);
+  color: var(--c-font);
+}
+
+.lib-prepset__main:hover {
+  background: var(--c-bg-zebra);
+  color: var(--c-font);
+}
+
+.lib-prepset__name {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 1.15rem;
+  color: var(--c-font-clear);
+}
+
+.lib-prepset__name i {
+  color: var(--c-accent);
+}
+
+.lib-prepset__main:hover .lib-prepset__name {
+  color: var(--c-link-hover);
+}
+
+.lib-prepset__opps {
+  color: var(--c-font-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-prepset__meta {
+  color: var(--c-font-dimmer);
+  font-size: 0.82rem;
+}
+
+/* --- One set: opponents and filters ---------------------------------------- */
+
+.lib-prep-header .box__pad:empty {
+  display: none;
+}
+
+.lib-prep-header .box__top {
+  padding-bottom: clamp(16px, 3vh, 28px);
+}
+
+.lib-prep-opplist {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lib-prep-opp {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.25rem 0.25rem 0.7rem;
+  border-radius: var(--box-radius);
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-zebra);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lib-prep-opp__name {
+  color: var(--c-font-clear);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.lib-prep-opp .lib-icon-btn {
+  margin: 0;
+}
+
+.lib-opp-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.lib-opp-picker .lib-section-title {
+  margin-top: 1rem;
+}
+
+.lib-prep-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1.25rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--box-radius);
+  background: var(--c-bg-box);
+  border: 1px solid var(--c-border-box);
+  box-shadow: var(--shadow-box);
+}
+
+.lib-prep-filters .form-group {
+  margin: 0;
+}
+
+.lib-tcs {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.lib-tcs legend {
+  color: var(--c-font-dim);
+  font-size: 0.9em;
+  padding: 0;
+  margin-bottom: 0.35rem;
+}
+
+.lib-tc {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--c-font-dim);
+  font-size: 0.9em;
+  user-select: none;
+}
+
+.lib-tc:hover {
+  color: var(--c-font-clear);
+}
+
+.lib-tc--on {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: var(--c-over);
+}
+
+.lib-tc--on:hover {
+  color: var(--c-over);
+}
+
+.lib-tc:focus-within {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
+
+.lib-prep-report {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.lib-prep-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.lib-prep-printhead {
+  margin: 0;
+  color: var(--c-font-dim);
+  font-size: 0.9em;
+}
+
+.lib-prep-printhead strong {
+  color: var(--c-font-clear);
+}
+
+/* --- Report card ---------------------------------------------------------- */
+
+.lib-prep-card {
+  padding: var(--box-padding);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.lib-prep-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+}
+
+.lib-prep-card__who {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.lib-prep-card__who h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.lib-prep-card__who h2 a {
+  color: var(--c-font-clear);
+}
+
+.lib-prep-card__who h2 a:hover {
+  color: var(--c-link-hover);
+}
+
+.lib-prep-card__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.lib-prep-card__nogames {
+  margin: 0;
+}
+
+.lib-prep-ratings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.75rem;
+  margin: 0;
+}
+
+.lib-prep-ratings__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.9rem;
+}
+
+.lib-prep-ratings dt {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-font-dim);
+}
+
+.lib-prep-ratings dd {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.lib-prep-ratings dd strong {
+  color: var(--c-font-clear);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.lib-prep-sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 1.5rem 2rem;
+}
+
+.lib-prep-side {
+  min-width: 0;
+}
+
+.lib-prep-side h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0 0 0.6rem;
+}
+
+.lib-prep-side__count {
+  margin-inline-start: auto;
+  font-size: 0.8em;
+  color: var(--c-font-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.lib-prep-side h4,
+.lib-prep-recent h4,
+.lib-prep-activity h4 {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--c-font-dim);
+}
+
+.lib-prep-recent h4,
+.lib-prep-activity h4 {
+  margin-top: 0;
+}
+
+.lib-colordot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  border: 1px solid var(--c-border-light);
+  vertical-align: -0.1em;
+}
+
+.lib-colordot--white {
+  background: #fff;
+}
+
+.lib-colordot--black {
+  background: #333;
+}
+
+.lib-prep-empty {
+  margin: 0;
+  font-size: 0.92em;
+}
+
+.lib-prep-lines {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.lib-prep-lines th {
+  font-weight: 400;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--c-font-dimmer);
+  text-align: left;
+  padding: 0 0.4rem 0.3rem;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.lib-prep-lines td {
+  padding: 0.4rem;
+  vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
+}
+
+.lib-prep-lines .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  width: 3.6rem;
+}
+
+.lib-prep-lines__bar {
+  width: 28%;
+}
+
+.lib-prep-lines__line {
+  overflow: hidden;
+}
+
+.lib-prep-lines__line a {
+  display: block;
+  color: var(--c-font-clear);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-prep-lines__line a:hover {
+  color: var(--c-link-hover);
+}
+
+.lib-prep-lines__name {
+  display: block;
+  color: var(--c-font-dim);
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-prep-lines strong {
+  font-weight: 500;
+  color: var(--c-font-clear);
+}
+
+.lib-prep-bottom {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 1.5rem 2rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--c-border);
+}
+
+.lib-prep-recent ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lib-prep-recent li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
+  min-width: 0;
+  font-size: 0.92em;
+}
+
+.lib-outcome {
+  flex: 0 0 1.4rem;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.8em;
+  border-radius: 3px;
+  color: var(--c-over);
+  padding: 0.05rem 0;
+}
+
+.lib-outcome--w {
+  background: var(--c-good);
+}
+
+.lib-outcome--d {
+  background: var(--c-wdl-draws);
+}
+
+.lib-outcome--l {
+  background: var(--c-bad);
+}
+
+.lib-prep-recent__opp {
+  flex: 0 1 11rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-font-clear);
+}
+
+.lib-prep-recent__opp .title-badge {
+  margin-inline-end: 0.25em;
+}
+
+.lib-prep-recent__opening {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-font-dim);
+}
+
+.lib-prep-recent__date {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+
+.lib-prep-activity__summary {
+  margin: 0 0 0.75rem;
+}
+
+.lib-prep-activity__summary strong {
+  color: var(--c-font-clear);
+  font-weight: 500;
+}
+
+.lib-prep-activity__charts {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1.25rem;
+}
+
+@media (max-width: 480px) {
+  .lib-prep-activity__charts {
+    grid-template-columns: 1fr;
+  }
+
+  .lib-prep-recent__opening {
+    display: none;
+  }
+
+  .lib-prep-recent__opp {
+    flex: 1;
+  }
+}
+
+/* Activity bars (ActivityBars.tsx) */
+.lib-bars {
+  margin: 0;
+  min-width: 0;
+}
+
+.lib-bars figcaption {
+  font-size: 0.8rem;
+  color: var(--c-font-dim);
+  margin-bottom: 0.3rem;
+}
+
+.lib-bars svg {
+  display: block;
+  width: 100%;
+  height: 4.5rem;
+  overflow: visible;
+}
+
+.lib-bars__axis {
+  stroke: var(--c-border-light);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.lib-bars__hit {
+  fill: transparent;
+}
+
+.lib-bars__bar {
+  fill: color-mix(in oklab, var(--c-primary) 65%, var(--c-bg));
+}
+
+.lib-bars__bar--peak {
+  fill: var(--c-accent);
+}
+
+.lib-bars g:hover .lib-bars__bar {
+  fill: var(--c-primary);
+}
+
+.lib-bars__labels {
+  display: grid;
+  font-size: 0.7rem;
+  color: var(--c-font-dimmer);
+  margin-top: 0.15rem;
+}
+
+.lib-bars__labels span {
+  white-space: nowrap;
+}
+
+/* --- Paper ---------------------------------------------------------------- */
+
+@media print {
+  /* Light, ink-friendly tokens whatever the screen theme is. */
+  html[data-theme]:has(.lib-prep-page) {
+    color-scheme: light;
+    --c-bg: #fff;
+    --c-bg-box: #fff;
+    --c-bg-page: #fff;
+    --c-bg-zebra: #f3f3f3;
+    --c-bg-zebra2: #e8e8e8;
+    --c-bg-low: #e2e2e2;
+    --c-body-gradient: #fff;
+    --c-font: #222;
+    --c-font-dim: #555;
+    --c-font-dimmer: #777;
+    --c-font-clear: #000;
+    --c-font-clearer: #000;
+    --c-border: #c8c8c8;
+    --c-border-light: #999;
+    --c-border-box: transparent;
+    --c-link: #000;
+    --c-link-hover: #000;
+    --c-primary: hsl(209 77% 40%);
+    --c-wdl-draws: #a0a0a0;
+    --shadow-box: none;
+  }
+
+  html:has(.lib-prep-page) body {
+    background: #fff;
+    font-size: 10.5pt;
+  }
+
+  body:has(.lib-prep-page) .site-header,
+  body:has(.lib-prep-page) .site-footer,
+  .lib-prep-page .no-print {
+    display: none !important;
+  }
+
+  body:has(.lib-prep-page) .site-main {
+    max-width: none;
+    padding: 0;
+  }
+
+  .lib-prep-page,
+  .lib-prep-report,
+  .lib-prep-cards {
+    gap: 0.6rem;
+  }
+
+  .lib-prep-header .box__top {
+    padding: 0 0 0.2rem;
+  }
+
+  .lib-prep-header h1 {
+    font-size: 18pt;
+  }
+
+  .lib-prep-card {
+    padding: 0.2rem 0 0;
+    border: 0;
+    box-shadow: none;
+    break-before: page;
+    gap: 0.8rem;
+  }
+
+  .lib-prep-printhead + .lib-prep-card {
+    break-before: auto;
+  }
+
+  .lib-prep-sides,
+  .lib-prep-bottom {
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem 1.5rem;
+  }
+
+  .lib-prep-side,
+  .lib-prep-recent,
+  .lib-prep-activity,
+  .lib-prep-lines tr {
+    break-inside: avoid;
+  }
+
+  .lib-prep-lines__line a,
+  .lib-prep-recent__date,
+  .lib-prep-card__who h2 a {
+    color: #000;
+    text-decoration: none;
+  }
+
+  .wdl-bar span,
+  .lib-outcome,
+  .lib-colordot,
+  .lib-bars__bar,
+  .lib-tc--on {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .lib-results--stale {
+    opacity: 1;
+  }
+}
