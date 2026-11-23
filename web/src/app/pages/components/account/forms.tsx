@@ -28,8 +28,13 @@ export function describeError(error: unknown): string {
     switch (error.code) {
       case 'network':
         return 'Cannot reach the Outpost server. Check the connection and try again.';
-      case 'rate_limited':
-        return 'Too many attempts. Wait a minute, then try again.';
+      case 'rate_limited': {
+        // The auth throttles say how long (details.retryAfterSec, also in Retry-After).
+        const wait = (error.details as { retryAfterSec?: unknown } | undefined)?.retryAfterSec;
+        return typeof wait === 'number' && wait > 0
+          ? `Too many attempts. Try again in ${waitText(wait)}.`
+          : 'Too many attempts. Wait a minute, then try again.';
+      }
       case 'csrf':
         return 'The server refused the request (origin check). Reload the page and try again.';
       case 'payload_too_large':
@@ -46,6 +51,14 @@ export function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
+
+/** A wait in words: "40 seconds", "3 minutes", "2 hours". */
+const waitText = (sec: number): string => {
+  const n = (v: number, unit: string) => `${v} ${unit}${v === 1 ? '' : 's'}`;
+  if (sec < 60) return n(Math.ceil(sec), 'second');
+  if (sec < 3600) return n(Math.ceil(sec / 60), 'minute');
+  return n(Math.ceil(sec / 3600), 'hour');
+};
 
 /** One validation issue from the server (zod: `path`; Fastify schema errors: `instancePath`). */
 interface Issue {

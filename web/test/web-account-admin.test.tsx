@@ -219,9 +219,29 @@ describe('AdminSettingsPage', () => {
     expect(screen.getByText('timeout')).toBeTruthy();
     expect(screen.getByText('api.chess.com')).toBeTruthy();
     expect(screen.getByText('50,000')).toBeTruthy();
-    api().on('GET', '/api/admin/status', adminStatus({ lichessToken: { configured: true, valid: false, userId: null, scopes: [] } }));
+    api().on(
+      'GET',
+      '/api/admin/status',
+      adminStatus({
+        lichessToken: { configured: true, valid: false, userId: null, scopes: [], state: 'invalid', error: 'Lichess refused the token (HTTP 401)', fromEnv: true },
+        jobs: { queued: 2, running: 1, done: 40, error: 3, cancelled: 0 },
+      }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
     expect(await screen.findByText('Invalid')).toBeTruthy();
+    // "Check again" bypasses the server's one-minute probe cache.
+    expect(api().find('GET', '/api/admin/status').at(-1)!.query.get('refresh')).toBe('1');
+    expect(screen.getByText('Lichess refused the token (HTTP 401)')).toBeTruthy();
+    expect(screen.getByText('Failed jobs').nextElementSibling!.textContent).toBe('3');
+    expect(screen.getByText('Running jobs').nextElementSibling!.textContent).toBe('1');
+  });
+
+  it('says when Lichess could not be asked about the token', async () => {
+    settingsServer();
+    api().on('GET', '/api/admin/status', adminStatus({ lichessToken: { configured: true, valid: null, userId: null, scopes: [], state: 'unknown', error: 'timeout' } }));
+    renderAt(<AdminSettingsPage />, { path: '/admin/settings' });
+    const state = await screen.findByText('Could not check');
+    expect(state.closest('section')!.textContent).toContain('timeout');
   });
 
   it('explains a missing token in the status panel', async () => {

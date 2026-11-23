@@ -277,6 +277,19 @@ export function useAdminStatus(enabled = true) {
   });
 }
 
+/**
+ * "Check again": `GET /api/admin/status?refresh=1`, which re-runs the token check and the upstream
+ * probes instead of answering from the server's one-minute cache; the answer replaces the cached
+ * status.
+ */
+export function useRecheckAdminStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.get<AdminStatus>(API_ROUTES.admin.status, { refresh: '1' }),
+    onSuccess: status => qc.setQueryData(accountKeys.adminStatus, status),
+  });
+}
+
 /** `GET /api/admin/users`. */
 export function useAdminUsers() {
   return useQuery({

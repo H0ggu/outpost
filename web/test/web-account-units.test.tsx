@@ -91,6 +91,9 @@ describe('API errors in forms', () => {
   it('explains transport and throttling errors', () => {
     expect(describeError(new ApiError(0, 'network', 'x'))).toMatch(/Cannot reach the Outpost server/);
     expect(describeError(new ApiError(429, 'rate_limited', 'x'))).toMatch(/Too many attempts/);
+    // The auth throttles' details say how long to wait.
+    expect(describeError(new ApiError(429, 'rate_limited', 'x', { retryAt: 0, retryAfterSec: 125 }))).toBe('Too many attempts. Try again in 3 minutes.');
+    expect(describeError(new ApiError(429, 'rate_limited', 'x', { retryAt: 0, retryAfterSec: 1 }))).toBe('Too many attempts. Try again in 1 second.');
     expect(describeError(new ApiError(403, 'csrf', 'x'))).toMatch(/origin check/);
     expect(describeError(new ApiError(413, 'payload_too_large', 'HTTP 413'))).toBe('The upload is too large.');
     expect(describeError(new ApiError(500, 'internal', 'Internal server error'))).toMatch(/unexpected error/);

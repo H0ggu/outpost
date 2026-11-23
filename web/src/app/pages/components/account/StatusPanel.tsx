@@ -3,9 +3,10 @@
  * database size, the Lichess token check, upstream reachability, and row counts. `StatusSummary`
  * is the compact version shown under the admin menu.
  */
-import type { AdminStatus, UpstreamStatus } from '@outpost/shared/api';
+import { Fragment } from 'react';
+import type { AdminStatus, JobStatus, UpstreamStatus } from '@outpost/shared/api';
 import { Box, Button, ErrorBox, licon, Spinner } from '../../../components/index.ts';
-import { useAdminStatus } from '../../account-hooks.ts';
+import { useAdminStatus, useRecheckAdminStatus } from '../../account-hooks.ts';
 import { formatBytes, formatCount, formatDuration, relativeTime } from './format.ts';
 import './account.css';
 
@@ -17,13 +18,30 @@ export const UPSTREAM_LABELS: Readonly<Record<UpstreamStatus['name'], string>> =
   'lichess-database': 'Lichess database (broadcasts)',
 };
 
-/** Token state as one word and a tone. */
+/**
+ * Token state as one word and a tone: the server's `state` when it sends one (`unknown` = Lichess
+ * could not be asked), else derived from `configured` / `valid`.
+ */
 export function tokenState(t: AdminStatus['lichessToken']): { text: string; tone: 'good' | 'bad' | 'warn' | 'dim' } {
-  if (!t.configured) return { text: 'Not set', tone: 'warn' };
-  if (t.valid === true) return { text: 'Valid', tone: 'good' };
-  if (t.valid === false) return { text: 'Invalid', tone: 'bad' };
-  return { text: 'Not checked', tone: 'dim' };
+  const state = t.state ?? (!t.configured ? 'missing' : t.valid === true ? 'valid' : t.valid === false ? 'invalid' : 'unknown');
+  switch (state) {
+    case 'missing':
+      return { text: 'Not set', tone: 'warn' };
+    case 'valid':
+      return { text: 'Valid', tone: 'good' };
+    case 'invalid':
+      return { text: 'Invalid', tone: 'bad' };
+    default:
+      return { text: 'Could not check', tone: 'dim' };
+  }
 }
+
+/** Job states in the order the Data card lists them. */
+const JOB_STATES: ReadonlyArray<[JobStatus, string]> = [
+  ['queued', 'Queued jobs'],
+  ['running', 'Running jobs'],
+  ['error', 'Failed jobs'],
+];
 
 const hostOf = (url: string): string => {
   try {
@@ -35,7 +53,11 @@ const hostOf = (url: string): string => {
 
 export function StatusPanel() {
   const status = useAdminStatus();
+  const recheck = useRecheckAdminStatus();
   const s = status.data;
+  // When the server ran its probes (they are cached for about a minute), else when we got the answer.
+  const checkedAt = s?.checkedAt ?? (status.dataUpdatedAt > 0 ? status.dataUpdatedAt : null);
+  const busy = status.isFetching || recheck.isPending;
   return (
     <Box
       title="Status"
@@ -43,19 +65,14 @@ export function StatusPanel() {
       id="status"
       actions={
         <>
-          {s && status.dataUpdatedAt > 0 && <span className="muted acc-small">Checked {relativeTime(status.dataUpdatedAt)}</span>}
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={licon.Reload}
-            disabled={status.isFetching}
-            onClick={() => void status.refetch()}
-          >
-            {status.isFetching ? 'Checking…' : 'Check again'}
+          {s && checkedAt !== null && <span className="muted acc-small">Checked {relativeTime(checkedAt)}</span>}
+          <Button variant="secondary" size="sm" icon={licon.Reload} disabled={busy} onClick={() => recheck.mutate()}>
+            {busy ? 'Checking…' : 'Check again'}
           </Button>
         </>
       }
     >
+      {recheck.isError && <ErrorBox error={recheck.error} title="Could not check again" />}
       {status.isPending ? (
         <Spinner center label="Checking the instance" />
       ) : status.isError && !s ? (
@@ -99,7 +116,9 @@ function StatusBody({ s }: { s: AdminStatus }) {
               aria-hidden
             />
             {token.text}
+            {s.lichessToken.fromEnv && <span className="acc-badge acc-badge--queued">env</span>}
           </p>
+          {s.lichessToken.error && <p className="acc-help bad">{s.lichessToken.error}</p>}
           <dl className="acc-dl">
             {s.lichessToken.userId && (
               <>
@@ -137,8 +156,19 @@ function StatusBody({ s }: { s: AdminStatus }) {
             <dd>{formatCount(s.counts.referenceGames)}</dd>
             <dt>Positions</dt>
             <dd>{formatCount(s.counts.positions)}</dd>
-            <dt>Queued jobs</dt>
-            <dd>{formatCount(s.counts.queuedJobs)}</dd>
+            {s.jobs ? (
+              JOB_STATES.map(([state, label]) => (
+                <Fragment key={state}>
+                  <dt>{label}</dt>
+                  <dd className={state === 'error' && s.jobs![state] > 0 ? 'bad' : undefined}>{formatCount(s.jobs![state])}</dd>
+                </Fragment>
+              ))
+            ) : (
+              <>
+                <dt>Queued jobs</dt>
+                <dd>{formatCount(s.counts.queuedJobs)}</dd>
+              </>
+            )}
           </dl>
         </section>
       </div>
