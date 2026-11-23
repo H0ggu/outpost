@@ -5,6 +5,7 @@ import {
   API_ROUTES,
   type ActivityStats,
   type BehaviourStats,
+  type EventsResponse,
   type GamesPage,
   type OpeningsResponse,
   type OpponentsPage,
@@ -20,6 +21,7 @@ import { loadProfileForViewer, type ViewableProfile } from '../profiles/access.t
 import {
   activityStats,
   behaviourStats,
+  eventSuggestions,
   GAMES_MAX_PAGE_SIZE,
   GAMES_PAGE_SIZE,
   gamesPage,
@@ -50,6 +52,8 @@ import {
  *   - GET /api/profiles/:slug/worldmap (WorldMapStats)
  *   - GET /api/profiles/:slug/activity (ActivityQuery → ActivityStats)
  *   - GET /api/profiles/:slug/rating (RatingQuery → RatingStats)
+ *   - GET /api/profiles/:slug/events (EventsQuery → EventsResponse: event-name suggestions; `q`
+ *     only, no filters)
  *
  * Every route: requireViewer, then loadProfileForViewer (404 for private profiles of others; hidden
  * sources only for editors); filters through playerGamesWhere (src/stats/filterSql.ts). The
@@ -80,6 +84,9 @@ const openingsParams = z
 const opponentsParams = pageQuery(OPPONENTS_PAGE_SIZE, OPPONENTS_MAX_PAGE_SIZE).extend({
   view: z.enum(['most', 'titled']).default('most'),
 });
+
+/** `q` of the event suggestions (the `event` filter's bound). */
+const eventsParams = z.object({ q: z.string().trim().max(200).optional().transform(q => q ?? '') });
 
 /** `tz` (IANA zone); absent or empty means UTC, like an empty filter value means no filter. */
 const activityParams = z.object({
@@ -155,6 +162,13 @@ const statsRoutes: FastifyPluginAsync = async app => {
   });
 
   app.get(API_ROUTES.stats.rating(':slug'), opts, async (req): Promise<RatingStats> => ratingStats(scopeOf(req).scope));
+
+  app.get(API_ROUTES.stats.events(':slug'), opts, async (req): Promise<EventsResponse> => {
+    const { slug } = parseParams(slugParams, req.params);
+    const profile = loadProfileForViewer(app.db, slug, req.user);
+    const { q } = parseQuery(eventsParams, req.query);
+    return eventSuggestions(app.db, profile.sourceIds, q);
+  });
 };
 
 export default statsRoutes;

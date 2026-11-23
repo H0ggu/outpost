@@ -244,6 +244,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 | `/api/profiles/:slug/worldmap` | `{countries:[{code (ISO alpha-2), games, opponents, w, d, l}], unknownGames, pendingLookups}` |
 | `/api/profiles/:slug/activity` | `?tz=IANA`. Returns `{days:[{date,games,score}], byHour[24], byWeekday[7], grid[7][24]}`, each with games and score |
 | `/api/profiles/:slug/rating` | Filters only (narrow the filter's `src`/`tc` to chart one source or time class). Returns `{series:[{sourceId, timeClass, points:[[t, rating]]}], averages:[{n, avgRating, avgOppRating, score}]}` |
+| `/api/profiles/:slug/events` | `?q=` only (no filters): event-name suggestions for the filters bar. Returns `{events:[{name, games}]}`, at most 20 distinct events of the visible sources, events starting with `q` first, then substring matches, most played first |
 
 ### Games, explorer and proxies
 | Method | Path | Notes |

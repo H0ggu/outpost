@@ -1020,6 +1020,38 @@ export interface RatingStats {
   averages: RatingAverage[];
 }
 
+/** Most suggestions in an `EventsResponse`. */
+export const EVENT_SUGGESTIONS_MAX = 20;
+
+/**
+ * `GET /api/profiles/:slug/events` query: event-name suggestions for the filters bar's `event`
+ * field (decision 35). Takes only `q`, not the filters: suggestions cover every game of the
+ * profile's sources the viewer may see.
+ */
+export interface EventsQuery {
+  /**
+   * Text typed so far (trimmed, at most 200 characters). Events containing it match,
+   * case-insensitively like the `event` filter; events starting with it come first. Empty or
+   * absent = the profile's most played events.
+   */
+  q?: string;
+}
+
+/** One event name with the number of the profile's games played in it. */
+export interface EventSuggestion {
+  name: string;
+  games: number;
+}
+
+/**
+ * `GET /api/profiles/:slug/events`: at most `EVENT_SUGGESTIONS_MAX` distinct `games.event` values
+ * of the profile's visible sources, prefix matches first, then by games (most first) and name.
+ * Selecting one sets the `event` filter, which matches by substring.
+ */
+export interface EventsResponse {
+  events: EventSuggestion[];
+}
+
 // ===========================================================================
 // Games (PLAN §6 "Games, explorer and proxies")
 // ===========================================================================
@@ -1790,6 +1822,8 @@ export const API_ROUTES = {
     worldmap: (slug: string) => `/api/profiles/${seg(slug)}/worldmap`,
     activity: (slug: string) => `/api/profiles/${seg(slug)}/activity`,
     rating: (slug: string) => `/api/profiles/${seg(slug)}/rating`,
+    /** Event-name suggestions (`EventsQuery` → `EventsResponse`); the only stats route without filters. */
+    events: (slug: string) => `/api/profiles/${seg(slug)}/events`,
   },
 
   // Games, explorer and proxies

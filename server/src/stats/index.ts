@@ -26,6 +26,7 @@ export {
 export { scopeWhere, type StatsScope } from './common.ts';
 export { activityStats, localActivity, recentDays } from './activity.ts';
 export { behaviourStats, outcomeBreakdown } from './behaviour.ts';
+export { eventSuggestions } from './events.ts';
 export { canViewGame, loadGameForViewer } from './gameDetail.ts';
 export { GAME_LIST_ORDER, GAMES_MAX_PAGE_SIZE, GAMES_PAGE_SIZE, gamesPage, latestGames, selectGameRows } from './games.ts';
 export { OPENINGS_MAX_MOVES, openingsStats, type OpeningsOptions } from './openings.ts';
