@@ -41,7 +41,7 @@ export const FAILURE_LIMITS = {
   /** Wrong password / TOTP code / current password, per account. */
   account: { max: 10, windowMs: 15 * MIN },
   /** Unknown, used or expired invite codes, per IP. */
-  invite: { max: 10, windowMs: 15 * MIN },
+  invite: { max: 5, windowMs: 15 * MIN },
 } as const;
 
 /** 429 `rate_limited` with when to retry. */
