@@ -83,10 +83,27 @@ export const errorBody = (code: ApiErrorCode, message: string, details?: unknown
 export const zodIssues = (e: ZodError): Array<{ path: string; message: string }> =>
   e.issues.map(i => ({ path: i.path.map(String).join('.'), message: i.message }));
 
+/**
+ * Logs a 5xx `HttpError`. An upstream that is down, rate limited or answers an error is an expected
+ * state rather than a bug, so it is a warning without a stack; a feature that needs the Lichess
+ * token the operator did not configure (`details.reason: 'no_token'`) is only info, or every visit
+ * to Broadcasts would add an error line. Anything else is an error with its stack.
+ */
+function logServerError(req: FastifyRequest, err: HttpError): void {
+  const reason = (err.details as { reason?: unknown } | null | undefined)?.reason;
+  if (err.code === 'upstream_unavailable' && reason === 'no_token') {
+    req.log.info({ code: err.code, reason }, err.message);
+  } else if (err.code === 'upstream_unavailable' || err.code === 'upstream_error') {
+    req.log.warn({ code: err.code, details: err.details }, err.message);
+  } else {
+    req.log.error({ err }, err.message);
+  }
+}
+
 /** Fastify error handler producing `{error:{code,message}}`. Registered first in buildApp. */
 export function errorHandler(err: FastifyError | Error, req: FastifyRequest, reply: FastifyReply): void {
   if (err instanceof HttpError) {
-    if (err.statusCode >= 500) req.log.error({ err }, err.message);
+    if (err.statusCode >= 500) logServerError(req, err);
     void reply.status(err.statusCode).send(errorBody(err.code, err.message, err.details));
     return;
   }
