@@ -48,7 +48,10 @@ export function settingsProblems(d: Draft): Record<string, string> {
   const token = d.tokenInput.trim();
   if (token && !/^[A-Za-z0-9_]+$/.test(token)) p.lichessToken = 'A Lichess token has only letters, digits and _ (it starts with lip_).';
   if (token.length > 2048) p.lichessToken = 'That token is too long.';
-  if (d.chesscomContact.trim().length > 200) p.chesscomContact = 'Keep it under 200 characters.';
+  const contact = d.chesscomContact.trim();
+  if (contact.length > 200) p.chesscomContact = 'Keep it under 200 characters.';
+  // It goes into the User-Agent header, so the server accepts printable ASCII only.
+  else if (contact && !/^[\x20-\x7e]+$/.test(contact)) p.chesscomContact = 'Use plain ASCII text (e.g. an e-mail address or a URL).';
   return p;
 }
 
@@ -69,8 +72,7 @@ export function settingsPatch(s: AdminSettings, d: Draft): UpdateAdminSettingsRe
   if (Number(d.updateCooldownMinutes) !== s.updateCooldownMinutes) out.updateCooldownMinutes = Number(d.updateCooldownMinutes);
   if (Number(d.initialSyncMonths) !== s.initialSyncMonths) out.initialSyncMonths = Number(d.initialSyncMonths);
   if (d.mastersSource !== s.mastersSource) out.mastersSource = d.mastersSource;
-  // Only servers that report the setting accept it.
-  if ('broadcastAutoImport' in s && d.broadcastAutoImport !== (s.broadcastAutoImport ?? false)) out.broadcastAutoImport = d.broadcastAutoImport;
+  if (d.broadcastAutoImport !== (s.broadcastAutoImport ?? false)) out.broadcastAutoImport = d.broadcastAutoImport;
   return out;
 }
 

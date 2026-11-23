@@ -191,7 +191,7 @@ describe('AdminSettingsPage', () => {
     expect(screen.getByText(/Only people with an invite link or code/)).toBeTruthy();
   });
 
-  it('offers broadcast auto-import only when the server reports it', async () => {
+  it('offers broadcast auto-import (decision 22)', async () => {
     settingsServer(adminSettings({ broadcastAutoImport: false }));
     renderAt(<AdminSettingsPage />, { path: '/admin/settings' });
     fireEvent.click(await screen.findByRole('switch', { name: 'Import finished broadcast rounds automatically' }));
@@ -199,11 +199,11 @@ describe('AdminSettingsPage', () => {
     await waitFor(() => expect(api().find('PUT', '/api/admin/settings')[0]?.body).toEqual({ broadcastAutoImport: true }));
   });
 
-  it('hides it from servers without the setting', async () => {
-    settingsServer();
+  it('says broadcast auto-import needs the Lichess token when none is set', async () => {
+    settingsServer(adminSettings({ lichessToken: { set: false, masked: null, fromEnv: false } }));
     renderAt(<AdminSettingsPage />, { path: '/admin/settings' });
-    await screen.findByRole('button', { name: 'Save settings' });
-    expect(screen.queryByRole('switch', { name: /broadcast rounds/ })).toBeNull();
+    await screen.findByRole('switch', { name: 'Import finished broadcast rounds automatically' });
+    expect(screen.getByText(/which is not set: nothing is imported until you add one/)).toBeTruthy();
   });
 
   it('shows the status panel: versions, size, token, upstreams, counts', async () => {

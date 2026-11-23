@@ -198,6 +198,7 @@ export const adminSettings = (o: Partial<AdminSettings> = {}): AdminSettings => 
   updateCooldownMinutes: 15,
   initialSyncMonths: 0,
   mastersSource: 'lichess',
+  broadcastAutoImport: false,
   ...o,
 });
 

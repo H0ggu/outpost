@@ -178,10 +178,12 @@ describe('admin settings draft', () => {
     expect(settingsPatch(env, draftOf(env))).toEqual({});
   });
 
-  it('sends broadcastAutoImport only to servers that report it', () => {
-    expect(settingsPatch(s, { ...draftOf(s), broadcastAutoImport: true })).toEqual({});
-    const withIt = adminSettings({ broadcastAutoImport: false });
-    expect(settingsPatch(withIt, { ...draftOf(withIt), broadcastAutoImport: true })).toEqual({ broadcastAutoImport: true });
+  it('sends broadcastAutoImport when it changes (absent counts as off, decision 22)', () => {
+    expect(settingsPatch(s, draftOf(s))).toEqual({});
+    expect(settingsPatch(s, { ...draftOf(s), broadcastAutoImport: true })).toEqual({ broadcastAutoImport: true });
+    const { broadcastAutoImport: _omit, ...without } = s;
+    expect(draftOf(without).broadcastAutoImport).toBe(false);
+    expect(settingsPatch(without, { ...draftOf(without), broadcastAutoImport: true })).toEqual({ broadcastAutoImport: true });
   });
 
   it('checks ranges and token format', () => {
@@ -189,6 +191,8 @@ describe('admin settings draft', () => {
     expect(settingsProblems(d)).toEqual({});
     const p = settingsProblems({ ...d, updateCooldownMinutes: '-1', initialSyncMonths: '1.5', tokenInput: 'lip bad', chesscomContact: 'x'.repeat(201) });
     expect(Object.keys(p).sort()).toEqual(['chesscomContact', 'initialSyncMonths', 'lichessToken', 'updateCooldownMinutes']);
+    // The contact goes into the User-Agent header: the server takes printable ASCII only.
+    expect(settingsProblems({ ...d, chesscomContact: 'ops@exämple.org' }).chesscomContact).toBeDefined();
     expect(settingsProblems({ ...d, updateCooldownMinutes: '' }).updateCooldownMinutes).toBeDefined();
     expect(settingsProblems({ ...d, initialSyncMonths: '601' }).initialSyncMonths).toBeDefined();
   });

@@ -248,7 +248,7 @@ function SettingsForm({ settings, saved, onSaved }: { settings: AdminSettings; s
               value={draft.initialSyncMonths}
               onChange={e => set('initialSyncMonths', e.target.value)}
               error={field.initialSyncMonths}
-              help="How far back a newly added account is imported. 0 = its whole history."
+              help="How far back a newly added account is imported. 0 = its whole history. It applies to each account's first import only: changing it later neither fetches nor removes older games, and a full resync always reads the whole history."
             />
           </div>
         </section>
@@ -282,14 +282,18 @@ function SettingsForm({ settings, saved, onSaved }: { settings: AdminSettings; s
               {!mastersKnown && <option value={settings.mastersSource}>Reference database #{settings.mastersSource.split(':')[1]}</option>}
             </select>
           </Field>
-          {'broadcastAutoImport' in settings && (
-            <Toggle
-              label="Import finished broadcast rounds automatically"
-              checked={draft.broadcastAutoImport}
-              onChange={v => set('broadcastAutoImport', v)}
-              help="Adds finished official Lichess broadcast rounds to the built-in “Lichess broadcasts” reference database (CC BY-SA 4.0). Needs the Lichess token."
-            />
-          )}
+          <Toggle
+            label="Import finished broadcast rounds automatically"
+            checked={draft.broadcastAutoImport}
+            onChange={v => set('broadcastAutoImport', v)}
+            help={
+              <>
+                Adds finished official Lichess broadcast rounds to the built-in “Lichess broadcasts” reference database (CC BY-SA
+                4.0). It needs the Lichess API token
+                {token.set && !draft.clearToken ? '.' : ', which is not set: nothing is imported until you add one.'}
+              </>
+            }
+          />
         </section>
 
         {form && <Flash kind="failure">{form}</Flash>}
