@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
 import { Readable } from 'node:stream';
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import {
   API_ROUTES,
   slugify,
@@ -40,6 +40,7 @@ import { badRequest, HttpError } from '../http/errors.ts';
 import { idParams, parseBody, parseParams, parseQuery, zId } from '../http/validate.ts';
 import { registerJobHandler } from '../jobs/index.ts';
 import { loadDatabaseForViewer } from '../profiles/access.ts';
+import { perUserRateLimit } from '../profiles/rateLimit.ts';
 
 /**
  * Databases routes — PLAN §6 "Databases, files, reference, broadcasts and prep", §5 custom PGN databases, §4 databases/games.
@@ -62,11 +63,8 @@ import { loadDatabaseForViewer } from '../profiles/access.ts';
 
 /** Imports per IP per minute. */
 export const IMPORT_RATE_LIMIT = { max: 20, timeWindow: 60_000 } as const;
-/** Per-user throttle on the route hook after `requireUser` (so the user is known). */
-const perUser = (max: number, timeWindow: number) =>
-  ({ max, timeWindow, hook: 'preHandler', keyGenerator: (req: FastifyRequest) => `user:${req.user?.id ?? req.ip}` }) as const;
 /** Exports per user per minute (a reference DB can be millions of games). */
-export const EXPORT_RATE_LIMIT = perUser(10, 60_000);
+export const EXPORT_RATE_LIMIT = perUserRateLimit(10, 60_000);
 /** JSON body limit of the import route: pasted PGN plus JSON escaping. Uploads (multipart) are streamed and not affected. */
 const PASTE_BODY_LIMIT = Math.ceil(MAX_PASTE_BYTES * 1.25) + 64 * 1024;
 

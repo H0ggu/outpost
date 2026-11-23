@@ -1541,6 +1541,12 @@ export interface PrepOpponentReport {
   /** When they play: by hour and weekday in the requested zone. */
   activity: Pick<ActivityStats, 'tz' | 'byHour' | 'byWeekday'>;
   ratings: Array<{ sourceId: Id; kind: SourceKind; ratings: CurrentRating[] }>;
+  /**
+   * When the opponent has more selected games than the report samples: the number of most recent
+   * games the lines and the activity were computed from (games and W/D/L always count all). Null
+   * or absent: all games.
+   */
+  sampledGames?: number | null;
 }
 
 /** Endpoint params of `GET /api/prep/:id/report`: IANA zone for the activity buckets (default UTC). */

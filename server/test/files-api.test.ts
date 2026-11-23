@@ -1,6 +1,6 @@
 import type { FileSearchResponse, FilesResponse, FoldersResponse, StudioFile } from '@outpost/shared/api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { indexPgnPositions } from '../src/files/index.ts';
+import { indexPgnPositions, MAX_FILE_BYTES_PER_USER, MAX_INDEXED_POSITIONS_PER_USER } from '../src/files/index.ts';
 import { createUserSession, makeTestApp, mutationHeaders, type TestApp } from './helpers.ts';
 import { STUDY_PGN } from './fixtures/profiles/pgn.ts';
 
@@ -180,9 +180,9 @@ describe('files API', () => {
     expect((await req(me, 'GET', `/api/files/search?fen=${encodeURIComponent(twoKings)}`)).statusCode).toBe(400);
   });
 
-  it('indexes set-up positions with lila plies and skips other variants', () => {
+  it('indexes set-up positions with lila plies and skips other variants', async () => {
     const pgn = `[SetUp "1"]\n[FEN "4k3/8/8/8/8/8/4P3/4K3 b - - 0 30"]\n\n30... Kd7 31. e4 *\n\n[Variant "Atomic"]\n\n1. e4 *\n\n1. e4 e5 2. Ke3 Nf6 *`;
-    const r = indexPgnPositions(pgn);
+    const r = await indexPgnPositions(pgn);
     expect(r.games).toBe(3);
     expect(r.error).toBeNull();
     expect(r.positions.filter(p => p.gameIndex === 0).map(p => [p.ply, p.nextSan])).toEqual([
@@ -197,6 +197,146 @@ describe('files API', () => {
       [1, 'e5'],
       [2, null],
     ]);
-    expect(indexPgnPositions('1. e4 e5 2. Nf3 *', 2)).toMatchObject({ truncated: true, positions: [{ ply: 0 }, { ply: 1 }] });
+    expect(await indexPgnPositions('1. e4 e5 2. Nf3 *', 2)).toMatchObject({ truncated: true, positions: [{ ply: 0 }, { ply: 1 }] });
+    expect(await indexPgnPositions('')).toEqual({ positions: [], games: 0, truncated: false, error: null });
+  });
+
+  it('indexes large files in steps, keeping the event loop responsive', async () => {
+    // ~2 MB of PGN: many games, so the parser streams over many chunks.
+    const games = Array.from({ length: 8000 }, (_, i) => `[Event "G${i}"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 *`).join('\n\n');
+    let ticks = 0;
+    let maxGap = 0;
+    let last = performance.now();
+    const timer = setInterval(() => {
+      const now = performance.now();
+      maxGap = Math.max(maxGap, now - last);
+      last = now;
+      ticks++;
+    }, 1);
+    try {
+      const r = await indexPgnPositions(games);
+      expect(r).toMatchObject({ games: 8000, truncated: false, error: null });
+      expect(r.positions.filter(p => p.gameIndex === 7999)).toHaveLength(15);
+    } finally {
+      clearInterval(timer);
+    }
+    // Timers ran while it worked: no single step held the loop for long.
+    expect(ticks).toBeGreaterThan(5);
+    expect(maxGap).toBeLessThan(250);
+  });
+
+  it('caps the indexed positions per user', async () => {
+    const cap = await makeTestApp();
+    try {
+      const u = createUserSession(cap.db, { username: 'cap' });
+      const filler = cap.db.run("INSERT INTO files (owner_user_id, name, kind, pgn, created_at, updated_at) VALUES (?, 'filler', 'study', '*', 0, 0)", [
+        u.userId,
+      ]).lastInsertRowid;
+      cap.db.run('INSERT INTO file_index (file_id, indexed_at, games, positions) VALUES (?, 0, 1, ?)', [filler, MAX_INDEXED_POSITIONS_PER_USER - 3]);
+      const created = await cap.app.inject({
+        method: 'POST',
+        url: '/api/files',
+        headers: { ...mutationHeaders, cookie: u.cookie },
+        payload: { folder: '', name: 'late', kind: 'study', pgn: '1. e4 e5 2. Nf3 Nc6 *' },
+      });
+      const id = created.json<StudioFile>().id;
+      const res = await cap.app.inject({ url: `/api/files/search?fen=${encodeURIComponent(AFTER_E4)}`, headers: { cookie: u.cookie } });
+      expect(res.json<FileSearchResponse>().hits.map(h => h.file.id)).toEqual([id]);
+      expect(cap.db.get('SELECT positions, error FROM file_index WHERE file_id = ?', [id])).toEqual({
+        positions: 3,
+        error: expect.stringMatching(/position index is full/),
+      });
+    } finally {
+      await cap.close();
+    }
+  });
+
+  it('enforces the storage quota per user, counting the bin', async () => {
+    const quota = await makeTestApp();
+    try {
+      const u = createUserSession(quota.db, { username: 'q' });
+      const call = (method: string, url: string, payload?: unknown) =>
+        quota.app.inject({ method: method as 'GET', url, headers: { ...(method === 'GET' ? {} : mutationHeaders), cookie: u.cookie }, ...(payload ? { payload: payload as object } : {}) });
+      // Pretend the user already stores all but 10 bytes.
+      quota.db.run("INSERT INTO files (owner_user_id, name, kind, pgn, pgn_bytes, created_at, updated_at) VALUES (?, 'big', 'study', '', ?, 0, 0)", [
+        u.userId,
+        MAX_FILE_BYTES_PER_USER - 10,
+      ]);
+      const ok = await call('POST', '/api/files', { folder: '', name: 'small', kind: 'study', pgn: '1. e4 *' });
+      expect(ok.statusCode, ok.body).toBe(200);
+      const small = ok.json<StudioFile>();
+      const over = await call('POST', '/api/files', { folder: '', name: 'more', kind: 'study', pgn: '1. d4 d5 *' });
+      expect(over.statusCode).toBe(403);
+      expect(over.json().error).toMatchObject({ code: 'forbidden', details: { maxBytes: MAX_FILE_BYTES_PER_USER } });
+      // Growing a file counts the difference; shrinking or renaming always works (multi-byte text counts in bytes).
+      expect((await call('PUT', `/api/files/${small.id}`, { pgn: '1. e4 {ÅÅ} *' })).statusCode).toBe(403);
+      expect((await call('PUT', `/api/files/${small.id}`, { pgn: '1. e4 e5 *' })).statusCode).toBe(200);
+      expect((await call('PUT', `/api/files/${small.id}`, { name: 'renamed' })).statusCode).toBe(200);
+      expect(quota.db.value('SELECT pgn_bytes FROM files WHERE id = ?', [small.id])).toBe(Buffer.byteLength('1. e4 e5 *'));
+      // The bin counts until it is emptied.
+      const bigId = quota.db.value<number>("SELECT id FROM files WHERE name = 'big'")!;
+      await call('DELETE', `/api/files/${bigId}`);
+      expect((await call('POST', '/api/files', { folder: '', name: 'more', kind: 'study', pgn: '1. d4 d5 *' })).statusCode).toBe(403);
+      await call('DELETE', `/api/files/${bigId}`);
+      expect((await call('POST', '/api/files', { folder: '', name: 'more', kind: 'study', pgn: '1. d4 d5 *' })).statusCode).toBe(200);
+    } finally {
+      await quota.close();
+    }
+  });
+
+  it('throttles saves and searches per user', async () => {
+    const th = await makeTestApp();
+    try {
+      const a = createUserSession(th.db, { username: 'a' });
+      const b = createUserSession(th.db, { username: 'b' });
+      const get = (s: Session, url: string) => th.app.inject({ url, headers: { cookie: s.cookie } });
+      const url = `/api/files/search?fen=${encodeURIComponent(START)}`;
+      let status = 0;
+      for (let i = 0; i < 31 && status !== 429; i++) status = (await get(a, url)).statusCode;
+      expect(status).toBe(429);
+      // Per user, not per IP: b (same address) is not affected.
+      expect((await get(b, url)).statusCode).toBe(200);
+      let save = 0;
+      for (let i = 0; i < 121 && save !== 429; i++) {
+        save = (
+          await th.app.inject({
+            method: 'POST',
+            url: '/api/files',
+            headers: { ...mutationHeaders, cookie: a.cookie },
+            payload: { folder: '', name: `f${i}`, kind: 'study', pgn: '*' },
+          })
+        ).statusCode;
+      }
+      expect(save).toBe(429);
+    } finally {
+      await th.close();
+    }
+  });
+
+  it('keeps the index consistent with concurrent searches, saves and the bin', async () => {
+    const f = await create(me, { folder: 'Race', name: 'Racer', kind: 'study', pgn: '1. e4 e5 2. Nf3 *' });
+    // Two searches at once build the index once.
+    const [x, y] = await Promise.all([search(me, AFTER_E4), search(me, AFTER_E4)]);
+    expect(x.hits.find(h => h.file.id === f.id)).toBeTruthy();
+    expect(y.hits.find(h => h.file.id === f.id)).toBeTruthy();
+    expect(t.db.value('SELECT COUNT(*) FROM file_positions WHERE file_id = ?', [f.id])).toBe(4);
+    expect(t.db.get('SELECT games, positions FROM file_index WHERE file_id = ?', [f.id])).toEqual({ games: 1, positions: 4 });
+
+    // A save while an index is being built: the stale build gives up, the next search sees the new PGN.
+    const big = Array.from({ length: 3000 }, () => '1. d4 d5 2. c4 e6 *').join('\n\n');
+    const g = await create(me, { folder: 'Race', name: 'Big', kind: 'study', pgn: big });
+    const pending = search(me, AFTER_E4);
+    await new Promise(resolve => setImmediate(resolve));
+    await req(me, 'PUT', `/api/files/${g.id}`, { pgn: '1. e4 c5 *' });
+    await pending;
+    const hits = (await search(me, AFTER_E4)).hits.map(h => h.file.id);
+    expect(hits).toContain(g.id);
+    expect(t.db.value('SELECT COUNT(*) FROM file_positions WHERE file_id = ?', [g.id])).toBe(3);
+
+    // Binning drops the index; restoring rebuilds it on the next search.
+    await req(me, 'DELETE', `/api/files/${g.id}`);
+    expect(t.db.value('SELECT COUNT(*) FROM file_positions WHERE file_id = ?', [g.id])).toBe(0);
+    await req(me, 'POST', `/api/files/${g.id}/restore`);
+    expect((await search(me, AFTER_E4)).hits.map(h => h.file.id)).toContain(g.id);
   });
 });

@@ -13,8 +13,12 @@
  * - the 10 most recent games (`GAME_ROW_SELECT` / `toGameRow`);
  * - activity by hour and weekday in `tz`;
  * - current ratings per visible source.
- * All scores are from the opponent's side.
+ * All scores are from the opponent's side. Games and W/D/L count every selected game; the lines
+ * and the activity come from the `PREP_MAX_GAMES` most recent ones (`sampledGames` says when
+ * that is fewer than all), so a report over opponents with huge histories stays quick. The report
+ * yields to the event loop between opponents.
  */
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { Chess } from 'chessops/chess';
 import { makeSanAndPlay, parseSan } from 'chessops/san';
 import type {
@@ -194,6 +198,8 @@ export const TOP_LINES = 10;
 export const WORST_LINES = 5;
 /** Recent games per opponent. */
 export const RECENT_GAMES = 10;
+/** Most recent games per opponent the lines and the activity are computed from. */
+export const PREP_MAX_GAMES = 5000;
 
 /** Report options. */
 export interface PrepReportOptions {
@@ -202,6 +208,8 @@ export interface PrepReportOptions {
   minGames: number;
   /** Clock for `period` filters (tests pin it). */
   now?: number;
+  /** Games per opponent for lines and activity (default `PREP_MAX_GAMES`; tests lower it). */
+  maxGames?: number;
 }
 
 interface LineAcc extends Wdl {
@@ -344,18 +352,32 @@ export function opponentReport(
   if (!summary) return null;
   const where = playerGamesWhere(filters, { sourceIds: profile.sourceIds, ...(opts.now !== undefined ? { now: opts.now } : {}) });
 
+  // Totals over every selected game; lines and activity over the most recent ones.
+  const totals = { w: { w: 0, d: 0, l: 0 }, b: { w: 0, d: 0, l: 0 } } satisfies Record<ColorChar, Wdl>;
+  for (const r of db.all<{ color: ColorChar; outcome: Outcome; n: number }>(
+    `SELECT pg.color, pg.outcome, COUNT(*) AS n FROM player_games pg JOIN games g ON g.id = pg.game_id
+      WHERE ${where.sql} GROUP BY pg.color, pg.outcome`,
+    where.params,
+  )) {
+    totals[r.color][r.outcome] = r.n;
+  }
+  const maxGames = opts.maxGames ?? PREP_MAX_GAMES;
   const rows = db.all<{ color: ColorChar; outcome: Outcome; at: EpochMs | null; head: string }>(
     `SELECT pg.color, pg.outcome, COALESCE(g.started_at, pg.ended_at) AS at, substr(g.moves_san, 1, ?) AS head
        FROM player_games pg JOIN games g ON g.id = pg.game_id
-      WHERE ${where.sql}`,
-    [opts.plies * SAN_SLOT, ...where.params],
+      WHERE ${where.sql}
+      ORDER BY pg.ended_at DESC, pg.game_id DESC LIMIT ?`,
+    [opts.plies * SAN_SLOT, ...where.params, maxGames],
   );
-  const side = (c: ColorChar): PrepSide =>
-    buildSide(
+  const all = total(totals.w) + total(totals.b);
+  const side = (c: ColorChar): PrepSide => {
+    const built = buildSide(
       book,
       rows.filter(r => r.color === c).map(r => ({ outcome: r.outcome, at: r.at, sans: r.head.split(' ').filter(Boolean) })),
       opts,
     );
+    return { ...built, games: total(totals[c]), wdl: { ...totals[c] } };
+  };
 
   const recentGames = db
     .all<GameRowRecord>(`${GAME_ROW_SELECT} WHERE ${where.sql} ORDER BY pg.ended_at DESC, pg.game_id DESC LIMIT ?`, [...where.params, RECENT_GAMES])
@@ -376,15 +398,24 @@ export function opponentReport(
     recentGames,
     activity: { tz: opts.tz, ...activityBuckets(rows, opts.tz) },
     ratings: sources.map(s => ({ sourceId: s.id, kind: s.kind, ratings: currentRatings(db, s) })),
+    sampledGames: all > rows.length ? rows.length : null,
   };
 }
 
-/** `GET /api/prep/:id/report`. */
-export function prepReport(db: Db, config: Config, viewer: AuthUser, id: Id, filters: ProfileFilters, opts: PrepReportOptions): PrepReport {
+/** `GET /api/prep/:id/report`. Yields to the event loop between opponents. */
+export async function prepReport(
+  db: Db,
+  config: Config,
+  viewer: AuthUser,
+  id: Id,
+  filters: ProfileFilters,
+  opts: PrepReportOptions,
+): Promise<PrepReport> {
   const row = ownPrep(db, viewer, id);
   const book = getOpeningBook(config.openingsDir);
   const opponents: PrepOpponentReport[] = [];
-  for (const profileId of opponentIds(db, id)) {
+  for (const [i, profileId] of opponentIds(db, id).entries()) {
+    if (i > 0) await yieldToLoop();
     let profile: ViewableProfile;
     try {
       profile = loadProfileByIdForViewer(db, profileId, viewer);

@@ -51,6 +51,8 @@ import {
  * Reads: requireViewer + loadProfileForViewer (404 for private profiles of others). Mutations:
  * requireUser, then owner or admin (403 otherwise). Logic and the orphan policy live in
  * src/profiles/service.ts; source checks (upstream through app.upstream) in src/profiles/sources.ts.
+ * When this process runs the workers, the orphan sweep (sweepOrphans) runs at startup and every
+ * ORPHAN_SWEEP_EVERY_MS; large clean-ups continue in the background and stop at shutdown.
  */
 
 /** Creating profiles and adding accounts call Lichess / Chess.com: throttled per IP. */
@@ -69,7 +71,8 @@ const profileRoutes: FastifyPluginAsync = async app => {
   const pending = new Set<Promise<unknown>>();
   const track = (p: Promise<unknown>): void => {
     pending.add(p);
-    void p.finally(() => pending.delete(p));
+    const done = (): void => void pending.delete(p);
+    p.then(done, done);
   };
   const cleanup: CleanupOptions = { log: err => app.log.error({ err }, 'profile clean-up failed'), signal: stop.signal };
 

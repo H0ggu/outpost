@@ -58,7 +58,7 @@ describe('profiles migrations on existing data', () => {
     expect(userGame.sourceIds.sort()).toEqual([fide, pgn].sort());
     db.run("INSERT INTO files (owner_user_id, name, kind, pgn, created_at, updated_at) VALUES (?, 'f', 'study', '1. e4 Ω', 0, 0)", [user]);
 
-    migrateWith(['501_sources_autoincrement.sql', '502_fide_reference_only.sql', '503_files_bytes.sql']);
+    migrateWith(['501_sources_autoincrement.sql', '502_fide_reference_only.sql', '503_files_quota.sql']);
 
     // 501: same rows, ids and columns; foreign keys intact; ids are never handed out twice.
     expect(db.all('SELECT id, kind, key, display_name, database_id, sync_state_json, created_at FROM sources ORDER BY id')).toEqual([

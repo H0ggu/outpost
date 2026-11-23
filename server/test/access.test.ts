@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AuthUser } from '../src/http/types.ts';
 import { loadDatabaseForViewer, loadProfileByIdForViewer, loadProfileForViewer } from '../src/profiles/access.ts';
 import { parsePrefs } from '../src/auth/session.ts';
-import { createSource, createUserSession, makeTestApp, type TestApp } from './helpers.ts';
+import { insertGame, rebuildPlayerGames } from '../src/chess/store.ts';
+import { createSource, createUserSession, makeTestApp, testGame, type TestApp } from './helpers.ts';
 
 const asUser = (id: number, role: 'admin' | 'user' = 'user'): AuthUser => ({
   id,
@@ -87,6 +88,25 @@ describe('profile and database access', () => {
     expect(loadProfileForViewer(t.db, 'anna', admin).sourceIds).toEqual(sorted([fromPrivate, fromRef, lichess]));
     t.db.run("UPDATE databases SET visibility = 'public' WHERE id = ?", [privateDb]);
     expect(loadProfileForViewer(t.db, 'anna', other).sourceIds).toEqual(sorted([fromPrivate, fromRef, lichess]));
+  });
+
+  it("never reaches a private database's games through a FIDE source", () => {
+    const privateDb = t.db.run("INSERT INTO databases (owner_user_id, name, kind, visibility, created_at) VALUES (?, 'notes', 'games', 'private', 0)", [
+      owner.id,
+    ]).lastInsertRowid;
+    const fide = createSource(t.db, { kind: 'fide', key: '7000007' });
+    const p = t.db.run(
+      "INSERT INTO profiles (slug, display_name, owner_user_id, visibility, created_at, updated_at) VALUES ('fide-7', 'F', ?, 'public', 0, 0)",
+      [other.id],
+    ).lastInsertRowid;
+    t.db.run('INSERT INTO profile_sources (profile_id, source_id) VALUES (?, ?)', [p, fide]);
+    insertGame(t.db, testGame({ origin: 'pgn', originId: `${privateDb}:x`, databaseId: privateDb, white: { name: 'Owner', fideId: '7000007' } }));
+    expect(rebuildPlayerGames(t.db, fide)).toBe(0);
+    for (const viewer of [null, other, owner, admin]) {
+      const { sourceIds } = loadProfileForViewer(t.db, 'fide-7', viewer);
+      expect(sourceIds).toEqual([fide]);
+      expect(t.db.value(`SELECT COUNT(*) FROM player_games WHERE source_id IN (${sourceIds.map(() => '?').join(',')})`, sourceIds)).toBe(0);
+    }
   });
 
   it('loads profiles by id with the same rules', () => {

@@ -2,7 +2,8 @@ import type { PrepListResponse, PrepReport, PrepSet } from '@outpost/shared/api'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getOpeningBook } from '../src/chess/openings.ts';
 import { insertGame } from '../src/chess/store.ts';
-import { activityBuckets, buildSide } from '../src/prep/index.ts';
+import type { AuthUser } from '../src/http/types.ts';
+import { activityBuckets, buildSide, prepReport } from '../src/prep/index.ts';
 import { createSource, createUserSession, makeTestApp, mutationHeaders, testGame, type TestApp } from './helpers.ts';
 
 type Session = { userId: number; cookie: string };
@@ -151,6 +152,24 @@ describe('prep API', () => {
     // 1 Jan 2026 (Thursday) 21:00 in Tokyo.
     expect(carol!.activity.byWeekday[3]!.games).toBeGreaterThanOrEqual(1);
     expect(carol!.ratings).toEqual([{ sourceId: expect.any(Number), kind: 'lichess', ratings: [{ timeClass: 'blitz', rating: 1500, games: 6, rd: null, provisional: false }] }]); // the newest game (as Black, 1500)
+    expect(carol!.sampledGames).toBeNull();
+  });
+
+  it('samples the most recent games of opponents with long histories (totals count all)', async () => {
+    const set = (await req(me, 'POST', '/api/prep', { name: 'Sampled', profileIds: [carolProfile, daveProfile] })).json<PrepSet>();
+    const viewer = { id: me.userId, username: 'me', role: 'user', totpEnabled: false, prefs: {} } as AuthUser;
+    const pending = prepReport(t.db, t.config, viewer, set.id, {}, { tz: 'UTC', plies: 8, minGames: 1, maxGames: 3 });
+    expect(pending).toBeInstanceOf(Promise);
+    const report = await pending;
+    const carol = report.opponents[0]!;
+    expect(carol.sampledGames).toBe(3);
+    // W/D/L over all six games; lines and activity over the newest three (QGD as Black, two Najdorfs as White).
+    expect(carol.asWhite).toMatchObject({ games: 5, wdl: { w: 2, d: 0, l: 3 } });
+    expect(carol.asWhite.topLines.map(l => [l.san, l.games])).toEqual([['1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6', 2]]);
+    expect(carol.asBlack).toMatchObject({ games: 1, wdl: { w: 0, d: 1, l: 0 } });
+    expect(carol.activity.byHour.reduce((n, c) => n + c.games, 0)).toBe(3);
+    expect(carol.recentGames).toHaveLength(6);
+    expect(report.opponents[1]!.sampledGames).toBeNull();
   });
 
   it('applies the filters and validates the report parameters', async () => {

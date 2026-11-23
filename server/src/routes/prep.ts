@@ -55,7 +55,7 @@ const prepRoutes: FastifyPluginAsync = async app => {
     const { id } = parseParams(idParams, req.params);
     const filters = parseFiltersQuery(req.query);
     const params = parseQuery(prepReportParamsSchema, req.query);
-    return prepReport(app.db, app.config, req.user!, id, filters, params);
+    return await prepReport(app.db, app.config, req.user!, id, filters, params);
   });
 };
 
