@@ -41,7 +41,7 @@ export interface ExplorerOpts {
     playerEndpoint(player: string): string;
     playerLabel(player: string): string;
     searchPlayers(term: string): Promise<ExplorerPlayerChoice[]>;
-    suggestedPlayers(): ExplorerPlayerChoice[];
+    suggestedPlayers(onLoad?: () => void): ExplorerPlayerChoice[];
     openGame(db: ExplorerDb, id: string, orientation: Color, fen: string): void;
     requiresAuth(): boolean;
     readonly loginUrl: string;
@@ -84,7 +84,9 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
   const labels = new Map<string, string>();
   const asked = new Set<string>();
   let suggestions: ExplorerPlayerChoice[] = [];
-  let suggestionsLoaded = false;
+  let suggestionsState: 'idle' | 'loading' | 'ready' = 'idle';
+  /** Redraws of player dialogs that asked before the suggestions arrived (lila's dialog redraw). */
+  const waiting = new Set<() => void>();
 
   const learnLabel = (spec: string): void => {
     if (asked.has(spec) || (!deps.signedIn() && !deps.anonymousBrowsing())) return;
@@ -102,8 +104,8 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
   };
 
   const loadSuggestions = (): void => {
-    if (suggestionsLoaded || !deps.signedIn()) return;
-    suggestionsLoaded = true;
+    if (suggestionsState !== 'idle' || !deps.signedIn()) return;
+    suggestionsState = 'loading';
     const toChoices = (r: ProfileListResponse, hint: string): ExplorerPlayerChoice[] =>
       r.profiles.map(p => {
         labels.set(p.slug, p.displayName);
@@ -121,7 +123,11 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
       ];
       const seen = new Set<string>();
       suggestions = all.filter(c => !seen.has(c.spec) && seen.add(c.spec)).slice(0, 12);
+      suggestionsState = 'ready';
+      const redraws = [...waiting];
+      waiting.clear();
       deps.redraw();
+      for (const redraw of redraws) redraw();
     });
   };
 
@@ -157,7 +163,8 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
             choices.push({ spec: `ref:${ref.fideId}`, label: ref.name, hint: 'reference DB' });
         return choices.slice(0, 20);
       },
-      suggestedPlayers: () => {
+      suggestedPlayers: onLoad => {
+        if (suggestionsState !== 'ready' && onLoad && deps.signedIn()) waiting.add(onLoad);
         loadSuggestions();
         return suggestions;
       },

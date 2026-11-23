@@ -19,6 +19,8 @@ import {
   mainlinePlyOf,
   pgnHeaders,
   positionKey,
+  quickHeaders,
+  sortGlyphs,
   splitPgnGames,
   treeToPgn,
   type PgnTreeNode,
@@ -85,6 +87,13 @@ describe('treeToPgn', () => {
     expect(GLYPH_GROUPS.map(g => g.name)).toEqual(['move', 'position', 'observation']);
   });
 
+  it('writes glyphs move first, then position, then observations, whatever order they were added in', () => {
+    const root = treeOf('1. e4 e5 *');
+    at(root, 0).glyphs = [{ id: 16 }, { id: 146 }, { id: 5 }]; // ± then N then !? (click order)
+    expect(treeToPgn(root)).toContain('1. e4 $5 $16 $146');
+    expect(sortGlyphs([{ id: 146 }, { id: 36 }, { id: 16 }, { id: 9 }, { id: 2 }]).map(g => g.id)).toEqual([2, 16, 146, 36, 9]);
+  });
+
   it('drops computer-only lines but keeps annotated ones', () => {
     const root = treeOf('1. e4 e5 (1... c5) (1... e6) *');
     at(root, 0, 1).comp = true;
@@ -148,6 +157,31 @@ describe('positions', () => {
     expect(mainlinePlyOf(root, at(root, 0, 0, 0, 0, 0).fen)).toBe(5);
     expect(mainlinePlyOf(root, '8/8/8/4k3/8/8/4K3/8 w - - 0 1')).toBeUndefined();
     expect(positionKey(' a  b c d 1 2 ')).toBe('a b c d');
+  });
+});
+
+describe('quickHeaders (Games panel titles without parsing moves)', () => {
+  it('reads the tag section like pgnHeaders, without the Seven Tag Roster defaults', () => {
+    const games = splitPgnGames(
+      '[Event "Club \\"open\\""]\n[White "Alice"]\n[Black "Bob \\\\ Jr"]\n[Result "1-0"]\n\n1. e4 { [Not "a tag"] } 1-0\n\n' +
+        '[Event "G2"]\n\n1. d4 *\n',
+    );
+    const full = pgnHeaders(games[0]!);
+    const quick = quickHeaders(games[0]!);
+    expect(quick).toEqual(full.filter(([k]) => quick.some(([q]) => q === k)));
+    expect(Object.fromEntries(quick)).toMatchObject({ Event: 'Club "open"', White: 'Alice', Black: 'Bob \\ Jr', Result: '1-0' });
+    expect(gameTitle(quick, 'x')).toBe(gameTitle(full, 'x'));
+    expect(gameTitle(quickHeaders(games[1]!), 'Game 2')).toBe('G2');
+  });
+
+  it('stops at the moves and copes with odd input', () => {
+    expect(quickHeaders('\uFEFF\n\n[Event "E"]\r\n[Site "S"]\r\n\r\n[White "not a header"]\n1. e4 *')).toEqual([
+      ['Event', 'E'],
+      ['Site', 'S'],
+    ]);
+    expect(quickHeaders('1. e4 e5 *')).toEqual([]);
+    expect(quickHeaders('')).toEqual([]);
+    expect(quickHeaders('[Broken "tag]\n[White "W"]')).toEqual([]);
   });
 });
 

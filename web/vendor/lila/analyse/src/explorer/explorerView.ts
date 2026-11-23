@@ -312,13 +312,15 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
   const referenceExplanation = 'Over-the-board games in this Outpost\'s reference database';
   // outpost: four databases share the title row, so the active one drops " database"; no lichess logo
   const dbWord = outpost ? '' : ' database';
+  // outpost: a player's name (and side) needs the room, so the other databases shrink to their icons
+  const compact = !!outpost && db === 'player' && !!playerName;
 
-  const otherLink = (name: string, title: string) =>
+  const otherLink = (name: string, title: string, icon: LiconValue) =>
     hl(
-      'button.button-link',
+      `button.button-link${compact ? '.compact' : ''}`,
       {
         key: name,
-        attrs: { title },
+        attrs: compact ? { title: `${name}: ${title}`, 'aria-label': name, ...dataIcon(icon) } : { title },
         hook: bind(
           'click',
           () => {
@@ -330,7 +332,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
           explorer.reload,
         ),
       },
-      name,
+      compact ? undefined : name,
     );
   const active = (nodes: LooseVNodes, title: string, icon: LiconValue) =>
     hl(
@@ -345,19 +347,19 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
   return hl('div.explorer-title', [
     db === 'masters'
       ? active([hl('strong', 'Masters'), dbWord], masterDbExplanation, licon.Book)
-      : explorer.config.allDbs.includes('masters') && otherLink('Masters', masterDbExplanation),
+      : explorer.config.allDbs.includes('masters') && otherLink('Masters', masterDbExplanation, licon.Book),
     explorer.config.allDbs.includes('reference') &&
       (db === 'reference'
         ? active([hl('strong', 'Reference'), dbWord], referenceExplanation, licon.Trophy)
-        : otherLink('Reference', referenceExplanation)),
+        : otherLink('Reference', referenceExplanation, licon.Trophy)),
     db === 'lichess'
       ? active([hl('strong', 'Lichess'), dbWord], i18n.site.lichessDbExplanation, outpost ? licon.Globe : licon.Logo)
-      : otherLink('Lichess', i18n.site.lichessDbExplanation),
+      : otherLink('Lichess', i18n.site.lichessDbExplanation, outpost ? licon.Globe : licon.Logo),
     db === 'player'
       ? playerName
         ? active(
             [
-              hl(`strong${playerLabel.length > 14 ? '.long' : ''}`, playerLabel),
+              hl(`strong${playerLabel.length > 14 ? '.long' : ''}`, { attrs: { title: playerLabel } }, playerLabel),
               ` ${i18n.site[`as${capitalize(config.data.color())}`]}`,
               explorer.isIndexing() &&
                 !configOpened &&

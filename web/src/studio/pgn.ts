@@ -56,6 +56,16 @@ export const GLYPH_GROUPS: ReadonlyArray<{ name: 'move' | 'position' | 'observat
 /** NAGs the Studio reads and writes. */
 export const ANNOTATION_NAGS: ReadonlySet<number> = new Set(GLYPH_GROUPS.flatMap(g => g.ids));
 
+const GLYPH_RANK: ReadonlyMap<number, number> = new Map(GLYPH_GROUPS.flatMap((g, rank) => g.ids.map(id => [id, rank] as const)));
+
+/**
+ * Glyphs in the usual order, whatever order they were added in: the move glyph, then the position
+ * glyph, then observations (`e4!? ±`, `1. e4 $5 $16`). Stable within a group; unknown ids go last.
+ */
+export function sortGlyphs<T extends { id: number }>(glyphs: readonly T[]): T[] {
+  return [...glyphs].sort((a, b) => (GLYPH_RANK.get(a.id) ?? 3) - (GLYPH_RANK.get(b.id) ?? 3));
+}
+
 const BRUSH_COLORS: Readonly<Record<string, CommentShapeColor>> = {
   green: 'green',
   paleGreen: 'green',
@@ -99,7 +109,7 @@ function addChildren(into: Node<PgnNodeData>, from: PgnTreeNode): void {
   for (const child of from.children) {
     if (!child.san || !hasUserContent(child)) continue;
     const data: PgnNodeData = { san: child.san };
-    const nags = [...new Set((child.glyphs ?? []).filter(g => !g.comp && ANNOTATION_NAGS.has(g.id)).map(g => g.id))];
+    const nags = [...new Set(sortGlyphs((child.glyphs ?? []).filter(g => !g.comp && ANNOTATION_NAGS.has(g.id))).map(g => g.id))];
     if (nags.length) data.nags = nags;
     const comment = commentOf(child);
     if (comment) data.comments = [comment];
@@ -135,6 +145,30 @@ export function treeToPgn(root: PgnTreeNode, headers: PgnHeaders = []): string {
 export function pgnHeaders(pgn: string): Array<[string, string]> {
   const game = parsePgn(pgn)[0];
   return game ? [...game.headers.entries()] : [];
+}
+
+const TAG_LINE = /^\[\s*([A-Za-z0-9_+#=:-]+)\s*"((?:[^"\\]|\\.)*)"\s*\]$/;
+
+/**
+ * The headers of a single-game PGN read from its tag section alone (no moves are parsed), for lists
+ * of thousands of games. Only the tags present, in order; `pgnHeaders` also fills the Seven Tag Roster.
+ */
+export function quickHeaders(pgn: string): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  let at = pgn.charCodeAt(0) === 0xfeff ? 1 : 0;
+  while (at < pgn.length) {
+    const end = pgn.indexOf('\n', at);
+    const line = pgn.slice(at, end === -1 ? pgn.length : end).trim();
+    at = end === -1 ? pgn.length : end + 1;
+    if (!line) {
+      if (out.length) break;
+      continue;
+    }
+    const m = TAG_LINE.exec(line);
+    if (!m) break;
+    out.push([m[1]!, m[2]!.replace(/\\(["\\])/g, '$1')]);
+  }
+  return out;
 }
 
 /**

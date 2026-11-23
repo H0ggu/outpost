@@ -16,6 +16,7 @@ import type { AnalyseApi, AnalyseCtrl, AnalyseOpts } from 'lila/analyse/interfac
 import makeStart from 'lila/analyse/start';
 import { patch as lilaPatch } from 'lila/analyse/view/util';
 import { alert } from 'lila/lib/view';
+import { restoreCursor } from './board.ts';
 import { analyseDataOf, StudioCtrl } from './ctrl.ts';
 import { makeExplorerOpts } from './explorer.ts';
 import { keyboardHelpHtml } from './keyboardHelp.ts';
@@ -44,17 +45,6 @@ function dataOf(tab: StudioTab): { data: ReturnType<typeof analyseDataOf>; error
   } catch (e) {
     return { data: analyseDataOf(emptyGamePgn(), tab.orientation), error: e instanceof Error ? e.message : String(e) };
   }
-}
-
-/** Moves lila's cursor to the tab's saved path (null: end of the mainline). */
-function restorePath(analyse: AnalyseCtrl, tab: StudioTab): void {
-  const path =
-    tab.path === null
-      ? analyse.mainlinePlyToPath(analyse.tree.lastPly())
-      : analyse.tree.pathExists(tab.path)
-        ? tab.path
-        : '';
-  if (path !== analyse.path) analyse.userJump(path);
 }
 
 export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<void> {
@@ -110,12 +100,12 @@ export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<vo
     const { data, error } = dataOf(tab);
     analyse.flipped = false;
     analyse.reloadData(data, false);
-    restorePath(analyse, tab);
+    restoreCursor(analyse, tab.path, true);
     analyse.redraw();
     if (error) void alert(`This game could not be read and was replaced by an empty board: ${error}`);
   };
 
-  restorePath(analyse, first);
+  restoreCursor(analyse, first.path, false);
   ctrl.attach(analyse, load);
   if (initial.error) void alert(`This game could not be read and was replaced by an empty board: ${initial.error}`);
 

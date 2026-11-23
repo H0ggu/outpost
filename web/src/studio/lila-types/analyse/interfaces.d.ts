@@ -139,7 +139,8 @@ export interface ExplorerOutpost {
   playerEndpoint(player: string): string;
   playerLabel(player: string): string;
   searchPlayers(term: string): Promise<ExplorerPlayerChoice[]>;
-  suggestedPlayers(): ExplorerPlayerChoice[];
+  /** `onLoad` (the player dialog's redraw) runs once suggestions that were still loading arrive. */
+  suggestedPlayers(onLoad?: () => void): ExplorerPlayerChoice[];
   openGame(db: ExplorerDb, id: string, orientation: Color, fen: string): void;
   requiresAuth(): boolean;
   loginUrl: string;

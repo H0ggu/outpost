@@ -170,4 +170,34 @@ describe('explorer options', () => {
     anon.outpost.suggestedPlayers();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it('redraws a player dialog that opened before the suggestions arrived', async () => {
+    let answer!: () => void;
+    const gate = new Promise<void>(r => (answer = r));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        await gate;
+        return jsonResponse({ profiles: url.includes('bookmarks') ? [{ slug: 'a', displayName: 'A' }] : [] });
+      }),
+    );
+    const d = deps();
+    const o = makeExplorerOpts(d);
+    const firstDialog = vi.fn();
+    const reopened = vi.fn();
+    expect(o.outpost.suggestedPlayers(firstDialog)).toEqual([]); // first open: still loading
+    expect(o.outpost.suggestedPlayers(firstDialog)).toEqual([]); // the same dialog redrawn
+    expect(o.outpost.suggestedPlayers(reopened)).toEqual([]); // closed and opened again meanwhile
+    answer();
+    await vi.waitFor(() => expect(firstDialog).toHaveBeenCalledTimes(1));
+    expect(reopened).toHaveBeenCalledTimes(1);
+    expect(d.redraw).toHaveBeenCalled();
+    expect(o.outpost.suggestedPlayers(firstDialog)).toEqual([{ spec: 'a', label: 'A', hint: 'bookmarked' }]);
+    expect(firstDialog).toHaveBeenCalledTimes(1); // loaded: no more redraws asked for
+    const anon = makeExplorerOpts(deps({ signedIn: () => false }));
+    const anonDialog = vi.fn();
+    anon.outpost.suggestedPlayers(anonDialog);
+    await new Promise(r => setTimeout(r, 0));
+    expect(anonDialog).not.toHaveBeenCalled();
+  });
 });

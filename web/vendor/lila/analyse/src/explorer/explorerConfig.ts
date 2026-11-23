@@ -386,7 +386,7 @@ const playerModal = (ctrl: ExplorerConfigCtrl) => {
               ...(ctrl.myName ? [ctrl.myName] : []),
               ...ctrl.participants,
               ...ctrl.data.playerName.previous(),
-              ...(outpostOf(ctrl)?.suggestedPlayers().map(c => c.spec) ?? []),
+              ...(outpostOf(ctrl)?.suggestedPlayers(redraw).map(c => c.spec) ?? []),
             ]),
           ].map(name =>
             h('div', { key: name }, [

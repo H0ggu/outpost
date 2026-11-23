@@ -94,7 +94,7 @@ function renderMenu(ctrl: StudioCtrl): VNode {
     h('hr'),
     menuItem(licon.UploadCloud, 'Save to My Files', close(() => void ctrl.save(() => askSaveAs(ctrl))), {
       hint: 'Ctrl+S',
-      disabled: !tab,
+      disabled: !tab || ctrl.isSaving(tab),
     }),
     menuItem(licon.UploadCloud, 'Save as…', saveAs, { disabled: !tab }),
     menuItem(licon.Pencil, 'Rename tab…', close(() => tab && void renameTabDialog(ctrl, tab)), { disabled: !tab }),
@@ -117,7 +117,8 @@ function renderMenu(ctrl: StudioCtrl): VNode {
 
 export function renderBar(ctrl: StudioCtrl): VNode {
   const tab = ctrl.activeTab;
-  const canSave = !!tab && (tab.source.kind !== 'file' || ctrl.isTabDirty(tab));
+  const saving = !!tab && ctrl.isSaving(tab);
+  const canSave = !!tab && !saving && (tab.source.kind !== 'file' || ctrl.isTabDirty(tab));
   return h('div#studio-bar.studio-bar', [
     h('div.studio-tabs', { attrs: { role: 'tablist', 'aria-label': 'Boards' } }, [
       ...ctrl.tabs.tabs.map(t => renderTab(ctrl, t)),
@@ -126,8 +127,13 @@ export function renderBar(ctrl: StudioCtrl): VNode {
     h('div.studio-actions', [
       button('.studio-action.studio-action--save', {
         icon: licon.UploadCloud,
-        title: tab?.source.kind === 'file' ? `Save “${tab.source.name}” (Ctrl+S)` : 'Save to My Files (Ctrl+S)',
+        title: saving
+          ? 'Saving…'
+          : tab?.source.kind === 'file'
+            ? `Save “${tab.source.name}” (Ctrl+S)`
+            : 'Save to My Files (Ctrl+S)',
         disabled: !canSave,
+        attrs: saving ? { 'aria-busy': 'true' } : undefined,
         onClick: () => void ctrl.save(() => askSaveAs(ctrl)),
       }),
       h('div.studio-menu-wrap', { class: { shown: ctrl.menu === 'file' } }, [

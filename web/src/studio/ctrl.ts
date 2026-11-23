@@ -7,6 +7,7 @@
 import {
   API_ROUTES,
   type Color,
+  type EpochMs,
   type FileKind,
   type FileSearchResponse,
   type FolderInfo,
@@ -35,12 +36,24 @@ import {
   joinPgnGames,
   mainlinePlyOf,
   pgnHeaders,
+  sortGlyphs,
   splitPgnGames,
   treeToPgn,
 } from './pgn.ts';
 import { savePrefs, applyStudioPrefs, type StudioPrefs } from './prefs.ts';
 import { cleanFen, type StudioParams } from './query.ts';
-import { isDirty, markSaved, newTabId, TabList, type StudioTab, type TabSource } from './tabs.ts';
+import { SaveQueue } from './saveQueue.ts';
+import {
+  applyFileMeta,
+  isBlankBoard,
+  isDirty,
+  knownUpdatedAt,
+  markSaved,
+  newTabId,
+  TabList,
+  type StudioTab,
+  type TabSource,
+} from './tabs.ts';
 
 /** lila `AnalysePref` for Studio boards (lila's defaults: inner coordinates, click or drag). */
 export const ANALYSE_PREF: AnalyseData['pref'] = {
@@ -88,6 +101,8 @@ export interface FilesState {
 
 const LOCAL_FOLDERS_KEY = 'outpost.studio.folders';
 
+/** Games listed at once in the Games panel (more on request: files can hold thousands). */
+export const GAMES_PAGE = 200;
 
 const errorMessage = (e: unknown): string =>
   e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e);
@@ -104,12 +119,16 @@ export class StudioCtrl {
   menu: 'file' | null = null;
   /** View of the side panel. */
   sidePanel: 'files' | 'annotate' | 'games' = 'files';
+  /** How many games the Games panel lists. */
+  gamesShown = GAMES_PAGE;
   /** Chrome redraw, set by boot.ts. */
   redraw: () => void = () => undefined;
   /** Shows a tab's game on the board, set by boot.ts once lila is mounted. */
   private loader?: (tab: StudioTab) => void;
   /** A jump asked for before lila was mounted. */
   private pendingJump?: { fen?: string; ply?: number };
+  /** Saves in flight, per tab. */
+  private readonly saves = new SaveQueue<string>(() => this.redraw());
 
   constructor(params: StudioParams, prefs: StudioPrefs, storage: Storage | null) {
     this.params = params;
@@ -187,24 +206,51 @@ export class StudioCtrl {
     return this.dirtyIds.size > 0;
   }
 
-  /** Tabs of My Files files with changes not saved yet (leaving the page asks first). */
-  get unsavedFiles(): StudioTab[] {
-    return this.tabs.tabs.filter(t => t.source.kind === 'file' && this.dirtyIds.has(t.id));
+  /**
+   * True when closing this browser tab would lose work, so leaving asks first: a board with changes
+   * (sessionStorage keeps the others only until the browser tab closes), or a board too large to keep.
+   */
+  hasUnkeptWork(): boolean {
+    this.checkDirty();
+    return this.anyDirty || this.tabs.tabs.some(t => t.source.kind !== 'file' && this.tabs.unkept(t));
+  }
+
+  /** True while the tab is being saved to My Files. */
+  isSaving(tab: StudioTab): boolean {
+    return this.saves.busy(tab.id);
+  }
+
+  /** The tab differs from what was loaded or saved (the active one compared live with the board). */
+  private hasChanges(tab: StudioTab): boolean {
+    return tab === this.activeTab && this.analyse ? isDirty(tab, this.exportTree()) : isDirty(tab);
   }
 
   /** Called once lila is mounted with the active tab's game. */
   attach(analyse: AnalyseCtrl, loader: (tab: StudioTab) => void): void {
     this.analyse = analyse;
     this.loader = loader;
-    // lila's own PGN box (underboard) replaces the game: keep the tab's headers in step.
+    // lila's own PGN box (underboard) replaces the shown game, which is also how a game's headers are
+    // edited: keep the tab's headers and title in step. Several games open in a new tab instead, as a
+    // game list (lila's importer would read only the first).
     const changePgn = analyse.changePgn.bind(analyse);
     analyse.changePgn = (pgn: string, andReload: boolean) => {
-      const data = changePgn(pgn, andReload);
       const tab = this.activeTab;
-      if (data && andReload && tab) {
-        tab.games[tab.current] = this.exportTree(pgnHeaders(pgn));
-        this.tabs.save();
+      if (!andReload || !tab) return changePgn(pgn, andReload);
+      if (splitPgnGames(pgn).length > 1) {
+        const error = this.importText(pgn);
+        if (!error) return analyse.data;
+        analyse.pgnError = error;
+        analyse.redraw();
+        return undefined;
+      }
+      const data = changePgn(pgn, true);
+      if (data) {
+        const headers = pgnHeaders(pgn);
+        tab.games[tab.current] = this.exportTree(headers);
+        if (tab.source.kind !== 'file') tab.title = gameTitle(headers, tab.title);
+        this.tabs.saveTab(tab);
         this.checkDirty();
+        this.redraw();
       }
       return data;
     };
@@ -228,7 +274,7 @@ export class StudioCtrl {
     tab.games[tab.current] = this.exportTree();
     tab.path = a.path;
     tab.orientation = a.bottomColor();
-    this.tabs.save();
+    this.tabs.saveTab(tab);
   }
 
   /** After lila loaded a tab's game: record its baseline the first time it's shown. */
@@ -237,7 +283,7 @@ export class StudioCtrl {
     const pgn = this.exportTree();
     tab.games[tab.current] = pgn;
     if (tab.baseline[tab.current] === null) tab.baseline[tab.current] = pgn;
-    this.tabs.save();
+    this.tabs.saveTab(tab);
     this.updateDirty(tab, pgn);
     this.syncUrl();
   }
@@ -253,6 +299,7 @@ export class StudioCtrl {
     this.syncActive();
     const full: StudioTab = { path: '', ...tab, id: newTabId(), baseline: tab.games.map(() => null) };
     this.tabs.add(full);
+    this.gamesShown = GAMES_PAGE;
     this.show(full);
     return full;
   }
@@ -261,6 +308,7 @@ export class StudioCtrl {
     if (id === this.tabs.activeId) return;
     this.syncActive();
     const tab = this.tabs.activate(id);
+    this.gamesShown = GAMES_PAGE;
     if (tab) this.show(tab);
   }
 
@@ -300,10 +348,15 @@ export class StudioCtrl {
     this.show(tab);
   }
 
-  /** lila's FEN box sets up a position in the active game (scripts/lila-patches/001 `changeFen`). */
+  /**
+   * lila's FEN box (scripts/lila-patches/001 `changeFen`). lila opens a fresh analysis page there; the
+   * Studio opens a new board tab, so the game on the board (maybe a My Files game) is never replaced.
+   * A blank board (no moves, no annotations) is reused instead of piling up tabs.
+   */
   changeFen(fen: string): void {
     const tab = this.activeTab;
-    if (!tab || !this.analyse) return;
+    const a = this.analyse;
+    if (!tab || !a) return;
     let pgn: string;
     try {
       pgn = fenToPgn(fen);
@@ -311,9 +364,13 @@ export class StudioCtrl {
       void alert(errorMessage(e));
       return;
     }
-    this.analyse.changePgn(pgn, true);
-    this.checkDirty();
-    this.redraw();
+    if (!isBlankBoard(tab, a.tree.root)) return this.newTab(fen);
+    tab.title = 'Position';
+    tab.games = [pgn];
+    tab.baseline = [null];
+    tab.current = 0;
+    tab.path = '';
+    this.show(tab);
   }
 
   /** Re-checks which tabs differ from what was loaded or saved (cheap; runs on a timer and on edits). */
@@ -335,7 +392,7 @@ export class StudioCtrl {
     tab.games[tab.current] = pgn;
     tab.path = a.path;
     tab.orientation = a.bottomColor();
-    this.tabs.save();
+    this.tabs.saveTab(tab);
     this.updateDirty(tab, pgn);
   }
 
@@ -582,7 +639,7 @@ export class StudioCtrl {
       );
     } else {
       tab.title = name;
-      this.tabs.save();
+      this.tabs.saveTab(tab);
       this.redraw();
     }
   }
@@ -745,21 +802,36 @@ export class StudioCtrl {
     });
   }
 
-  /** Save: to its file when the tab has one, else Save as. Returns false when not saved. */
-  async save(askName: () => Promise<SaveAsInput | null>): Promise<boolean> {
+  /**
+   * Save: to its file when the tab has one, else Save as. Returns false when not saved. Saving again
+   * while a save of the tab is on its way waits for it, then saves only what changed since.
+   */
+  save(askName: () => Promise<SaveAsInput | null>): Promise<boolean> {
     const tab = this.activeTab;
-    if (!tab) return false;
+    if (!tab) return Promise.resolve(false);
+    return this.saves.run(tab.id, () => this.saveTab(tab, askName), ok => ok && this.hasChanges(tab));
+  }
+
+  /** Save as: a new file in My Files (after any save of the tab on its way). */
+  saveAs(askName: () => Promise<SaveAsInput | null>): Promise<boolean> {
+    const tab = this.activeTab;
+    if (!tab) return Promise.resolve(false);
+    return this.saves.run(tab.id, () => this.saveTabAs(tab, askName));
+  }
+
+  private async saveTab(tab: StudioTab, askName: () => Promise<SaveAsInput | null>): Promise<boolean> {
     if (!this.signedIn) {
       await alert('Sign in to save to My Files.');
       return false;
     }
-    if (tab.source.kind !== 'file') return this.saveAs(askName);
-    this.syncActive();
+    if (tab.source.kind !== 'file') return this.saveTabAs(tab, askName);
+    if (tab === this.activeTab) this.syncActive();
     const src = tab.source;
-    const pgn = joinPgnGames(tab.games);
+    const games = [...tab.games];
+    const pgn = joinPgnGames(games);
     try {
       const file = await filesApi.update(src.fileId, { pgn, baseUpdatedAt: src.updatedAt });
-      this.onSaved(tab, file);
+      this.onSaved(tab, file, games);
       return true;
     } catch (e) {
       if (e instanceof ApiError && e.code === 'conflict') {
@@ -770,7 +842,7 @@ export class StudioCtrl {
         );
         if (!overwrite) return false;
         try {
-          this.onSaved(tab, await filesApi.update(src.fileId, { pgn }));
+          this.onSaved(tab, await filesApi.update(src.fileId, { pgn }), games);
           return true;
         } catch (e2) {
           await alert(`Could not save: ${errorMessage(e2)}`);
@@ -780,6 +852,7 @@ export class StudioCtrl {
       if (e instanceof ApiError && e.isNotFound) {
         await alert(`“${src.name}” no longer exists. Use Save as to keep your work.`);
         tab.source = { kind: 'new' };
+        this.tabs.saveTab(tab);
         this.redraw();
         return false;
       }
@@ -788,26 +861,25 @@ export class StudioCtrl {
     }
   }
 
-  async saveAs(askName: () => Promise<SaveAsInput | null>): Promise<boolean> {
-    const tab = this.activeTab;
-    if (!tab) return false;
+  private async saveTabAs(tab: StudioTab, askName: () => Promise<SaveAsInput | null>): Promise<boolean> {
     if (!this.signedIn) {
       await alert('Sign in to save to My Files.');
       return false;
     }
     const input = await askName();
     if (!input) return false;
-    this.syncActive();
+    if (tab === this.activeTab) this.syncActive();
+    const games = [...tab.games];
     try {
       const file = await filesApi.create({
         folder: input.folder,
         name: input.name,
         kind: input.kind,
         color: input.kind === 'repertoire' ? input.color : null,
-        pgn: joinPgnGames(tab.games),
+        pgn: joinPgnGames(games),
       });
       tab.source = fileSource(file, tab.current);
-      this.onSaved(tab, file);
+      this.onSaved(tab, file, games);
       this.setLocalFolders(this.files.localFolders.filter(f => f !== file.folder));
       this.files.selectedFolder = file.folder;
       return true;
@@ -817,7 +889,8 @@ export class StudioCtrl {
     }
   }
 
-  private onSaved(tab: StudioTab, file: StudioFile): void {
+  /** After a save: the file's version and name, and the games as sent become the saved state. */
+  private onSaved(tab: StudioTab, file: StudioFile, games: readonly string[]): void {
     if (tab.source.kind === 'file') {
       tab.source.updatedAt = file.updatedAt;
       tab.source.name = file.name;
@@ -826,25 +899,34 @@ export class StudioCtrl {
       tab.source.color = file.color;
     }
     tab.title = file.name;
-    markSaved(tab);
-    this.tabs.save();
+    markSaved(tab, games);
+    this.tabs.saveTab(tab);
     this.checkDirty();
     this.syncUrl();
     void this.refreshFiles();
   }
 
-  /** Renames or moves a file (and updates open tabs). */
+  /**
+   * Renames or moves a file and updates its open tabs. The PUT carries the newest version this page
+   * knows as `baseUpdatedAt`, so on success the tabs based on that version may follow the new one
+   * (`applyFileMeta`) while a tab based on an older version keeps its base: its next save still meets
+   * the conflict with what was saved elsewhere. When even that version is stale (409), the rename
+   * goes through anyway, since names don't conflict with content, and no tab's base moves.
+   */
   async updateFileMeta(file: StudioFileMeta, change: { name?: string; folder?: string }): Promise<void> {
+    const base = knownUpdatedAt(this.tabs.tabs, file.id, file.updatedAt);
     try {
-      const updated = await filesApi.update(file.id, change);
-      for (const t of this.tabs.tabs)
-        if (t.source.kind === 'file' && t.source.fileId === file.id) {
-          t.source.name = updated.name;
-          t.source.folder = updated.folder;
-          t.source.updatedAt = updated.updatedAt;
-          t.title = updated.name;
-        }
-      this.tabs.save();
+      let checkedAt: EpochMs | null = base;
+      let updated: StudioFile;
+      try {
+        updated = await filesApi.update(file.id, { ...change, baseUpdatedAt: base });
+      } catch (e) {
+        if (!(e instanceof ApiError && e.code === 'conflict')) throw e;
+        updated = await filesApi.update(file.id, change);
+        checkedAt = null;
+      }
+      for (const t of applyFileMeta(this.tabs.tabs, updated, checkedAt)) this.tabs.saveTab(t);
+      this.redraw();
       await this.refreshFiles();
     } catch (e) {
       await alert(`Could not update “${file.name}”: ${errorMessage(e)}`);
@@ -860,8 +942,8 @@ export class StudioCtrl {
         if (t.source.kind === 'file' && t.source.fileId === file.id) {
           t.source = { kind: 'new' };
           t.baseline = t.games.map(() => ''); // differs from every game: an unsaved copy
+          this.tabs.saveTab(t);
         }
-      this.tabs.save();
       this.checkDirty();
       await this.refreshFiles();
     } catch (e) {
@@ -949,7 +1031,7 @@ export class StudioCtrl {
       if (!glyph) return;
       next = [...current.filter(g => !(group?.exclusive && group.ids.includes(g.id))), glyph];
     }
-    a.tree.setGlyphsAt(next, a.path);
+    a.tree.setGlyphsAt(sortGlyphs(next), a.path);
     a.setAutoShapes();
     a.redraw();
     this.checkDirty();

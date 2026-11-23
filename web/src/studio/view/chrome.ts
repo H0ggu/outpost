@@ -3,8 +3,9 @@
  * (board tabs and actions, above `main.analyse`) and the side panel inside lila's grid. Each is its
  * own snabbdom tree, redrawn together (at most once per frame) by `ctrl.redraw()`.
  *
- * Global keys: Ctrl/⌘+S saves the active tab; Escape closes the file menu. Leaving the page with
- * unsaved changes to a My Files file asks first (other tabs survive a reload of this browser tab).
+ * Global keys: Ctrl/⌘+S saves the active tab; Escape closes the file menu. Leaving the page asks first
+ * when a board has unsaved changes: the tabs survive a reload, but not closing the browser tab, and
+ * the page can't tell the two apart.
  */
 import type { StudioCtrl } from '../ctrl.ts';
 import { renderBar } from './bar.ts';
@@ -57,6 +58,6 @@ export function mountChrome(ctrl: StudioCtrl, els: ChromeElements): void {
     }
   });
   window.addEventListener('beforeunload', e => {
-    if (ctrl.unsavedFiles.length) e.preventDefault();
+    if (ctrl.hasUnkeptWork()) e.preventDefault();
   });
 }

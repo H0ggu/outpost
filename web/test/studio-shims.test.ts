@@ -27,7 +27,19 @@ describe('socket shim', () => {
     expect(url.pathname).toBe('/api/cloud-eval');
     expect(url.searchParams.get('fen')).toBe(FEN);
     expect(url.searchParams.get('multiPv')).toBe('3');
+    expect(url.searchParams.get('emptyOnMiss')).toBe('1'); // a miss is 200 { pvs: [] }, not a logged 404
     expect(receive).toHaveBeenCalledWith('evalHit', { ...hit, path: 'aa' });
+  });
+
+  it('treats an empty answer (emptyOnMiss) as a miss', async () => {
+    const receive = vi.fn();
+    const fetchMock = vi.fn(ok({ fen: FEN, knodes: 0, depth: 0, pvs: [] }));
+    const send = makeSocketSend(() => receive, () => true, fetchMock as unknown as typeof fetch);
+    send('evalGet', { fen: FEN, path: '' });
+    await flush();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(receive).not.toHaveBeenCalled();
   });
 
   it('clamps multi-PV, de-duplicates in-flight requests and drops misses', async () => {

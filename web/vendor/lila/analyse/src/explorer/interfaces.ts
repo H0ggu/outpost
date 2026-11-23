@@ -20,7 +20,7 @@ export interface ExplorerOutpost {
   playerEndpoint(player: string): string; // absolute base URL for the player db (may carry filters)
   playerLabel(player: string): string; // display name of a player spec
   searchPlayers(term: string): Promise<ExplorerPlayerChoice[]>;
-  suggestedPlayers(): ExplorerPlayerChoice[];
+  suggestedPlayers(onLoad?: () => void): ExplorerPlayerChoice[]; // onLoad: they arrived later
   openGame(db: ExplorerDb, id: string, orientation: Color, fen: FEN): void;
   requiresAuth(): boolean;
   loginUrl: string;

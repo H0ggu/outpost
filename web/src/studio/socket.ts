@@ -4,7 +4,7 @@
  * position), which goes to Outpost's `/api/cloud-eval` proxy and comes back as lila's `evalHit`.
  * Everything else (`evalPut`, `startWatching`, study moves, …) is a no-op.
  */
-import { API_ROUTES, type CloudEvalResponse } from '@outpost/shared/api';
+import { API_ROUTES, type CloudEvalQuery, type CloudEvalResponse } from '@outpost/shared/api';
 
 /** What lila's EvalCache sends with `evalGet` (analyse/src/interfaces.ts `EvalGetData`). */
 interface EvalGetData {
@@ -38,12 +38,14 @@ export function makeSocketSend(
     const multiPv = Math.max(1, Math.min(MAX_MULTI_PV, Math.round(d.mpv ?? 1)));
     const key = `${d.fen}|${multiPv}|${d.path}`;
     if (pending.has(key)) return;
-    const params = new URLSearchParams({ fen: d.fen, multiPv: String(multiPv) });
+    // a miss is the usual answer: asked for as `pvs: []` rather than a 404 the console would show
+    const query: Required<Pick<CloudEvalQuery, 'fen' | 'emptyOnMiss'>> = { fen: d.fen, emptyOnMiss: '1' };
+    const params = new URLSearchParams({ ...query, multiPv: String(multiPv) });
     const job = fetchImpl(`${API_ROUTES.cloudEval}?${params}`, { credentials: 'same-origin', headers: { accept: 'application/json' } })
       .then(async res => {
-        if (!res.ok) return; // 404: no cloud eval for this position
+        if (!res.ok) return; // 404 (a server that ignores emptyOnMiss): no cloud eval for this position
         const ev = (await res.json()) as CloudEvalResponse;
-        if (!ev || !Array.isArray(ev.pvs) || !ev.pvs.length) return;
+        if (!ev || !Array.isArray(ev.pvs) || !ev.pvs.length) return; // pvs: [] — no cloud eval
         getReceive()?.('evalHit', { ...ev, fen: d.fen, path: d.path });
       })
       .catch(() => undefined)

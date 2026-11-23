@@ -9,9 +9,9 @@
  */
 import type { StudioFileMeta } from '@outpost/shared/api';
 import { licon } from '../../lichess/licon.ts';
-import type { StudioCtrl } from '../ctrl.ts';
+import { GAMES_PAGE, type StudioCtrl } from '../ctrl.ts';
 import type { FolderNode } from '../fileTree.ts';
-import { gameTitle, GLYPH_GROUPS, pgnHeaders } from '../pgn.ts';
+import { gameTitle, GLYPH_GROUPS, quickHeaders } from '../pgn.ts';
 import { glyphOfNag } from 'lila/analyse/pgnImport';
 import { addFolderDialog, moveFileDialog } from './dialogs.ts';
 import { ago, button, dataIcon, h, moveName, type VNode } from './util.ts';
@@ -286,14 +286,20 @@ function annotateView(ctrl: StudioCtrl): VNode {
 // Games of a multi-game file
 // ---------------------------------------------------------------------------
 
+/**
+ * The games of the tab, a page at a time (a file may hold thousands): titles come from each game's
+ * tag section only, so a redraw never parses moves.
+ */
 function gamesView(ctrl: StudioCtrl): VNode {
   const tab = ctrl.activeTab;
   if (!tab) return spinner();
+  const shown = Math.min(tab.games.length, Math.max(ctrl.gamesShown, tab.current + 1));
+  const more = tab.games.length - shown;
   return h('div.studio-games', [
     h(
       'ol.studio-list',
-      tab.games.map((pgn, i) => {
-        const headers = pgnHeaders(pgn);
+      tab.games.slice(0, shown).map((pgn, i) => {
+        const headers = quickHeaders(pgn);
         const result = headers.find(([k]) => k === 'Result')?.[1];
         return h('li', { key: `g${i}`, class: { active: i === tab.current } }, [
           button(
@@ -304,6 +310,19 @@ function gamesView(ctrl: StudioCtrl): VNode {
         ]);
       }),
     ),
+    more > 0
+      ? button(
+          '.button.button-empty.text.studio-games__more',
+          {
+            icon: licon.List,
+            onClick: () => {
+              ctrl.gamesShown = shown + GAMES_PAGE;
+              ctrl.redraw();
+            },
+          },
+          `Show ${Math.min(more, GAMES_PAGE)} more of ${more}`,
+        )
+      : null,
     button('.button.button-empty.text.studio-games__add', { icon: licon.PlusButton, onClick: () => ctrl.addGame() }, 'Add a game'),
   ]);
 }
