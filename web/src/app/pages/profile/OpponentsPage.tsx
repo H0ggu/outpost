@@ -111,7 +111,7 @@ function OpponentsTable({
             <th>Opponent</th>
             <th className="num">Games</th>
             <th className="num opp-rating">Rating</th>
-            <th className="opp-wdl">Win / draw / loss</th>
+            <th className="opp-wdl col-wdl">Win / draw / loss</th>
             <th className="num">Score</th>
             <th className="opp-last">Last played</th>
             <th>
@@ -125,10 +125,11 @@ function OpponentsTable({
               <td className="opp-name">
                 <SiteIcon kind={r.kind} />
                 <OpponentName opponent={{ name: r.name, title: r.title, country: r.country, rating: null }} profileSlug={r.profileSlug} showRating={false} />
+                <WdlBar w={r.w} d={r.d} l={r.l} className="cell-bar" />
               </td>
               <td className="num">{fmtInt(r.games)}</td>
               <td className="num opp-rating">{fmtRating(r.lastRating)}</td>
-              <td className="opp-wdl">
+              <td className="opp-wdl col-wdl">
                 <WdlBar w={r.w} d={r.d} l={r.l} />
               </td>
               <td className="num">

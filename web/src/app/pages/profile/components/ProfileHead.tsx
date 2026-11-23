@@ -5,6 +5,7 @@
  */
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router';
 import type { ProfileHeader, ProfileQueueInfo, SourceSummary, SourceSyncStatus } from '@outpost/shared/api';
 import { TITLES, type Title } from '@outpost/shared/chess';
 import type { ProfileFilters } from '@outpost/shared/filters';
@@ -220,6 +221,24 @@ function SourceItem({ source, sync, now }: { source: SourceSummary; sync: Source
 // Header
 // ---------------------------------------------------------------------------
 
+/**
+ * Keeps the active tab visible in the horizontally scrolling tab bar (phones), centring it
+ * after each navigation. Returns the ref for a wrapper around the tabs.
+ */
+function useActiveTabInView() {
+  const ref = useRef<HTMLDivElement>(null);
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const nav = ref.current?.querySelector<HTMLElement>('nav');
+    const active = nav?.querySelector<HTMLElement>('a.active');
+    if (!nav || !active || nav.scrollWidth <= nav.clientWidth) return;
+    const n = nav.getBoundingClientRect();
+    const a = active.getBoundingClientRect();
+    nav.scrollLeft = Math.max(0, nav.scrollLeft + a.left - n.left - (n.width - a.width) / 2);
+  }, [pathname]);
+  return ref;
+}
+
 /** Props of `ProfileHead`. */
 export interface ProfileHeadProps {
   header: ProfileHeader;
@@ -237,6 +256,7 @@ export function ProfileHead({ header, signedIn, filters, tabs }: ProfileHeadProp
   const title = bestTitle(header.sources);
   const flags = countriesOf(header.sources);
   const score = scoreOfWdl(header.totals);
+  const tabsRef = useActiveTabInView();
 
   return (
     <section className="box profile-head">
@@ -312,7 +332,9 @@ export function ProfileHead({ header, signedIn, filters, tabs }: ProfileHeadProp
         <p className="profile-head__empty muted">No accounts are linked to this profile yet.</p>
       )}
 
-      <Tabs items={tabs} label="Profile sections" className="profile-tabs" />
+      <div ref={tabsRef}>
+        <Tabs items={tabs} label="Profile sections" className="profile-tabs" />
+      </div>
     </section>
   );
 }

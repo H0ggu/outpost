@@ -236,7 +236,13 @@ export function FiltersBar({ header, hideColor = false }: { header: ProfileHeade
   }, [filters.from, filters.to]);
 
   const set = (patch: Partial<ProfileFilters>) => setFilters({ ...filters, ...patch });
-  const active = describeFilters(filters, header);
+  // Where the page owns the colour (its side toggle), it is not one of the bar's filters.
+  const active = describeFilters(filters, header).filter(a => !(hideColor && a.key === 'color'));
+  const reset = () => setFilters(hideColor && filters.color ? { color: filters.color } : {});
+  // `unknown` only exists for PGN and reference games.
+  const timeClasses = TIME_CLASSES.filter(
+    tc => tc !== 'unknown' || header.sources.some(s => s.kind === 'pgn' || s.kind === 'fide') || !!filters.tc?.includes('unknown'),
+  );
   const advancedActive = !!(filters.src?.length || filters.opp || filters.oppName || filters.event || filters.line?.length);
   const showAdvanced = more || advancedActive;
   const periodValue: Period | '' | 'custom' = filters.period ?? (customDates ? 'custom' : '');
@@ -309,7 +315,7 @@ export function FiltersBar({ header, hideColor = false }: { header: ProfileHeade
           <span className="field">
             <span className="field__label">Time control</span>
             <span className="chips" role="group" aria-label="Time control">
-              {TIME_CLASSES.map((tc: TimeClass) => (
+              {timeClasses.map((tc: TimeClass) => (
                 <ToggleChip
                   key={tc}
                   pressed={!!filters.tc?.includes(tc)}
@@ -367,7 +373,7 @@ export function FiltersBar({ header, hideColor = false }: { header: ProfileHeade
               </button>
             )}
             {active.length > 0 && (
-              <button type="button" className="button button-empty button-thin" data-icon={licon.X} onClick={() => setFilters({})}>
+              <button type="button" className="button button-empty button-thin" data-icon={licon.X} onClick={reset}>
                 Reset
               </button>
             )}

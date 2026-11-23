@@ -159,7 +159,7 @@ function CountryTable({
               {th('name', 'Country')}
               {th('games', 'Games', 'num')}
               {th('opponents', 'Opponents', 'num map-opps')}
-              <th className="map-wdl">Win / draw / loss</th>
+              <th className="map-wdl col-wdl">Win / draw / loss</th>
               {th('score', 'Score', 'num')}
             </tr>
           </thead>
@@ -168,10 +168,11 @@ function CountryTable({
               <tr key={c.code} className={['clickable', selected === c.code.toUpperCase() && 'selected'].filter(Boolean).join(' ')} tabIndex={0} onClick={() => onSelect(c.code.toUpperCase())} onKeyDown={e => e.key === 'Enter' && onSelect(c.code.toUpperCase())}>
                 <td className="map-country-name">
                   <FlagEmoji code={c.code} /> {countryName(c.code)}
+                  <WdlBar w={c.w} d={c.d} l={c.l} className="cell-bar" />
                 </td>
                 <td className="num">{fmtInt(c.games)}</td>
                 <td className="num map-opps">{fmtInt(c.opponents)}</td>
-                <td className="map-wdl">
+                <td className="map-wdl col-wdl">
                   <WdlBar w={c.w} d={c.d} l={c.l} />
                 </td>
                 <td className="num">

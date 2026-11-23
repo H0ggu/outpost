@@ -146,7 +146,7 @@ function OpeningsTable({
                 <th className="num op-moves" title="Average game length in full moves">
                   Avg. moves
                 </th>
-                <th className="op-wdl">Win / draw / loss</th>
+                <th className="op-wdl col-wdl">Win / draw / loss</th>
                 <th className="num">Score</th>
               </tr>
             </thead>
@@ -163,10 +163,12 @@ function OpeningsTable({
                   <td className="op-name">
                     <span className="eco">{r.eco}</span> {r.name}
                     <span className="op-name__line san">{fmtLine(r.line)}</span>
+                    {/* Phones show the bar under the name instead of in its own column. */}
+                    <WdlBar w={r.w} d={r.d} l={r.l} className="cell-bar" />
                   </td>
                   <td className="num">{fmtInt(r.games)}</td>
                   <td className="num op-moves">{fmtMoves(r.avgPly)}</td>
-                  <td className="op-wdl">
+                  <td className="op-wdl col-wdl">
                     <WdlBar w={r.w} d={r.d} l={r.l} />
                   </td>
                   <td className="num">

@@ -1341,13 +1341,28 @@ html[data-theme='light'] {
   }
 }
 
+.profile-page .gt-result__tc {
+  display: none;
+}
+
 @media (max-width: 400px) {
-  .profile-page .games-table .gt-date {
+  .profile-page .games-table .gt-date,
+  .profile-page .games-table .gt-tc {
     display: none;
+  }
+
+  .profile-page .games-table td.gt-opp {
+    max-width: 13rem;
   }
 
   .profile-page .rating-diff {
     display: none;
+  }
+
+  .profile-page .gt-result__tc {
+    display: inline-block;
+    margin-left: 0.4em;
+    color: var(--c-font-dim);
   }
 }
 
@@ -1483,6 +1498,23 @@ html[data-theme='light'] {
   }
 }
 
+/* Tables with a W/D/L column (openings, opponents, countries): phones move the bar under the
+ * row's name (`.cell-bar`) and drop the column (`.col-wdl`), so the table fits 360px. */
+.profile-page .cell-bar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .profile-page .col-wdl {
+    display: none;
+  }
+
+  .profile-page td .cell-bar {
+    display: flex;
+    margin-top: 0.35rem;
+  }
+}
+
 /* ---------------------------------------------------------------------------
  * Opponents and behaviour
  * ------------------------------------------------------------------------ */
@@ -1531,7 +1563,7 @@ html[data-theme='light'] {
   }
 
   .profile-page .opp-name .player-name {
-    max-width: 8.5rem;
+    max-width: 11rem;
   }
 }
 
@@ -2137,5 +2169,27 @@ html[data-theme='light'] {
   .profile-page .activity-box .card .box__pad {
     padding-left: 0.75rem;
     padding-right: 0.75rem;
+  }
+}
+
+/* Rating averages: phones drop the games column (the row label says it) and shorten headers. */
+.profile-page .averages-table .av-short {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .profile-page .averages-table .av-games,
+  .profile-page .averages-table .av-long {
+    display: none;
+  }
+
+  .profile-page .averages-table .av-short {
+    display: inline;
+  }
+
+  .profile-page .averages-table td,
+  .profile-page .averages-table th {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
   }
 }

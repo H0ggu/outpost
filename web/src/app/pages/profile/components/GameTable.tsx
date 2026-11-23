@@ -81,6 +81,8 @@ export function GameTable({ slug, games, sources, timeZone }: GameTableProps) {
                     {diff !== null && g.rated && (
                       <span className={['rating-diff', diff > 0 ? 'good' : diff < 0 ? 'bad' : 'muted'].join(' ')}>{fmtSigned(diff)}</span>
                     )}
+                    {/* Phones drop the time column and show its icon here. */}
+                    <TimeClassIcon tc={g.timeClass} className="gt-result__tc" />
                   </td>
                   <td className="gt-tc" title={`${TIME_CLASS_LABELS[g.timeClass]}${g.rated ? ' · rated' : ' · casual'}`}>
                     <TimeClassIcon tc={g.timeClass} />

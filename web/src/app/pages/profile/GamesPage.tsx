@@ -33,9 +33,9 @@ export default function GamesPage() {
       <div className="games-summary">
         <div className="games-summary__tiles">
           <StatTile value={fmtInt(g.total)} label="Games" />
-          <StatTile value={<span className="good">{fmtInt(g.summary.w)}</span>} label="Wins" />
+          <StatTile value={<span className={g.summary.w ? 'good' : undefined}>{fmtInt(g.summary.w)}</span>} label="Wins" />
           <StatTile value={fmtInt(g.summary.d)} label="Draws" />
-          <StatTile value={<span className="bad">{fmtInt(g.summary.l)}</span>} label="Losses" />
+          <StatTile value={<span className={g.summary.l ? 'bad' : undefined}>{fmtInt(g.summary.l)}</span>} label="Losses" />
           <StatTile value={<ScoreText score={scoreOfWdl(g.summary)} />} label="Score" />
         </div>
         {total > 0 && <WdlBar w={g.summary.w} d={g.summary.d} l={g.summary.l} className="games-summary__bar" />}

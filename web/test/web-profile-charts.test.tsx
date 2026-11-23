@@ -185,7 +185,7 @@ describe('Rating tab', () => {
     await waitFor(() => expect(chart.querySelectorAll('path.chart-line').length).toBe(4));
     const averages = screen.getByRole('heading', { name: 'Averages' }).closest('section')!;
     expect(within(averages).getByText('Last 10 games')).toBeTruthy();
-    expect(within(averages).getByText('All games')).toBeTruthy();
+    expect(within(averages).getByText(/^All [\d,]+ games$/)).toBeTruthy();
     expect(within(averages).getByText(/don’t compare/)).toBeTruthy();
   });
 

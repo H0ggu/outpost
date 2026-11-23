@@ -140,21 +140,27 @@ function AveragesCard({ averages, narrowed, tcNarrowed }: { averages: readonly R
         <EmptyState title="No games in this selection" />
       ) : (
         <div className="table-wrap">
-          <table className="slist">
+          <table className="slist averages-table">
             <thead>
               <tr>
                 <th>Over</th>
-                <th className="num">Games</th>
-                <th className="num">Avg. rating</th>
-                <th className="num">Avg. opponent</th>
+                <th className="num av-games">Games</th>
+                <th className="num">
+                  <span className="av-long">Avg. rating</span>
+                  <span className="av-short">Rating</span>
+                </th>
+                <th className="num">
+                  <span className="av-long">Avg. opponent</span>
+                  <span className="av-short">Opp.</span>
+                </th>
                 <th className="num">Score</th>
               </tr>
             </thead>
             <tbody>
               {rows.map(a => (
                 <tr key={a.n ?? 'all'}>
-                  <td>{a.n === null ? 'All games' : `Last ${fmtInt(a.n)} games`}</td>
-                  <td className="num">{fmtInt(a.games)}</td>
+                  <td>{a.n === null ? `All ${fmtInt(a.games)} games` : `Last ${fmtInt(a.n)} games`}</td>
+                  <td className="num av-games">{fmtInt(a.games)}</td>
                   <td className="num">{fmtRating(a.avgRating)}</td>
                   <td className="num">{fmtRating(a.avgOppRating)}</td>
                   <td className="num">
