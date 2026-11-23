@@ -108,14 +108,38 @@
   max-width: 100%;
 }
 
+/* A long name ellipsizes, then the account chips give way, so the chip and its × always fit. */
 .lib-prep-opp__name {
+  flex: 0 1 auto;
+  min-width: 3rem;
   color: var(--c-font-clear);
   font-weight: 500;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib-prep-opp .lib-sources {
+  flex: 0 100 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.lib-prep-opp .lib-source {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .lib-prep-opp .lib-icon-btn {
   margin: 0;
+  flex: none;
+}
+
+@media (max-width: 480px) {
+  /* Phones: the name alone (the report card below lists the accounts). */
+  .lib-prep-opp .lib-sources {
+    display: none;
+  }
 }
 
 .lib-opp-picker {

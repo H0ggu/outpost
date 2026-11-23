@@ -37,6 +37,12 @@ export function liveClock(player: BroadcastPlayer, running: boolean, thinkTime: 
   return Math.max(0, player.clock - (thinkTime ?? 0) - Math.max(0, elapsedSec));
 }
 
+/** "GM Alpha (NOR), 2700": the whole line, for boards too narrow to show it all. */
+export function playerTooltip(p: BroadcastPlayer): string {
+  const name = [p.title, p.name || '?'].filter(Boolean).join(' ');
+  return `${name}${p.fed ? ` (${p.fed})` : ''}${p.rating !== null ? `, ${p.rating}` : ''}`;
+}
+
 function PlayerLine({
   player,
   side,
@@ -53,7 +59,7 @@ function PlayerLine({
   const score = sideScore(status, side);
   return (
     <span className="mini-game__player">
-      <span className="mini-game__user">
+      <span className="mini-game__user" title={playerTooltip(player)}>
         {player.fed && <span className="lib-fed" title={`Federation: ${player.fed}`}>{player.fed}</span>}
         {player.title && <span className="title-badge">{player.title}</span>}
         <span className="name">{player.name || '?'}</span>

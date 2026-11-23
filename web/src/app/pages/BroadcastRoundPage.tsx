@@ -1,28 +1,47 @@
-import { useCallback, useEffect, useState, type MouseEvent } from 'react';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { API_ROUTES, type BroadcastGamePreview } from '@outpost/shared/api';
-import { api } from '../api/client.ts';
 import { Box, EmptyState, licon, Page, Spinner } from '../components/index.ts';
 import { paths } from '../paths.ts';
 import { BroadcastError, formatTourDates, RoundStatusPill } from './components/library/broadcast.tsx';
 import { MiniGame } from './components/library/MiniGame.tsx';
 import { extractBroadcastGame } from './components/library/broadcastPgn.ts';
 import { timeAgo } from './components/library/format.ts';
-import { POLL, useBroadcastRound, useBroadcastTour } from './library-hooks.ts';
+import { fetchRoundPgnGames, libraryKeys, POLL, useBroadcastRound, useBroadcastTour } from './library-hooks.ts';
 import './components/library/library.css';
 import './BroadcastsPage.css';
 
 /** Leaves the SPA for the Studio (a separate page). Replaceable in tests. */
 export const studioNavigation = { go: (href: string) => window.location.assign(href) };
 
-/** Studio link for a live game: its PGN out of the round PGN, else the current position. */
-export async function studioHrefForGame(roundId: string, game: BroadcastGamePreview): Promise<string> {
+/**
+ * How long opening a board waits for the round PGN before it settles for the position link (ms).
+ * Read at call time, so tests can shorten it.
+ */
+export const OPEN_PGN_TIMEOUT = { ms: 8000 };
+
+/**
+ * Studio link for a live game: its PGN out of the round PGN (cached per round for a poll interval,
+ * only that game parsed), else — on an error, a missing game or a slow download, which is then
+ * cancelled — the current position.
+ */
+export async function studioHrefForGame(qc: QueryClient, roundId: string, game: BroadcastGamePreview): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>(resolve => {
+    timer = setTimeout(() => resolve(null), OPEN_PGN_TIMEOUT.ms);
+  });
   try {
-    const all = await api.text(API_ROUTES.broadcastRoundPgn(roundId));
-    const pgn = extractBroadcastGame(all, game);
-    if (pgn) return paths.studio({ pgn });
+    const entries = await Promise.race([fetchRoundPgnGames(qc, roundId), timeout]);
+    if (entries === null) void qc.cancelQueries({ queryKey: libraryKeys.broadcastRoundPgn(roundId) });
+    else {
+      const pgn = extractBroadcastGame(entries, game);
+      if (pgn) return paths.studio({ pgn });
+    }
   } catch {
     // fall back to the position
+  } finally {
+    clearTimeout(timer);
   }
   return paths.studio({ fen: game.fen });
 }
@@ -53,20 +72,41 @@ export default function BroadcastRoundPage() {
   const live = !!data?.round.ongoing;
   const now = useNow(live || !!data?.games.some(g => g.status === '*'));
   const [opening, setOpening] = useState<string | null>(null);
+  const qc = useQueryClient();
 
   // Seconds since the snapshot: since we received it, plus how old the server's copy was (≤ cache).
   const receivedAt = round.dataUpdatedAt;
   const serverAge = data ? Math.min(POLL.broadcastMs, Math.max(0, receivedAt - data.fetchedAt)) / 1000 : 0;
   const elapsedSec = data ? Math.max(0, (now - receivedAt) / 1000) + serverAge : 0;
 
+  // One board opens at a time; leaving the round (another round, another page) drops it.
+  const openRef = useRef<{ cancelled: boolean } | null>(null);
+  useEffect(
+    () => () => {
+      if (openRef.current) openRef.current.cancelled = true;
+      openRef.current = null;
+      setOpening(null);
+      void qc.cancelQueries({ queryKey: libraryKeys.broadcastRoundPgn(roundId) });
+    },
+    [qc, roundId],
+  );
+
   const onOpen = useCallback(
     (game: BroadcastGamePreview, e: MouseEvent<HTMLAnchorElement>) => {
       if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // new tab: the position link
       e.preventDefault();
+      if (openRef.current) return; // already opening a board
+      const run = { cancelled: false };
+      openRef.current = run;
       setOpening(game.id);
-      void studioHrefForGame(roundId, game).then(href => studioNavigation.go(href)).finally(() => setOpening(null));
+      void studioHrefForGame(qc, roundId, game).then(href => {
+        if (run.cancelled) return;
+        openRef.current = null;
+        setOpening(null);
+        studioNavigation.go(href);
+      });
     },
-    [roundId],
+    [qc, roundId],
   );
 
   const title = data ? `${data.tour.name} · ${data.round.name}` : 'Broadcast';

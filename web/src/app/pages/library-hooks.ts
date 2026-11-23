@@ -4,7 +4,7 @@
  * `api/hooks.ts`: contract types from @outpost/shared, `api` with the abort signal, keys under
  * top-level prefixes so a whole area can be invalidated at once (`['databases']`, `['prep']`, …).
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import {
   API_ROUTES,
@@ -35,6 +35,7 @@ import {
 import { filtersKey, statsQuery, type ProfileFilters } from '@outpost/shared/filters';
 import { api, ApiError } from '../api/client.ts';
 import { queryKeys } from '../api/hooks.ts';
+import { indexRoundPgn, type RoundPgnEntry } from './components/library/broadcastPgn.ts';
 
 /** Query keys of the library pages (top-level prefixes: databases, prep, broadcasts, reference). */
 export const libraryKeys = {
@@ -49,6 +50,7 @@ export const libraryKeys = {
   broadcasts: ['broadcasts'] as const,
   broadcastTour: (tourId: string) => ['broadcasts', 'tour', tourId] as const,
   broadcastRound: (roundId: string) => ['broadcasts', 'round', roundId] as const,
+  broadcastRoundPgn: (roundId: string) => ['broadcasts', 'round-pgn', roundId] as const,
   reference: ['reference'] as const,
   referencePlayers: (q: string) => ['reference', 'players', q] as const,
 };
@@ -62,6 +64,26 @@ export const POLL = { importMs: 1500, broadcastMs: 10_000 };
 /** A job that is still queued or running. */
 export const isActiveJob = (job: JobInfo | null | undefined): job is JobInfo & { status: 'queued' | 'running' } =>
   !!job && (job.status === 'queued' || job.status === 'running');
+
+/**
+ * Drops the cached queries under `queryKey` (a resource just deleted) without fetching it again:
+ * the ones nothing shows go now; the ones still on screen (the page that deleted it, until it
+ * has navigated away) are cancelled and go when their last observer leaves. Removing an observed
+ * query instead makes its observer rebuild it on the next render and GET the deleted resource.
+ */
+export function forgetQueries(qc: QueryClient, queryKey: QueryKey): void {
+  const cache = qc.getQueryCache();
+  void qc.cancelQueries({ queryKey });
+  qc.removeQueries({ queryKey, type: 'inactive' });
+  const shown = new Set(cache.findAll({ queryKey }));
+  if (shown.size === 0) return;
+  const unsubscribe = cache.subscribe(event => {
+    if (event.type !== 'observerRemoved' || !shown.has(event.query) || event.query.getObserversCount() > 0) return;
+    shown.delete(event.query);
+    cache.remove(event.query);
+    if (shown.size === 0) unsubscribe();
+  });
+}
 
 /** `value`, updated only after it has been stable for `ms` (debounced search boxes). */
 export function useDebouncedValue<T>(value: T, ms = 300): T {
@@ -217,7 +239,7 @@ export function useDeleteDatabase() {
   return useMutation({
     mutationFn: (id: Id) => api.del<OkResponse>(API_ROUTES.database(id)),
     onSuccess: (_r, id) => {
-      qc.removeQueries({ queryKey: libraryKeys.database(id) });
+      forgetQueries(qc, libraryKeys.database(id));
       return qc.invalidateQueries({ queryKey: libraryKeys.databases, exact: true });
     },
   });
@@ -322,7 +344,7 @@ export function useDeletePrep() {
   return useMutation({
     mutationFn: (id: Id) => api.del<OkResponse>(API_ROUTES.prepSet(id)),
     onSuccess: (_r, id) => {
-      qc.removeQueries({ queryKey: libraryKeys.prep(id) });
+      forgetQueries(qc, libraryKeys.prep(id));
       return qc.invalidateQueries({ queryKey: libraryKeys.prepList, exact: true });
     },
   });
@@ -363,6 +385,23 @@ export function useBroadcastRound(roundId: string | undefined) {
     retry: broadcastRetry,
     refetchInterval: q => roundRefetchInterval(q.state.data, q.state.error),
     refetchIntervalInBackground: false,
+  });
+}
+
+/**
+ * The round's PGN (`GET /api/broadcasts/round/:id.pgn`, every board with clocks and comments: a
+ * few MB for a big round), cut into games without parsing the moves, and kept for one poll
+ * interval so opening another board soon after doesn't download it again. Cancel it with
+ * `qc.cancelQueries({ queryKey: libraryKeys.broadcastRoundPgn(roundId) })` (aborts the download).
+ */
+export function fetchRoundPgnGames(qc: QueryClient, roundId: string): Promise<RoundPgnEntry[]> {
+  return qc.fetchQuery({
+    queryKey: libraryKeys.broadcastRoundPgn(roundId),
+    queryFn: ({ signal }) => api.text(API_ROUTES.broadcastRoundPgn(roundId), undefined, signal).then(indexRoundPgn),
+    staleTime: POLL.broadcastMs,
+    gcTime: POLL.broadcastMs,
+    structuralSharing: false,
+    retry: false,
   });
 }
 

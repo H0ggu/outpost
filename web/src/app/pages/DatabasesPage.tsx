@@ -1,9 +1,10 @@
-import { useId, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useId, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import type { DatabaseInfo, Visibility } from '@outpost/shared/api';
 import { useSession } from '../api/hooks.ts';
 import { Box, Button, EmptyState, ErrorBox, Icon, licon, Page, Table, type Column } from '../components/index.ts';
 import { paths } from '../paths.ts';
+import { ActionErrorToast } from './components/library/controls.tsx';
 import { fullNumber, timeAgo } from './components/library/format.ts';
 import { QueryView } from './components/library/QueryView.tsx';
 import { isActiveJob, useCreateDatabase, useDatabases, useUpdateDatabase } from './library-hooks.ts';
@@ -139,22 +140,30 @@ function CreateDatabase({ onCancel }: { onCancel: () => void }) {
   );
 }
 
-/** Private / public toggle of one of my databases. */
+/** Private / public toggle of one of my databases; a failure is said in a toast. */
 function VisibilityToggle({ db }: { db: DatabaseInfo }) {
   const update = useUpdateDatabase();
+  const [failure, setFailure] = useState<{ error: unknown; wanted: Visibility } | null>(null);
+  const dismiss = useCallback(() => setFailure(null), []);
   const next: Visibility = db.visibility === 'private' ? 'public' : 'private';
   return (
-    <button
-      type="button"
-      className={`lib-vis lib-vis--${db.visibility}`}
-      data-icon={db.visibility === 'private' ? licon.Padlock : licon.Globe}
-      title={update.isError ? `Failed: ${update.error.message}` : `Make ${next}`}
-      aria-label={`${db.name} is ${db.visibility}; make it ${next}`}
-      disabled={update.isPending}
-      onClick={() => update.mutate({ id: db.id, patch: { visibility: next } })}
-    >
-      {db.visibility === 'private' ? 'Private' : 'Public'}
-    </button>
+    <>
+      <button
+        type="button"
+        className={`lib-vis lib-vis--${db.visibility}`}
+        data-icon={db.visibility === 'private' ? licon.Padlock : licon.Globe}
+        title={`Make ${next}`}
+        aria-label={`${db.name} is ${db.visibility}; make it ${next}`}
+        disabled={update.isPending}
+        onClick={() => {
+          setFailure(null);
+          update.mutate({ id: db.id, patch: { visibility: next } }, { onError: error => setFailure({ error, wanted: next }) });
+        }}
+      >
+        {db.visibility === 'private' ? 'Private' : 'Public'}
+      </button>
+      {failure && <ActionErrorToast error={failure.error} what={`make ${db.name} ${failure.wanted}`} onClose={dismiss} />}
+    </>
   );
 }
 

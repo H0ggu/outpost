@@ -295,13 +295,16 @@ a.lib-tour__name:hover {
   z-index: 3;
 }
 
-/* Narrow boards (two per row on phones): the federation goes first, the rating stays. */
+/* Narrow boards: smaller type first; on the narrowest (two per row on phones) the federation
+ * goes, the rating stays (the federation is still in the player's tooltip). */
 @container (width < 250px) {
-  .lib-fed {
-    display: none;
-  }
-
   .lib-mini .mini-game__player {
     font-size: 0.82rem;
+  }
+}
+
+@container (width < 200px) {
+  .lib-fed {
+    display: none;
   }
 }

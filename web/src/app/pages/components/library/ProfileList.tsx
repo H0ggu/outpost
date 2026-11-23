@@ -53,7 +53,8 @@ export function SourceBadges({ sources, max }: { sources: readonly SourceChip[];
 export function BookmarkButton({ slug, bookmarked, name }: { slug: string; bookmarked: boolean; name: string }) {
   const toggle = useToggleBookmark();
   const [pending, setPending] = useState<boolean | null>(null);
-  const [failure, setFailure] = useState<unknown>(null);
+  /** The last failed toggle: the error and what it tried to do. */
+  const [failure, setFailure] = useState<{ error: unknown; wanted: boolean } | null>(null);
   const dismiss = useCallback(() => setFailure(null), []);
   const on = pending ?? bookmarked;
   const label = on ? `Remove ${name} from bookmarks` : `Bookmark ${name}`;
@@ -68,12 +69,22 @@ export function BookmarkButton({ slug, bookmarked, name }: { slug: string; bookm
         data-icon={on ? licon.Star : licon.StarOutline}
         disabled={toggle.isPending}
         onClick={() => {
-          setPending(!on);
+          const wanted = !on;
+          setPending(wanted);
           setFailure(null);
-          toggle.mutate({ slug, bookmarked: !on }, { onError: setFailure, onSettled: () => setPending(null) });
+          toggle.mutate(
+            { slug, bookmarked: wanted },
+            { onError: error => setFailure({ error, wanted }), onSettled: () => setPending(null) },
+          );
         }}
       />
-      {failure !== null && <ActionErrorToast error={failure} what={on ? `bookmark ${name}` : `remove ${name} from bookmarks`} onClose={dismiss} />}
+      {failure && (
+        <ActionErrorToast
+          error={failure.error}
+          what={failure.wanted ? `bookmark ${name}` : `remove ${name} from bookmarks`}
+          onClose={dismiss}
+        />
+      )}
     </>
   );
 }

@@ -265,6 +265,20 @@ describe('DatabasePage', () => {
     await waitFor(() => expect(location()).toBe('/databases'));
   });
 
+  it('does not refetch a database it just deleted', async () => {
+    base(() => database());
+    api().on('DELETE', '/api/databases/5', { ok: true });
+    const { location, qc } = renderPage(<DatabasePage />, ROUTE);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete database' }));
+    const before = api().find('GET', /^\/api\/databases\/5(\/games)?$/).length;
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 3 games for good' }));
+    await waitFor(() => expect(location()).toBe('/databases'));
+    await new Promise(r => setTimeout(r, 50));
+    expect(api().find('GET', /^\/api\/databases\/5(\/games)?$/).length).toBe(before);
+    // …and forgets it once its page is gone.
+    await waitFor(() => expect(qc.getQueryCache().findAll({ queryKey: ['databases', 5] })).toHaveLength(0));
+  });
+
   it('hides editing for read-only databases', async () => {
     base(() => database({ canEdit: false, owner: { id: 3, username: 'carol' } }));
     renderPage(<DatabasePage />, ROUTE);
