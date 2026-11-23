@@ -229,7 +229,8 @@ describe('GET /api/profiles/:slug/activity', () => {
   });
 
   it('keeps date-only PGN games on their written date and out of the hour charts', async () => {
-    const dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'games', 0)").lastInsertRowid;
+    // Public: a private database's games only count for its owner (profiles/access.ts).
+    const dbId = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('OTB', 'games', 'public', 0)").lastInsertRowid;
     const src = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(dbId, 'Otb Player'), databaseId: dbId });
     createProfile(t.db, { slug: 'otb', ownerUserId: null, sources: [{ id: src }] });
     const otb = (originId: string, endedAt: number, result: '1-0' | '0-1', black = 'Rival') =>

@@ -26,7 +26,9 @@ describe('player explorer (/api/explorer/player)', () => {
     other = createUserSession(db, { username: 'oscar' }).cookie;
     admin = createUserSession(db, { username: 'ada', role: 'admin' }).cookie;
 
-    gamesDb = createDatabase(db, { name: 'olga games', kind: 'games', ownerId, visibility: 'private' });
+    // Public, so the profile's PGN source counts for every viewer (a private database's games count
+    // for its owner and admins only: see 'reads db:<id>' below).
+    gamesDb = createDatabase(db, { name: 'olga games', kind: 'games', ownerId, visibility: 'public' });
     refDb = createDatabase(db, { name: 'Reference', kind: 'reference' });
     const sA = createSource(db, { kind: 'lichess', key: 'alice' });
     const sC = createSource(db, { kind: 'chesscom', key: 'alicecc' });
@@ -53,7 +55,7 @@ describe('player explorer (/api/explorer/player)', () => {
     g('g9', { ...at(9), origin: 'chesscom', moves: sans('e4 e6'), result: '1-0', timeClass: 'rapid', white: { name: 'alicecc' } });
     // Carol (private profile).
     g('g10', { ...at(9), moves: sans('c4 e5'), white: { name: 'carol' } });
-    // Alice Smith in Olga's PGN database: no time class, unrated.
+    // Alice Smith in Olga's (public) PGN database: no time class, unrated.
     g('g11', {
       ...at(10),
       origin: 'pgn',
@@ -279,7 +281,7 @@ describe('player explorer (/api/explorer/player)', () => {
   });
 
   it('reads db:<id> (database access rules) from the explorer colour', async () => {
-    expect((await get(`player=db:${gamesDb}&color=white`)).statusCode).toBe(404);
+    expect((await get(`player=db:${gamesDb}&color=white`)).statusCode).toBe(200);
     const r = await explore(`player=db:${gamesDb}&color=white`, owner);
     expect(r.moves.map(m => [m.uci, m.white])).toEqual([['c2c4', 1]]);
     // Opponent ratings are the other side's.
@@ -287,6 +289,17 @@ describe('player explorer (/api/explorer/player)', () => {
     const asAdmin = await explore(`player=db:${gamesDb}&color=black`, admin);
     expect(asAdmin.white).toBe(1);
     expect((await get('player=db:999999&color=white', admin)).statusCode).toBe(404);
+    // A private database: hidden from others, both as db:<id> and through the public profile's
+    // PGN source (a public profile never exposes someone's private PGN collection).
+    t.db.run("UPDATE databases SET visibility = 'private' WHERE id = ?", [gamesDb]);
+    try {
+      expect((await get(`player=db:${gamesDb}&color=white`)).statusCode).toBe(404);
+      expect(move(await explore('player=alice&color=white'), 'c2c4')).toBeUndefined();
+      expect(move(await explore('player=alice&color=white', owner), 'c2c4')).toMatchObject({ white: 1 });
+      expect(move(await explore('player=alice&color=white', admin), 'c2c4')).toMatchObject({ white: 1 });
+    } finally {
+      t.db.run("UPDATE databases SET visibility = 'public' WHERE id = ?", [gamesDb]);
+    }
   });
 
   it('reads ref:<fideId> from the reference databases', async () => {
