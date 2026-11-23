@@ -29,8 +29,10 @@ import {
   toSessionUser,
   totpDisableSchema,
   totpEnableSchema,
+  totpSetupSchema,
   updatePrefs,
 } from '../auth/accounts.ts';
+import { isKnownDevice, purgeStaleDevices, rememberDevice } from '../auth/devices.ts';
 import { dummyPasswordHash, hashPassword, needsRehash, verifyPassword } from '../auth/password.ts';
 import {
   clearSessionCookie,
@@ -45,7 +47,16 @@ import {
   startSession,
 } from '../auth/session.ts';
 import { createSetupTokenStore } from '../auth/setup.ts';
-import { accountKey, FAILURE_LIMITS, FailureThrottle, IP_LIMITS, ipRateLimit } from '../auth/throttle.ts';
+import {
+  accountClientKey,
+  accountKey,
+  FAILURE_LIMITS,
+  FailureThrottle,
+  IP_LIMITS,
+  ipRateLimit,
+  clientKey,
+  reauthKey,
+} from '../auth/throttle.ts';
 import { generateTotpSecret, otpauthUrl, TOTP_PENDING_TTL_MS, verifyTotp } from '../auth/totp.ts';
 import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized } from '../http/errors.ts';
 import { parseBody, parseParams } from '../http/validate.ts';
@@ -62,23 +73,26 @@ import { readSettings } from '../settings.ts';
  *     or a wrong password (unknown users are checked against a dummy hash, so timing is equal);
  *     403 for a disabled account (only after the password matched); 401 'totp_required' when TOTP is
  *     on and the code is missing (`details.reason: 'missing'`) or wrong / replayed ('invalid').
+ *     Setup, signup and login remember the browser as a known device (src/auth/devices.ts).
  *   - POST /api/logout (OkResponse; always succeeds and clears the cookie)
  *   - POST /api/signup (SignupRequest → LoginResponse): 403 'setup_required' before setup; by
  *     signupMode: closed → 403, invite → an unused unexpired code consumed atomically, open.
  *   - GET/PUT /api/me/prefs (UserPrefs / UpdatePrefsRequest → UserPrefs)
  *   - POST /api/me/password (ChangePasswordRequest → OkResponse): needs the current password, signs
  *     out every other session.
- *   - POST /api/me/totp/setup (TotpSetupResponse: pending secret, otpauth URI, QR as SVG and data: URL),
- *     /api/me/totp/enable (TotpEnableRequest: a code for the pending secret),
- *     /api/me/totp/disable (TotpDisableRequest: password or a current code)
+ *   - POST /api/me/totp/setup (TotpSetupRequest: the current password → TotpSetupResponse: pending
+ *     secret, otpauth URI, QR as SVG and data: URL), /api/me/totp/enable (TotpEnableRequest: a code
+ *     for the pending secret), /api/me/totp/disable (TotpDisableRequest: password or a current code)
  *   - GET /api/me/sessions (SessionsResponse), DELETE /api/me/sessions/:id (OkResponse; 404 if not yours)
  *
- * Throttling (src/auth/throttle.ts): per IP with @fastify/rate-limit on setup, login, signup,
- * password and TOTP routes; per account on failures (wrong password / code / current password) and
- * per IP on bad invite codes. All answer 429 'rate_limited' with `details.retryAt` / `retryAfterSec`.
+ * Throttling (src/auth/throttle.ts): per client with @fastify/rate-limit on setup, login, signup,
+ * password and TOTP routes; failed sign-ins per account + client and (at a higher ceiling, known
+ * devices exempt) per account; failed re-authentication inside a session per user; bad invite codes
+ * per client. All answer 429 'rate_limited' with `details.retryAt` / `retryAfterSec`.
  *
  * Background: the setup token is ensured (generated + logged once) in onReady; expired sessions
- * are purged at startup and hourly (a local DB cleanup, so it runs regardless of startWorkers).
+ * and stale known devices are purged at startup and hourly (a local DB cleanup, so it runs
+ * regardless of startWorkers).
  */
 
 /** Expired sessions are purged this often. */
@@ -98,7 +112,9 @@ const totpRequired = (reason: 'missing' | 'invalid'): HttpError =>
 const authRoutes: FastifyPluginAsync = async app => {
   const { db, config } = app;
   const setup = createSetupTokenStore({ db, config, log: app.log });
+  const clientFailures = new FailureThrottle(FAILURE_LIMITS.accountClient);
   const accountFailures = new FailureThrottle(FAILURE_LIMITS.account);
+  const reauthFailures = new FailureThrottle(FAILURE_LIMITS.reauth);
   const inviteFailures = new FailureThrottle(FAILURE_LIMITS.invite);
   let purgeTimer: NodeJS.Timeout | null = null;
 
@@ -106,9 +122,22 @@ const authRoutes: FastifyPluginAsync = async app => {
     try {
       const n = purgeExpiredSessions(db);
       if (n) app.log.info(`purged ${n} expired session${n === 1 ? '' : 's'}`);
+      purgeStaleDevices(db);
     } catch (err) {
       app.log.warn({ err }, 'could not purge expired sessions');
     }
+  };
+
+  /** Checks the current password inside a session (password change, TOTP setup), throttled per user. */
+  const assertCurrentPassword = async (userId: number, password: string, reply: Parameters<FailureThrottle['assertAllowed']>[1]) => {
+    const key = reauthKey(userId);
+    reauthFailures.assertAllowed(key, reply, 'Too many wrong passwords or codes');
+    const row = findUserById(db, userId);
+    if (!row || !(await verifyPassword(password, row.password_hash))) {
+      reauthFailures.fail(key);
+      throw forbidden('Current password is incorrect');
+    }
+    return row;
   };
 
   app.addHook('onReady', async () => {
@@ -155,18 +184,31 @@ const authRoutes: FastifyPluginAsync = async app => {
     setup.clear();
     req.log.info({ userId }, 'first admin created');
     startSession(req, reply, userId);
+    rememberDevice(req, reply, userId);
     return { user: toSessionUser(findUserById(db, userId)!) };
   });
 
   app.post(API_ROUTES.login, { config: ipRateLimit(IP_LIMITS.login) }, async (req, reply): Promise<LoginResponse> => {
     const body = parseBody(loginSchema, req.body ?? {});
     const key = accountKey(body.username);
-    accountFailures.assertAllowed(key, reply, 'Too many failed sign-in attempts for this account');
+    const pairKey = accountClientKey(body.username, req.ip);
+    clientFailures.assertAllowed(pairKey, reply, 'Too many failed sign-in attempts for this account from your address');
+    if (!isKnownDevice(db, req, body.username)) {
+      accountFailures.assertAllowed(
+        key,
+        reply,
+        'Too many failed sign-in attempts for this account from many addresses (browsers that signed in to it before can still sign in)',
+      );
+    }
+    const failed = (): void => {
+      clientFailures.fail(pairKey);
+      accountFailures.fail(key);
+    };
 
     const user = findUserByUsername(db, body.username);
     const ok = await verifyPassword(body.password, user?.password_hash ?? (await dummyPasswordHash()));
     if (!user || !ok) {
-      accountFailures.fail(key);
+      failed();
       throw unauthorized('Invalid username or password');
     }
     if (user.disabled) throw forbidden('This account has been disabled');
@@ -174,13 +216,15 @@ const authRoutes: FastifyPluginAsync = async app => {
       if (!body.totp?.trim()) throw totpRequired('missing');
       const step = verifyTotp(user.totp_secret, body.totp, { lastStep: user.totp_last_step });
       if (step === null || !recordTotpStep(db, user.id, step)) {
-        accountFailures.fail(key);
+        failed();
         throw totpRequired('invalid');
       }
     }
-    accountFailures.reset(key);
+    // The per-account count is left to age out: a success here says nothing about other clients.
+    clientFailures.reset(pairKey);
     if (needsRehash(user.password_hash)) setPasswordHash(db, user.id, await hashPassword(body.password));
     startSession(req, reply, user.id);
+    rememberDevice(req, reply, user.id);
     return { user: toSessionUser(user) };
   });
 
@@ -197,7 +241,7 @@ const authRoutes: FastifyPluginAsync = async app => {
     if (mode === 'closed') throw forbidden('Sign-up is closed; ask an admin for an account');
     const body = parseBody(signupSchema, req.body ?? {});
 
-    const ipKey = `ip:${req.ip}`;
+    const ipKey = clientKey(req.ip);
     const invite = mode === 'invite' ? body.invite || null : null;
     if (mode === 'invite') {
       inviteFailures.assertAllowed(ipKey, reply, 'Too many invalid invite codes');
@@ -220,6 +264,7 @@ const authRoutes: FastifyPluginAsync = async app => {
     });
     req.log.info({ userId, invite: invite !== null }, 'account created');
     startSession(req, reply, userId);
+    rememberDevice(req, reply, userId);
     return { user: toSessionUser(findUserById(db, userId)!) };
   });
 
@@ -240,13 +285,8 @@ const authRoutes: FastifyPluginAsync = async app => {
     async (req, reply): Promise<OkResponse> => {
       const me = req.user!;
       const body = parseBody(changePasswordSchema, req.body ?? {});
-      const key = accountKey(me.username);
-      accountFailures.assertAllowed(key, reply);
-      const row = findUserById(db, me.id);
-      if (!row || !(await verifyPassword(body.currentPassword, row.password_hash))) {
-        accountFailures.fail(key);
-        throw forbidden('Current password is incorrect');
-      }
+      await assertCurrentPassword(me.id, body.currentPassword, reply);
+      reauthFailures.reset(reauthKey(me.id));
       const hash = await hashPassword(body.newPassword);
       const revoked = db.tx(() => {
         setPasswordHash(db, me.id, hash);
@@ -260,9 +300,12 @@ const authRoutes: FastifyPluginAsync = async app => {
   app.post(
     API_ROUTES.me.totpSetup,
     { preHandler: requireUser, config: ipRateLimit(IP_LIMITS.totp) },
-    async (req): Promise<TotpSetupResponse> => {
+    async (req, reply): Promise<TotpSetupResponse> => {
       const me = req.user!;
+      const body = parseBody(totpSetupSchema, req.body ?? {});
       if (me.totpEnabled) throw conflict('Two-factor authentication is already on; turn it off first');
+      await assertCurrentPassword(me.id, body.password, reply);
+      reauthFailures.reset(reauthKey(me.id));
       const secret = generateTotpSecret();
       const now = Date.now();
       db.run('UPDATE users SET totp_pending_secret = ?, totp_pending_at = ? WHERE id = ?', [secret, now, me.id]);
@@ -282,8 +325,8 @@ const authRoutes: FastifyPluginAsync = async app => {
     async (req, reply): Promise<OkResponse> => {
       const me = req.user!;
       const body = parseBody(totpEnableSchema, req.body ?? {});
-      const key = accountKey(me.username);
-      accountFailures.assertAllowed(key, reply);
+      const key = reauthKey(me.id);
+      reauthFailures.assertAllowed(key, reply, 'Too many wrong passwords or codes');
       const row = db.get<{ totp_secret: string | null; totp_pending_secret: string | null; totp_pending_at: number | null }>(
         'SELECT totp_secret, totp_pending_secret, totp_pending_at FROM users WHERE id = ?',
         [me.id],
@@ -295,7 +338,7 @@ const authRoutes: FastifyPluginAsync = async app => {
       }
       const step = verifyTotp(pending, body.code);
       if (step === null) {
-        accountFailures.fail(key);
+        reauthFailures.fail(key);
         throw forbidden('That code is not valid; check the time on your device and try again');
       }
       const changed = db.run(
@@ -304,7 +347,7 @@ const authRoutes: FastifyPluginAsync = async app => {
         [step, me.id, pending],
       ).changes;
       if (changed !== 1) throw conflict('Two-factor setup changed meanwhile; start again');
-      accountFailures.reset(key);
+      reauthFailures.reset(key);
       req.log.info({ userId: me.id }, 'TOTP enabled');
       return { ok: true };
     },
@@ -316,8 +359,8 @@ const authRoutes: FastifyPluginAsync = async app => {
     async (req, reply): Promise<OkResponse> => {
       const me = req.user!;
       const body = parseBody(totpDisableSchema, req.body ?? {});
-      const key = accountKey(me.username);
-      accountFailures.assertAllowed(key, reply);
+      const key = reauthKey(me.id);
+      reauthFailures.assertAllowed(key, reply, 'Too many wrong passwords or codes');
       const row = findUserById(db, me.id);
       if (!row?.totp_secret) throw conflict('Two-factor authentication is not on');
       let ok = body.password !== null && (await verifyPassword(body.password, row.password_hash));
@@ -326,14 +369,14 @@ const authRoutes: FastifyPluginAsync = async app => {
         ok = step !== null && recordTotpStep(db, me.id, step);
       }
       if (!ok) {
-        accountFailures.fail(key);
+        reauthFailures.fail(key);
         throw forbidden('Wrong password or code');
       }
       db.run(
         'UPDATE users SET totp_secret = NULL, totp_last_step = NULL, totp_pending_secret = NULL, totp_pending_at = NULL WHERE id = ?',
         [me.id],
       );
-      accountFailures.reset(key);
+      reauthFailures.reset(key);
       req.log.info({ userId: me.id }, 'TOTP disabled');
       return { ok: true };
     },

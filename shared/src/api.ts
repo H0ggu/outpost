@@ -242,6 +242,14 @@ export interface ChangePasswordRequest {
   newPassword: string;
 }
 
+/**
+ * `POST /api/me/totp/setup` body: the current password, so a session alone (e.g. a stolen cookie)
+ * cannot put an attacker's authenticator on the account. Wrong → 403; missing → 400.
+ */
+export interface TotpSetupRequest {
+  password: string;
+}
+
 /** `POST /api/me/totp/setup`: a pending secret; nothing changes until it is confirmed with `enable`. */
 export interface TotpSetupResponse {
   /** Base32 secret for manual entry. */

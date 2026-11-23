@@ -6,7 +6,10 @@
  * - Sessions last 30 days and slide: a request with a live session moves `expires_at` to now + 30 days
  *   and records `last_seen_at` / IP / user agent, at most once per `SESSION_TOUCH_INTERVAL_MS` per
  *   session (so ordinary browsing does not write on every request). The preHandlers below then
- *   re-send the cookie so the browser's expiry slides too.
+ *   re-send the cookie so the browser's expiry slides too. The same writes keep `users.last_seen_at`
+ *   (AdminUser.lastSeenAt), which outlives the sessions.
+ * - A user keeps at most `MAX_SESSIONS_PER_USER` sessions: signing in once more drops the least
+ *   recently used ones (clients that sign in without their old cookie would pile up otherwise).
  * - Expired sessions are ignored on lookup and deleted by `purgeExpiredSessions` (run hourly by the
  *   auth plugin).
  *
@@ -42,6 +45,8 @@ export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const SESSION_TOUCH_INTERVAL_MS = 60_000;
 /** Random bytes in a session token. */
 export const SESSION_TOKEN_BYTES = 32;
+/** Sessions kept per user; the least recently used beyond this are deleted at sign-in. */
+export const MAX_SESSIONS_PER_USER = 50;
 /** Longest user agent kept with a session. */
 const MAX_USER_AGENT = 512;
 /** Longest cookie value considered at all (a real token is 43 characters). */
@@ -136,13 +141,16 @@ export function loadSessionUser(req: FastifyRequest): AuthUser | null {
   if (now - row.last_seen_at >= SESSION_TOUCH_INTERVAL_MS) {
     const meta = sessionMeta(req);
     try {
-      db.run('UPDATE sessions SET last_seen_at = ?, expires_at = ?, ip = ?, user_agent = COALESCE(?, user_agent) WHERE id_hash = ?', [
-        now,
-        now + SESSION_TTL_MS,
-        meta.ip,
-        meta.userAgent,
-        hash,
-      ]);
+      db.tx(() => {
+        db.run('UPDATE sessions SET last_seen_at = ?, expires_at = ?, ip = ?, user_agent = COALESCE(?, user_agent) WHERE id_hash = ?', [
+          now,
+          now + SESSION_TTL_MS,
+          meta.ip,
+          meta.userAgent,
+          hash,
+        ]);
+        db.run('UPDATE users SET last_seen_at = ? WHERE id = ?', [now, row.id]);
+      });
       touched.add(req);
     } catch (err) {
       // A busy database must not fail the request; the next one retries.
@@ -212,15 +220,26 @@ export interface NewSession {
   expiresAt: EpochMs;
 }
 
-/** Creates a session for `userId`. */
+/**
+ * Creates a session for `userId`, records the sign-in in `users.last_seen_at` and drops the user's
+ * least recently used sessions beyond `MAX_SESSIONS_PER_USER`.
+ */
 export function createSession(db: Db, userId: Id, meta: SessionMeta, now: number = Date.now()): NewSession {
   const token = randomBytes(SESSION_TOKEN_BYTES).toString('base64url');
   const hash = hashSessionToken(token);
   const expiresAt = now + SESSION_TTL_MS;
-  db.run(
-    'INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [hash, userId, now, expiresAt, now, meta.ip, meta.userAgent],
-  );
+  db.tx(() => {
+    db.run(
+      'INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [hash, userId, now, expiresAt, now, meta.ip, meta.userAgent],
+    );
+    db.run('UPDATE users SET last_seen_at = ? WHERE id = ?', [now, userId]);
+    db.run(
+      `DELETE FROM sessions WHERE user_id = ? AND id_hash NOT IN (
+         SELECT id_hash FROM sessions WHERE user_id = ? ORDER BY last_seen_at DESC, created_at DESC LIMIT ?)`,
+      [userId, userId, MAX_SESSIONS_PER_USER],
+    );
+  });
   return { token, hash, expiresAt };
 }
 
@@ -266,14 +285,18 @@ export function purgeExpiredSessions(db: Db, now: number = Date.now()): number {
   return db.run('DELETE FROM sessions WHERE expires_at <= ?', [now]).changes;
 }
 
-/** A user's live sessions, most recently used first, with the current one marked. */
+/**
+ * A user's live sessions, most recently used first, with the current one marked (at most
+ * `MAX_SESSIONS_PER_USER`, which is also the most a user can have).
+ */
 export function listUserSessions(db: Db, userId: Id, currentHash: string | null, now: number = Date.now()): SessionRow[] {
   return db
     .all<{ id_hash: string; created_at: number; last_seen_at: number; expires_at: number; ip: string | null; user_agent: string | null }>(
       `SELECT id_hash, created_at, last_seen_at, expires_at, ip, user_agent
          FROM sessions WHERE user_id = ? AND expires_at > ?
-        ORDER BY last_seen_at DESC, created_at DESC`,
-      [userId, now],
+        ORDER BY last_seen_at DESC, created_at DESC
+        LIMIT ?`,
+      [userId, now, MAX_SESSIONS_PER_USER],
     )
     .map(r => ({
       id: r.id_hash,

@@ -64,6 +64,9 @@ export const prefsPatchSchema = z.strictObject({
   studioLayout: z.enum(STUDIO_LAYOUTS).optional(),
 });
 
+/** `POST /api/me/totp/setup`: the current password (a session alone cannot turn on TOTP). */
+export const totpSetupSchema = z.object({ password: anyPasswordSchema.min(1, 'Enter your current password') });
+
 /** `POST /api/me/totp/enable`. */
 export const totpEnableSchema = z.object({ code: z.string().max(32) });
 

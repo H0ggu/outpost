@@ -1,20 +1,30 @@
 /**
  * Throttling for the auth endpoints (PLAN §10).
  *
- * Two layers:
- * 1. **Per IP** — `@fastify/rate-limit` (registered with `global: false` in app.ts), opted in per
- *    route with `config: ipRateLimit(LIMITS.login)`. Counts every request to that route from one
- *    client IP (`req.ip`, which honours TRUSTED_PROXIES).
- * 2. **Per account on failures** — `FailureThrottle`, an in-memory sliding window keyed by the
- *    lowercase username: wrong passwords, wrong TOTP codes, wrong current passwords. Once a key has
- *    `max` failures inside `windowMs`, every attempt for it is refused (even a correct one) until the
- *    oldest failure leaves the window. A successful login clears the key. The same class keys
- *    invite-code failures by IP.
+ * Layers:
+ * 1. **Per client** — `@fastify/rate-limit` (registered with `global: false` in app.ts), opted in per
+ *    route with `config: ipRateLimit(IP_LIMITS.login)`. Counts every request to that route from one
+ *    client (`clientKey(req.ip)`: the IP, which honours TRUSTED_PROXIES; IPv6 grouped by /64).
+ * 2. **Per account and client on failed sign-ins** — `FailureThrottle` keyed by account + client:
+ *    wrong passwords and wrong TOTP codes at login. Once a pair has `FAILURE_LIMITS.accountClient.max`
+ *    failures inside the window, that client is refused for that account, even with the right
+ *    password, until the oldest failure ages out. A successful login clears the pair. Somebody
+ *    guessing from one address therefore only locks themself out.
+ * 3. **Per account across all clients** — a much higher ceiling (`FAILURE_LIMITS.account`) against
+ *    guessing spread over many addresses. It refuses even a correct password, but never for a
+ *    *known device* (a browser holding the `outpost_device` cookie from an earlier sign-in to this
+ *    account, src/auth/devices.ts), so a distributed attack cannot lock the owner out of the
+ *    devices they already use.
+ * 4. **Re-authentication** inside a session (current password for a password change or TOTP setup,
+ *    TOTP codes for enable/disable) is counted per user (`FAILURE_LIMITS.reauth`), separately from
+ *    sign-ins: a session cannot be used to lock the account's sign-in.
+ * 5. **Invite codes** — unknown, used or expired codes per client (`FAILURE_LIMITS.invite`).
  *
- * Both answer 429 `rate_limited` with `details: { retryAt, retryAfterSec }` and a `Retry-After` header.
+ * All answer 429 `rate_limited` with `details: { retryAt, retryAfterSec }` and a `Retry-After` header.
  * State is per process (one Outpost process per instance); a restart clears it.
  */
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { normalizeIP } from '@fastify/rate-limit';
 import type { EpochMs } from '@outpost/shared/api';
 import { HttpError } from '../http/errors.ts';
 
@@ -36,13 +46,30 @@ export const IP_LIMITS = {
   password: { max: 10, timeWindowMs: 15 * MIN },
 } as const satisfies Record<string, IpLimit>;
 
-/** Failure budgets of the in-memory throttles. */
+/** Failure budgets of the in-memory throttles (see the module comment). */
 export const FAILURE_LIMITS = {
-  /** Wrong password / TOTP code / current password, per account. */
-  account: { max: 10, windowMs: 15 * MIN },
-  /** Unknown, used or expired invite codes, per IP. */
+  /** Failed sign-ins (password or TOTP code) for one account from one client. */
+  accountClient: { max: 10, windowMs: 15 * MIN },
+  /** Failed sign-ins for one account from all clients together; known devices are exempt. */
+  account: { max: 100, windowMs: 15 * MIN },
+  /** Wrong current password / TOTP code inside a session, per user. */
+  reauth: { max: 10, windowMs: 15 * MIN },
+  /** Unknown, used or expired invite codes, per client. */
   invite: { max: 5, windowMs: 15 * MIN },
 } as const;
+
+/**
+ * Throttle key of a client address: the IP as `@fastify/rate-limit` groups it (IPv4-mapped IPv6 as
+ * IPv4, other IPv6 addresses by their /64 prefix, which one host usually controls entirely).
+ */
+export const clientKey = (ip: string | undefined): string => {
+  if (!ip) return 'ip:unknown';
+  try {
+    return `ip:${normalizeIP(ip)}`;
+  } catch {
+    return `ip:${ip.toLowerCase()}`;
+  }
+};
 
 /** 429 `rate_limited` with when to retry. */
 export function throttledError(retryAt: EpochMs, message = 'Too many attempts', now: number = Date.now()): HttpError {
@@ -62,6 +89,7 @@ export function ipRateLimit(limit: IpLimit) {
     rateLimit: {
       max: limit.max,
       timeWindow: limit.timeWindowMs,
+      keyGenerator: (req: FastifyRequest) => clientKey(req.ip),
       errorResponseBuilder: (_req: FastifyRequest, ctx: { ttl: number }) =>
         throttledError(Date.now() + ctx.ttl, 'Too many requests from your address'),
     },
@@ -135,3 +163,9 @@ export class FailureThrottle {
 
 /** Throttle key of an account: the lowercase username (usernames are ASCII, unique case-insensitively). */
 export const accountKey = (username: string): string => `user:${username.trim().toLowerCase()}`;
+
+/** Throttle key of an account as seen from one client. */
+export const accountClientKey = (username: string, ip: string | undefined): string => `${accountKey(username)}|${clientKey(ip)}`;
+
+/** Throttle key for re-authentication inside a session. */
+export const reauthKey = (userId: number): string => `uid:${userId}`;

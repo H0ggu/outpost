@@ -6,21 +6,29 @@
  *   and an admin can neither disable nor delete their own account (another admin must). Checks and
  *   writes run in one `BEGIN IMMEDIATE` transaction, so two concurrent requests cannot both pass.
  * - Disabling a user, resetting their password or deleting them signs them out everywhere.
+ * - Password and TOTP resets are for *other* users. Admins change their own password with
+ *   `POST /api/me/password` and turn off their own TOTP with `POST /api/me/totp/disable`, which need
+ *   proof (current password / code), so a stolen admin session cannot take the account over.
  *
  * What deleting a user does (consistent with the foreign keys in 001_init.sql):
- * - Removed with the user (ON DELETE CASCADE): sessions, bookmarks, recently-viewed rows, the
- *   profiles they own (with their source links and prep-list entries), their personal **games**
- *   databases (with those games, positions and pgn sources), their Studio files (incl. the recycle
- *   bin) and their prep sets.
- * - Kept: **reference** databases they own become system-owned (`owner_user_id` NULL, like the ones
- *   imported by the server) first, because the masters/reference explorer of every user depends on
- *   them. Lichess / Chess.com / FIDE `sources` and their games are shared sync identities and stay.
- *   Invites they created or used keep their history with the user reference cleared (SET NULL; a
- *   used invite stays used). Jobs they queued stay with `user_id` NULL (jobs whose database is gone
- *   fail harmlessly in the worker).
+ * - At once (`beginUserDeletion`, one transaction): the user is marked `deleting_at` (hidden from the
+ *   admin list, 404 for PATCH), disabled and signed out everywhere; their known devices go; the
+ *   **reference** databases they own become system-owned (`owner_user_id` NULL, like the ones
+ *   imported by the server), because the masters/reference explorer of every user depends on them;
+ *   their personal games databases become private; their **unused** invites are deleted (an invite
+ *   handed out by a removed admin must not stay valid); their profiles (with source links, bookmarks
+ *   by others and prep-list entries), Studio files (incl. the recycle bin) and prep sets are deleted.
+ * - Then in the background (src/auth/purge.ts, small batches): their personal **games** databases
+ *   with those games, positions and pgn sources; finally the user row, whose remaining rows cascade
+ *   (bookmarks, recently-viewed) or are SET NULL.
+ * - Kept: Lichess / Chess.com / FIDE `sources` and their games are shared sync identities and stay.
+ *   Used invites keep their history with the user reference cleared (SET NULL; a used invite stays
+ *   used). Jobs they queued stay with `user_id` NULL (jobs whose database is gone fail harmlessly in
+ *   the worker).
  */
 import { randomBytes } from 'node:crypto';
 import {
+  API_ROUTES,
   type AdminSettings,
   type AdminUser,
   type Id,
@@ -31,7 +39,7 @@ import {
 import { z } from 'zod';
 import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
-import { conflict, forbidden, notFound, validationError } from '../http/errors.ts';
+import { conflict, forbidden, HttpError, notFound, validationError } from '../http/errors.ts';
 import { readSettings, writeSettings, type InstanceSettings } from '../settings.ts';
 import { activeAdminCount } from './accounts.ts';
 import { passwordSchema } from './password.ts';
@@ -130,11 +138,17 @@ interface AdminUserRow {
   profile_count: number;
 }
 
+/**
+ * Users not being deleted. `last_seen_at`: the stored last activity (it survives logout and
+ * revocation), or a newer live session's if any.
+ */
 const ADMIN_USER_SELECT = `
   SELECT u.id, u.username, u.role, u.disabled, u.totp_secret IS NOT NULL AS totp, u.created_at,
-         (SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.user_id = u.id) AS last_seen_at,
+         NULLIF(MAX(COALESCE(u.last_seen_at, 0),
+                    COALESCE((SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.user_id = u.id), 0)), 0) AS last_seen_at,
          (SELECT COUNT(*) FROM profiles p WHERE p.owner_user_id = u.id) AS profile_count
-    FROM users u`;
+    FROM users u
+   WHERE u.deleting_at IS NULL`;
 
 const toAdminUser = (r: AdminUserRow): AdminUser => ({
   id: r.id,
@@ -155,7 +169,7 @@ export const listAdminUsers = (db: Db): AdminUser[] =>
 
 /** One user, or null. */
 export const getAdminUser = (db: Db, id: Id): AdminUser | null => {
-  const r = db.get<AdminUserRow>(`${ADMIN_USER_SELECT} WHERE u.id = ?`, [id]);
+  const r = db.get<AdminUserRow>(`${ADMIN_USER_SELECT} AND u.id = ?`, [id]);
   return r ? toAdminUser(r) : null;
 };
 
@@ -173,21 +187,38 @@ export const userIdParams = z.object({ id: z.coerce.number().int().positive().ma
 const LAST_ADMIN = 'Outpost needs at least one active admin: promote or re-enable another admin first';
 
 /**
- * Applies an admin's change to a user (the new password, if any, already hashed).
- * Returns the updated user. `actorSession` (the admin's own session hash) survives when admins
- * reset their own password, like `POST /api/me/password`.
+ * 403 for an admin resetting their own password or TOTP through the admin API: that needs the
+ * self-service endpoints, which ask for proof.
  */
+export function assertNotSelfReset(actorId: Id, targetId: Id, patch: { password?: unknown; passwordHash?: unknown; resetTotp?: boolean }): void {
+  if (targetId !== actorId) return;
+  if (patch.password !== undefined || patch.passwordHash !== undefined) {
+    throw new HttpError(403, 'forbidden', `Change your own password under your account settings (POST ${API_ROUTES.me.password}), which asks for the current one`, {
+      reason: 'self_reset',
+    });
+  }
+  if (patch.resetTotp === true) {
+    throw new HttpError(403, 'forbidden', `Turn off your own two-factor authentication under your account settings (POST ${API_ROUTES.me.totpDisable})`, {
+      reason: 'self_reset',
+    });
+  }
+}
+
+/** Applies an admin's change to another user or themself (the new password, if any, already hashed). Returns the updated user. */
 export function updateUser(
   db: Db,
   actorId: Id,
   targetId: Id,
   patch: { role?: UserRole; disabled?: boolean; passwordHash?: string; resetTotp?: boolean },
-  actorSession: string | null = null,
 ): AdminUser {
   return db.tx(() => {
-    const target = db.get<{ id: Id; role: UserRole; disabled: number }>('SELECT id, role, disabled FROM users WHERE id = ?', [targetId]);
+    const target = db.get<{ id: Id; role: UserRole; disabled: number }>(
+      'SELECT id, role, disabled FROM users WHERE id = ? AND deleting_at IS NULL',
+      [targetId],
+    );
     if (!target) throw notFound('No such user');
     if (patch.disabled === true && targetId === actorId) throw forbidden('You cannot disable your own account');
+    assertNotSelfReset(actorId, targetId, patch);
 
     const activeAdminNow = target.role === 'admin' && target.disabled === 0;
     const losesAdmin = (patch.role !== undefined && patch.role !== 'admin') || patch.disabled === true;
@@ -205,24 +236,37 @@ export function updateUser(
         [targetId],
       );
     }
-    if (patch.disabled === true || patch.passwordHash !== undefined) {
-      revokeUserSessions(db, targetId, { except: targetId === actorId ? actorSession : null });
-    }
+    if (patch.disabled === true || patch.passwordHash !== undefined) revokeUserSessions(db, targetId);
     return getAdminUser(db, targetId)!;
   });
 }
 
-/** Deletes a user (see the module comment for what happens to their data). */
-export function deleteUser(db: Db, actorId: Id, targetId: Id): void {
+/**
+ * First, synchronous part of deleting a user (see the module comment); the background purge
+ * (src/auth/purge.ts) does the rest. Idempotent for a user already being deleted, so a purge that
+ * gave up can be restarted by deleting again.
+ */
+export function beginUserDeletion(db: Db, actorId: Id, targetId: Id, now: number = Date.now()): void {
   db.tx(() => {
-    const target = db.get<{ role: UserRole; disabled: number }>('SELECT role, disabled FROM users WHERE id = ?', [targetId]);
+    const target = db.get<{ role: UserRole; disabled: number; deleting_at: number | null }>(
+      'SELECT role, disabled, deleting_at FROM users WHERE id = ?',
+      [targetId],
+    );
     if (!target) throw notFound('No such user');
     if (targetId === actorId) throw forbidden('You cannot delete your own account; ask another admin');
+    if (target.deleting_at !== null) return;
     if (target.role === 'admin' && target.disabled === 0 && activeAdminCount(db) <= 1) {
       throw conflict(LAST_ADMIN, { reason: 'last_admin' });
     }
+    db.run('UPDATE users SET deleting_at = ?, disabled = 1, totp_pending_secret = NULL, totp_pending_at = NULL WHERE id = ?', [now, targetId]);
+    revokeUserSessions(db, targetId);
+    db.run('DELETE FROM known_devices WHERE user_id = ?', [targetId]);
     db.run("UPDATE databases SET owner_user_id = NULL WHERE owner_user_id = ? AND kind = 'reference'", [targetId]);
-    db.run('DELETE FROM users WHERE id = ?', [targetId]);
+    db.run("UPDATE databases SET visibility = 'private' WHERE owner_user_id = ? AND kind = 'games'", [targetId]);
+    db.run('DELETE FROM invites WHERE created_by = ? AND used_at IS NULL', [targetId]);
+    db.run('DELETE FROM profiles WHERE owner_user_id = ?', [targetId]);
+    db.run('DELETE FROM files WHERE owner_user_id = ?', [targetId]);
+    db.run('DELETE FROM prep_sets WHERE owner_user_id = ?', [targetId]);
   });
 }
 

@@ -6,9 +6,10 @@
  *
  *   $scrypt$ln=15,r=8,p=1$<salt, base64 no padding>$<key, base64 no padding>
  *
- * Verification parses the parameters from the stored string (within sane bounds, so a corrupt row
- * cannot make the server allocate gigabytes) and compares with `timingSafeEqual`. Anything that is
- * not a valid encoded hash simply fails verification.
+ * Verification parses the parameters from the stored string and compares with `timingSafeEqual`.
+ * The parameters must stay within bounds (ln ≤ 17, r ≤ 16, p ≤ 4: at most 128·2^17·16 B = 256 MiB of
+ * scrypt memory and ~32× the default work), so a corrupt or hostile row cannot make one sign-in
+ * allocate gigabytes. Anything that is not a valid encoded hash simply fails verification.
  *
  * Passwords are NFKC-normalised before hashing (NIST SP 800-63B §5.1.1.2), so the same password
  * typed on different keyboards / OSes matches.
@@ -24,13 +25,14 @@ export const SCRYPT_KEYLEN = 64;
 /** Salt length in bytes. */
 export const SCRYPT_SALT_BYTES = 16;
 
-/** Upper bounds accepted when verifying a stored hash (defence against corrupt rows). */
-const MAX_LN = 20;
-const MAX_R = 32;
-const MAX_P = 16;
+/** Upper bounds accepted when verifying a stored hash (defence against corrupt rows; see above). */
+export const SCRYPT_LIMITS = { ln: 17, r: 16, p: 4 } as const;
 
-/** scrypt needs 128·N·r bytes; allow that plus headroom (Node's default maxmem of 32 MiB is exactly N=2^15,r=8). */
-const maxmemFor = (n: number, r: number): number => 128 * n * r * 2 + 16 * 1024 * 1024;
+/**
+ * `maxmem` for scrypt: what OpenSSL checks (the 128·N·r-byte V array plus p·128·r bytes of B), plus
+ * 1 MiB of slack. N=2^15, r=8 needs a little more than Node's 32 MiB default.
+ */
+export const maxmemFor = (n: number, r: number, p: number): number => 128 * r * (n + p + 2) + 1024 * 1024;
 
 const scryptAsync = (password: Buffer, salt: Buffer, keylen: number, opts: ScryptOptions): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -47,7 +49,7 @@ export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(SCRYPT_SALT_BYTES);
   const { ln, r, p } = SCRYPT_PARAMS;
   const N = 2 ** ln;
-  const key = await scryptAsync(normalise(password), salt, SCRYPT_KEYLEN, { N, r, p, maxmem: maxmemFor(N, r) });
+  const key = await scryptAsync(normalise(password), salt, SCRYPT_KEYLEN, { N, r, p, maxmem: maxmemFor(N, r, p) });
   return `$scrypt$ln=${ln},r=${r},p=${p}$${b64(salt)}$${b64(key)}`;
 }
 
@@ -68,7 +70,7 @@ export function parsePasswordHash(encoded: string): ParsedHash | null {
   const ln = Number(m[1]);
   const r = Number(m[2]);
   const p = Number(m[3]);
-  if (ln < 1 || ln > MAX_LN || r < 1 || r > MAX_R || p < 1 || p > MAX_P) return null;
+  if (ln < 1 || ln > SCRYPT_LIMITS.ln || r < 1 || r > SCRYPT_LIMITS.r || p < 1 || p > SCRYPT_LIMITS.p) return null;
   const salt = unb64(m[4]!);
   const key = unb64(m[5]!);
   if (!salt || !key || salt.length < 8 || key.length < 16 || key.length > 128) return null;
@@ -82,7 +84,7 @@ export async function verifyPassword(password: string, encoded: string): Promise
   const N = 2 ** h.ln;
   let key: Buffer;
   try {
-    key = await scryptAsync(normalise(password), h.salt, h.key.length, { N, r: h.r, p: h.p, maxmem: maxmemFor(N, h.r) });
+    key = await scryptAsync(normalise(password), h.salt, h.key.length, { N, r: h.r, p: h.p, maxmem: maxmemFor(N, h.r, h.p) });
   } catch {
     return false;
   }
