@@ -1,0 +1,121 @@
+{
+ "round": {
+  "id": "RndLV002",
+  "name": "Round 2",
+  "slug": "round-2",
+  "createdAt": 1790000000000,
+  "startsAt": 1795086400000,
+  "url": "https://lichess.org/broadcast/live-test-open-masters/round-2/RndLV002",
+  "ongoing": true,
+  "delay": 900
+ },
+ "tour": {
+  "id": "TourLIVE",
+  "name": "Live Test Open | Masters",
+  "slug": "live-test-open-masters",
+  "info": {
+   "format": "8-player round robin",
+   "tc": "90 min + 30 sec / move",
+   "fideTC": "standard",
+   "location": "Testville",
+   "timeZone": "Europe/Oslo",
+   "players": "Alpha, Beta",
+   "website": "https://example.org/",
+   "standings": "https://example.org/standings"
+  },
+  "createdAt": 1790000000000,
+  "url": "https://lichess.org/broadcast/live-test-open-masters/TourLIVE",
+  "tier": 4,
+  "dates": [
+   1795000000000,
+   1795600000000
+  ],
+  "image": "https://image.lichess.org/display?path=x.webp",
+  "description": "Synthetic test tournament."
+ },
+ "study": {
+  "writeable": false,
+  "features": {
+   "chat": true,
+   "computer": true,
+   "explorer": true
+  }
+ },
+ "games": [
+  {
+   "id": "Chap0001",
+   "name": "Alpha, Test - Beta, Test",
+   "fen": "r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQ1RK1 b - - 0 5",
+   "players": [
+    {
+     "name": "Alpha, Test",
+     "title": "GM",
+     "rating": 2650,
+     "fideId": 900001,
+     "fed": "NOR",
+     "clock": 543210
+    },
+    {
+     "name": "Beta, Test",
+     "title": "IM",
+     "rating": 2480,
+     "fideId": 900002,
+     "fed": "ESP",
+     "clock": 612345
+    }
+   ],
+   "lastMove": "e1h1",
+   "thinkTime": 42,
+   "status": "*"
+  },
+  {
+   "id": "Chap0002",
+   "name": "Gamma, Test - Delta, Test",
+   "fen": "8/8/4k3/8/8/4K3/8/8 w - - 10 60",
+   "players": [
+    {
+     "name": "Gamma, Test",
+     "rating": 2400,
+     "fideId": 900003,
+     "clock": 100
+    },
+    {
+     "name": "Delta, Test",
+     "title": "XX",
+     "rating": 2390,
+     "fideId": "900004",
+     "fed": "Germany"
+    }
+   ],
+   "lastMove": "d7e6",
+   "status": "½-½"
+  },
+  {
+   "id": "Chap0003",
+   "name": "2162 Club Player - Another Player",
+   "players": [
+    {
+     "name": "2162 Club Player"
+    },
+    {
+     "name": "Another Player"
+    }
+   ]
+  },
+  {
+   "id": "Chap0004",
+   "fen": "rnbqkbnr/pppp1ppp/8/4p3/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 2",
+   "players": [
+    {
+     "name": "Rook, Mover"
+    },
+    {
+     "name": "Other, Side"
+    }
+   ],
+   "lastMove": "e1h1",
+   "status": "0-1"
+  }
+ ],
+ "photos": {}
+}
