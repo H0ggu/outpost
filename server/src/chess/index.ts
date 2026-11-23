@@ -40,6 +40,7 @@ export {
   InvalidGameError,
   pgnSourceKey,
   POSITION_MAX_PLY,
+  ratingPoolOf,
   rebuildPlayerGames,
   rebuildPlayerGamesInBatches,
   REBUILD_LINK_BATCH,
@@ -48,4 +49,5 @@ export {
   type InsertGameResult,
   type NormalizedGame,
   type NormalizedPlayer,
+  type RatingPool,
 } from './store.ts';

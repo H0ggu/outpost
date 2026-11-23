@@ -13,7 +13,7 @@ import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { Chess } from 'chessops/chess';
 import { makeSanAndPlay, parseSan } from 'chessops/san';
 import type { EpochMs, GameOrigin, GameResult, Id, SourceKind, Termination, TimeClass, Title } from '@outpost/shared/api';
-import { colorChar, epdOf, outcomeFor, playerKey, stdUci, type Color } from '@outpost/shared/chess';
+import { colorChar, epdOf, outcomeFor, parseTimeControl, playerKey, stdUci, type Color } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
 import { classifyOpening, getOpeningBook, type OpeningBook, type OpeningMatch } from './openings.ts';
 import { posKey } from './posKey.ts';
@@ -94,8 +94,27 @@ interface GameFacts {
   endedAt: EpochMs | null;
   timeClass: TimeClass;
   rated: boolean;
+  /** `player_games.rating_pool` (`ratingPoolOf`). */
+  ratingPool: RatingPool | null;
   white: SideFacts;
   black: SideFacts;
+}
+
+/** A rating pool other than the time class's own (`player_games.rating_pool`, migration 202). */
+export type RatingPool = 'ultraBullet';
+
+/**
+ * The rating pool of a game when it is not its time class's own: Lichess rates UltraBullet
+ * (estimated duration `initial + 40 × increment` under 30 s) separately from bullet, though
+ * Outpost files those games under `bullet`. Applies to synced Lichess games and Lichess PGN
+ * exports (a lichess.org `Site`). Rating views (charts, current ratings, averages) leave such
+ * rows out; everything else counts them as bullet games.
+ */
+export function ratingPoolOf(g: { origin: GameOrigin; timeClass: TimeClass; timeControl: string | null; url: string | null }): RatingPool | null {
+  if (g.timeClass !== 'bullet') return null;
+  if (g.origin !== 'lichess' && !(g.url ?? '').startsWith('https://lichess.org/')) return null;
+  const clock = parseTimeControl(g.timeControl);
+  return clock !== null && clock !== 'correspondence' && clock.initial + 40 * clock.increment < 30 ? 'ultraBullet' : null;
 }
 interface SideFacts {
   name: string;
@@ -143,14 +162,14 @@ function matchSources(db: Db, g: GameFacts): Array<{ sourceId: Id; color: Color 
 
 const INSERT_PLAYER_GAME = `INSERT OR IGNORE INTO player_games
   (source_id, game_id, color, outcome, rating, rating_after, opp_name, opp_key, opp_rating, opp_title,
-   opp_source_kind, ended_at, time_class, rated)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+   opp_source_kind, ended_at, time_class, rated, rating_pool)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 /** Same row, but an existing one takes this import's ratings and titles (the source's own sync knows best). */
 const UPSERT_PLAYER_GAME = `INSERT INTO player_games
   (source_id, game_id, color, outcome, rating, rating_after, opp_name, opp_key, opp_rating, opp_title,
-   opp_source_kind, ended_at, time_class, rated)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+   opp_source_kind, ended_at, time_class, rated, rating_pool)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (source_id, game_id) DO UPDATE SET
     rating = excluded.rating,
     rating_after = COALESCE(excluded.rating_after, player_games.rating_after),
@@ -176,6 +195,7 @@ function writePlayerGame(db: Db, sourceId: Id, gameId: Id, color: Color, g: Game
     g.endedAt,
     g.timeClass,
     g.rated,
+    g.ratingPool,
   ]);
   return r.changes > 0;
 }
@@ -236,6 +256,7 @@ export function insertGame(
     endedAt: game.endedAt,
     timeClass: game.timeClass,
     rated: game.rated,
+    ratingPool: ratingPoolOf(game),
     white: { ...game.white, key: playerKey(game.white.name) },
     black: { ...game.black, key: playerKey(game.black.name) },
   };
@@ -309,6 +330,8 @@ interface GameSideRow {
   result: GameResult;
   ended_at: EpochMs | null;
   time_class: TimeClass;
+  time_control: string | null;
+  url: string | null;
   rated: number;
   white: string;
   black: string;
@@ -322,7 +345,7 @@ interface GameSideRow {
   black_fide_id: string | null;
 }
 
-const GAME_SIDE_COLUMNS = `id, origin, database_id, result, ended_at, time_class, rated, white, black, white_key, black_key,
+const GAME_SIDE_COLUMNS = `id, origin, database_id, result, ended_at, time_class, time_control, url, rated, white, black, white_key, black_key,
     white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id`;
 
 /** A source's games from one side: the indexed column, its value and the extra conditions. */
@@ -371,6 +394,7 @@ function linkRows(db: Db, sourceId: Id, color: Color, rows: readonly GameSideRow
       endedAt: r.ended_at,
       timeClass: r.time_class,
       rated: r.rated === 1,
+      ratingPool: ratingPoolOf({ origin: r.origin, timeClass: r.time_class, timeControl: r.time_control, url: r.url }),
       white: { name: r.white, key: r.white_key, rating: r.white_rating, ratingAfter: null, title: r.white_title, fideId: r.white_fide_id },
       black: { name: r.black, key: r.black_key, rating: r.black_rating, ratingAfter: null, title: r.black_title, fideId: r.black_fide_id },
     };

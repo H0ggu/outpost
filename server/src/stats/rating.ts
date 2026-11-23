@@ -5,10 +5,12 @@
  * rating after the last game of each UTC day (`rating_after`, else the pre-game rating for
  * sources that only know that, such as PGN Elo tags). Long histories are reduced with
  * largest-triangle-three-buckets, which keeps peaks and dips, to at most `maxPoints` per series.
+ * Games of another rating pool (`rating_pool`: Lichess UltraBullet, filed under bullet) are left
+ * out, so a series never mixes two pools.
  *
  * Averages: over the last n games (by end time) for n in `RATING_AVERAGE_SIZES` smaller than the
  * number of games, plus all games (`n: null`): the player's and the opponents' mean pre-game
- * rating and the score.
+ * rating (games of another rating pool count for the score only) and the score.
  */
 import type { EpochMs, Id, RatingAverage, RatingSeries, RatingStats, TimeClass } from '@outpost/shared/api';
 import { TIME_CLASSES } from '@outpost/shared/chess';
@@ -74,7 +76,7 @@ export function ratingSeries(scope: StatsScope, opts: { since?: EpochMs; maxPoin
     `SELECT pg.source_id AS source_id, pg.time_class AS time_class, ${day.sql} AS day,
             MAX(pg.ended_at) AS t, COALESCE(pg.rating_after, pg.rating) AS r
        FROM ${PLAYER_GAMES_BY_PK}
-      WHERE ${where.sql} AND pg.rated = 1 AND pg.ended_at IS NOT NULL
+      WHERE ${where.sql} AND pg.rated = 1 AND pg.ended_at IS NOT NULL AND pg.rating_pool IS NULL
         AND COALESCE(pg.rating_after, pg.rating) IS NOT NULL${sinceSql}
       GROUP BY 1, 2, 3
       ORDER BY 1, 2, 3`,
@@ -115,7 +117,8 @@ export function ratingAverages(scope: StatsScope): RatingAverage[] {
   const cases = RATING_AVERAGE_SIZES.map((n, i) => `WHEN rn <= ${n} THEN ${i}`).join(' ');
   const rows = scope.db.all<AverageBucket>(
     `WITH f AS (
-        SELECT pg.rating, pg.opp_rating, pg.outcome,
+        SELECT CASE WHEN pg.rating_pool IS NULL THEN pg.rating END AS rating,
+               CASE WHEN pg.rating_pool IS NULL THEN pg.opp_rating END AS opp_rating, pg.outcome,
                ROW_NUMBER() OVER (ORDER BY pg.ended_at DESC, pg.game_id DESC, pg.source_id) AS rn
           FROM ${PLAYER_GAMES_BY_PK} WHERE ${where.sql})
       SELECT CASE ${cases} ELSE ${RATING_AVERAGE_SIZES.length} END AS b, COUNT(*) AS games,

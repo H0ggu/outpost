@@ -120,7 +120,7 @@ Migrations at integration (2026-11-23), applied in number order on a fresh datab
 later rebuild of `games` must recreate them), `500_databases_files`, `501_sources_autoincrement`,
 `503_files_quota`, `600_reference`, `601_reference_fide_dedupe` (the one FIDE rule: `fide` sources
 link reference games only, one copy per game; decision 1). There is no `502` (merged into `601`).
-Added after the review: `602_reference_private_fide` (FIDE sources link public reference databases only, DECISIONS R2).
+Added after the review: `202_player_games_rating_pool` (UltraBullet's rating pool, DECISIONS R5), `602_reference_private_fide` (FIDE sources link public reference databases only, DECISIONS R2).
 
 - **users** `(id, username UNIQUE COLLATE NOCASE, password_hash, role 'admin'|'user', disabled, totp_secret, created_at, prefs_json)`
 - **sessions** `(id_hash PK, user_id, created_at, expires_at, last_seen_at, ip, user_agent)`
@@ -136,7 +136,8 @@ Added after the review: `602_reference_private_fide` (FIDE sources link public r
   - `time_class` is one of `bullet|blitz|rapid|classical|correspondence|unknown`.
   - Only standard chess is stored: no variants, no games against engines, no from-position games.
 - **player_games**: one row per (source, game) from that player's side. This is the table the stats query.
-  - Columns: `(source_id, game_id, color 'w'|'b', outcome 'w'|'d'|'l', rating, rating_after, opp_name, opp_key, opp_rating, opp_title, opp_source_kind, ended_at, time_class, rated, PRIMARY KEY(source_id, game_id))`
+  - Columns: `(source_id, game_id, color 'w'|'b', outcome 'w'|'d'|'l', rating, rating_after, opp_name, opp_key, opp_rating, opp_title, opp_source_kind, ended_at, time_class, rated, rating_pool NULL|'ultraBullet', PRIMARY KEY(source_id, game_id))`
+  - `rating_pool` (migration `202`) names a rating pool other than the time class's own: Lichess UltraBullet, filed under bullet. Rating charts, current ratings and rating averages leave those rows out.
   - Index on `(source_id, ended_at)`.
 - **positions** `(game_id, ply, pos_key INTEGER, next_uci TEXT NULL)` for the first **50 plies**.
   - Index `(pos_key, game_id)`.
@@ -308,7 +309,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 - **Lichess.**
   1. Stream `GET /api/games/user/{u}` as NDJSON with `Accept: application/x-ndjson` and the token. Parameters: `since=<last createdAt+1>`, `sort=dateAsc`, `opening=true`, `accuracy=true`, `perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence`.
   2. Skip games that are a variant, `fromPosition`, against AI, or anonymous.
-  3. UltraBullet counts as bullet.
+  3. UltraBullet counts as bullet (filters, W/D/L, openings), but its ratings are another pool and stay out of the bullet rating views (`player_games.rating_pool`, DECISIONS R5).
   4. Ratings are stored pre-game; `rating_after = rating + ratingDiff`.
   5. Profile info comes from `GET /api/user/{u}`. Rating charts are built from the synced games (`player_games`), so `/api/user/{u}/rating-history` is not used.
 - **Chess.com.**

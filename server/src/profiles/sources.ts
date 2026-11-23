@@ -457,7 +457,8 @@ export function fideRatings(kind: SourceKind, profileJson: string | null): Sourc
 
 /**
  * Current rating per time class: the site's snapshot when the sync stored one, otherwise the
- * rating after the latest game in that time class (rated games first). `games` always counts
+ * rating after the latest game in that time class and its own rating pool (rated games first;
+ * Lichess UltraBullet games, filed under bullet, are another pool). `games` always counts
  * Outpost's stored games.
  */
 export function currentRatings(db: Db, source: Pick<SourceRow, 'id' | 'kind' | 'profile_json'>): CurrentRating[] {
@@ -465,11 +466,11 @@ export function currentRatings(db: Db, source: Pick<SourceRow, 'id' | 'kind' | '
     `SELECT pg.time_class, COUNT(*) AS games,
             COALESCE(
               (SELECT COALESCE(r.rating_after, r.rating) FROM player_games r
-                WHERE r.source_id = ?1 AND r.time_class = pg.time_class AND r.rated = 1
+                WHERE r.source_id = ?1 AND r.time_class = pg.time_class AND r.rated = 1 AND r.rating_pool IS NULL
                   AND COALESCE(r.rating_after, r.rating) IS NOT NULL
                 ORDER BY r.ended_at DESC LIMIT 1),
               (SELECT COALESCE(r.rating_after, r.rating) FROM player_games r
-                WHERE r.source_id = ?1 AND r.time_class = pg.time_class
+                WHERE r.source_id = ?1 AND r.time_class = pg.time_class AND r.rating_pool IS NULL
                   AND COALESCE(r.rating_after, r.rating) IS NOT NULL
                 ORDER BY r.ended_at DESC LIMIT 1)
             ) AS rating
