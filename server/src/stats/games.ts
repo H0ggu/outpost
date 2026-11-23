@@ -6,7 +6,7 @@
  * Order: newest first (`ended_at` DESC, undated PGN games last), then game id, then source.
  */
 import type { GameRow, GamesPage } from '@outpost/shared/api';
-import { scopeWhere, toWdl, wdlColumns, type StatsScope, type WdlSums } from './common.ts';
+import { PLAYER_GAMES_BY_PK, scopeWhere, toWdl, wdlColumns, type StatsScope, type WdlSums } from './common.ts';
 import type { SqlFragment } from './filterSql.ts';
 import { GAME_ROW_SELECT, toGameRow, type GameRowRecord } from './gameRows.ts';
 
@@ -35,7 +35,7 @@ export const latestGames = (scope: StatsScope, n: number): GameRow[] => selectGa
 export function gamesPage(scope: StatsScope, page: number, pageSize: number): GamesPage {
   const where = scopeWhere(scope);
   const sums = scope.db.get<WdlSums & { n: number }>(
-    `SELECT COUNT(*) AS n, ${wdlColumns()} FROM player_games pg WHERE ${where.sql}`,
+    `SELECT COUNT(*) AS n, ${wdlColumns()} FROM ${PLAYER_GAMES_BY_PK} WHERE ${where.sql}`,
     where.params,
   );
   const total = sums?.n ?? 0;

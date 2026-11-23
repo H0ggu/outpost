@@ -20,7 +20,7 @@ import type { Color, OpeningRow, OpeningsParams, OpeningsResponse } from '@outpo
 import { colorFromChar, type ColorChar } from '@outpost/shared/chess';
 import { getOpeningBook, type OpeningBook, type OpeningEntry } from '../chess/openings.ts';
 import { posKey } from '../chess/posKey.ts';
-import { round, scopeWhere, scoreOf, wdlColumns, type StatsScope } from './common.ts';
+import { GAMES_STATS_INDEX, PLAYER_GAMES_BY_PK, round, scopeWhere, scoreOf, wdlColumns, type StatsScope } from './common.ts';
 
 /** Minimum games of a row ranked by `best` / `worst` (raised by a larger `minGames`). */
 export const BEST_WORST_MIN_GAMES = 5;
@@ -107,7 +107,7 @@ export function openingsStats(scope: StatsScope, opts: OpeningsOptions, book: Op
     rows = scope.db.all<GroupRow>(
       `SELECT pg.color AS color, g.eco AS eco, g.opening_name AS name, NULL AS k, COUNT(*) AS games, ${wdlColumns()},
               SUM(g.ply_count) AS plies
-         FROM player_games pg JOIN games g ON g.id = pg.game_id
+         FROM ${PLAYER_GAMES_BY_PK} JOIN ${GAMES_STATS_INDEX} ON g.id = pg.game_id
         WHERE ${where.sql}${sideSql} AND g.opening_ply IS NOT NULL
         GROUP BY 1, 2, 3`,
       where.params,
@@ -123,7 +123,7 @@ export function openingsStats(scope: StatsScope, opts: OpeningsOptions, book: Op
                  WHERE p.game_id = pg.game_id AND p.ply BETWEEN 1 AND ? AND p.pos_key IN (SELECT value FROM json_each(?))
                  ORDER BY p.ply DESC LIMIT 1) END AS k,
               COUNT(*) AS games, ${wdlColumns()}, SUM(g.ply_count) AS plies
-         FROM player_games pg JOIN games g ON g.id = pg.game_id
+         FROM ${PLAYER_GAMES_BY_PK} JOIN ${GAMES_STATS_INDEX} ON g.id = pg.game_id
         WHERE ${where.sql}${sideSql} AND g.opening_ply IS NOT NULL
         GROUP BY 1, 2, 3, 4`,
       [maxPly, maxPly, maxPly, maxPly, idx.keysJson, ...where.params],

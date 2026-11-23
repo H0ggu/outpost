@@ -12,7 +12,7 @@ import type { OpponentRow, OpponentsPage, SourceKind } from '@outpost/shared/api
 import { isTitle } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
 import type { AuthUser } from '../http/types.ts';
-import { scopeWhere, wdlColumns, type StatsScope } from './common.ts';
+import { PLAYER_GAMES_BY_PK, scopeWhere, wdlColumns, type StatsScope } from './common.ts';
 import { normalizeCountry } from './worldmap.ts';
 
 /** Default and largest page sizes. */
@@ -70,7 +70,7 @@ export function opponentsPage(
     `WITH o AS (
         SELECT pg.opp_source_kind AS kind, pg.opp_key AS key, COUNT(*) AS games, ${wdlColumns()},
                MAX(pg.ended_at) AS last, pg.opp_name AS name, pg.opp_rating AS rating, pg.opp_title AS title
-          FROM player_games pg
+          FROM ${PLAYER_GAMES_BY_PK}
          WHERE ${where.sql}
          GROUP BY pg.opp_source_kind, pg.opp_key)
       SELECT o.kind, o.key, o.name, o.games, o.w, o.d, o.l, o.last, o.rating,
@@ -89,7 +89,7 @@ export function opponentsPage(
         ? (scope.db.value<number>(
             `SELECT COUNT(*) FROM (
                SELECT pg.opp_source_kind AS kind, pg.opp_key AS key, MAX(pg.ended_at), pg.opp_title AS title
-                 FROM player_games pg WHERE ${where.sql} GROUP BY 1, 2) o
+                 FROM ${PLAYER_GAMES_BY_PK} WHERE ${where.sql} GROUP BY 1, 2) o
                LEFT JOIN players_cache pc ON pc.kind = o.kind AND pc.key = o.key
               WHERE ? = 0 OR (COALESCE(o.title, pc.title) IS NOT NULL AND COALESCE(o.title, pc.title) <> 'BOT')`,
             [...where.params, titled ? 1 : 0],

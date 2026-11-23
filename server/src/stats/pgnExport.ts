@@ -10,7 +10,7 @@
  */
 import type { Color, Id } from '@outpost/shared/api';
 import { colorFromChar, type ColorChar } from '@outpost/shared/chess';
-import { scopeWhere, type StatsScope } from './common.ts';
+import { PLAYER_GAMES_BY_PK, scopeWhere, type StatsScope } from './common.ts';
 import { GAME_LIST_ORDER } from './games.ts';
 import { gameToPgn, PGN_GAME_COLUMNS, type PgnGameRecord } from './pgnWriter.ts';
 
@@ -32,7 +32,7 @@ export interface PgnExport {
 /** Prepares the export of `scope` with the profile player written as `playerName`. */
 export function prepareProfilePgnExport(scope: StatsScope, playerName: string, max = PGN_EXPORT_MAX): PgnExport {
   const where = scopeWhere(scope);
-  const total = scope.db.value<number>(`SELECT COUNT(DISTINCT pg.game_id) FROM player_games pg WHERE ${where.sql}`, where.params) ?? 0;
+  const total = scope.db.value<number>(`SELECT COUNT(DISTINCT pg.game_id) FROM ${PLAYER_GAMES_BY_PK} WHERE ${where.sql}`, where.params) ?? 0;
   // The profile's colour(s) per game, newest first; LIMIT over rows (a game has at most 4: two sides × lichess-or-pgn and fide sources), then de-duplicate.
   const rows = scope.db.all<{ game_id: Id; color: ColorChar }>(
     `SELECT pg.game_id, pg.color FROM player_games pg WHERE ${where.sql} ORDER BY ${GAME_LIST_ORDER} LIMIT ?`,

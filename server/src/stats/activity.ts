@@ -10,7 +10,7 @@
  * JavaScript is per bucket rather than per game.
  */
 import type { ActivityCell, ActivityDay, ActivityStats } from '@outpost/shared/api';
-import { floorToSql, scopeWhere, scoreOf, type StatsScope } from './common.ts';
+import { floorToSql, PLAYER_GAMES_BY_PK, scopeWhere, scoreOf, type StatsScope } from './common.ts';
 import type { SqlFragment } from './filterSql.ts';
 import {
   bucketSizeFor,
@@ -75,7 +75,7 @@ export function localActivity(
   }
 
   const span = scope.db.get<{ lo: number | null; hi: number | null }>(
-    `SELECT MIN(pg.ended_at) AS lo, MAX(pg.ended_at) AS hi FROM player_games pg WHERE ${cond}`,
+    `SELECT MIN(pg.ended_at) AS lo, MAX(pg.ended_at) AS hi FROM ${PLAYER_GAMES_BY_PK} WHERE ${cond}`,
     params,
   );
   if (!span || span.lo === null || span.hi === null) return out;
@@ -85,7 +85,7 @@ export function localActivity(
   const bucket = floorToSql('pg.ended_at', width);
   const rows = scope.db.all<{ b: number; games: number; w: number; d: number }>(
     `SELECT ${bucket.sql} AS b, COUNT(*) AS games, SUM(pg.outcome = 'w') AS w, SUM(pg.outcome = 'd') AS d
-       FROM player_games pg WHERE ${cond}
+       FROM ${PLAYER_GAMES_BY_PK} WHERE ${cond}
       GROUP BY 1 ORDER BY 1`,
     [...bucket.params, ...params],
   );

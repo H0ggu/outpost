@@ -9,7 +9,7 @@
  *   or a row queued for (re)lookup (`fetched_at` NULL). PGN and FIDE names are never looked up.
  */
 import type { WorldMapCountry, WorldMapStats } from '@outpost/shared/api';
-import { scopeWhere, wdlColumns, type StatsScope } from './common.ts';
+import { PLAYER_GAMES_BY_PK, scopeWhere, wdlColumns, type StatsScope } from './common.ts';
 
 /** Chess.com's user-assigned codes for the UK nations, which the map draws as GB. */
 const ALIASES: Readonly<Record<string, string>> = { XE: 'GB', XS: 'GB', XW: 'GB', UK: 'GB' };
@@ -48,7 +48,7 @@ export function worldMapStats(scope: StatsScope): WorldMapStats {
   const rows = scope.db.all<CountryRecord>(
     `WITH o AS (
         SELECT pg.opp_source_kind AS kind, pg.opp_key AS key, COUNT(*) AS games, ${wdlColumns()}
-          FROM player_games pg
+          FROM ${PLAYER_GAMES_BY_PK}
          WHERE ${where.sql}
          GROUP BY pg.opp_source_kind, pg.opp_key)
       SELECT pc.country AS country,

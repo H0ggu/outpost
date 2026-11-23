@@ -9,7 +9,7 @@
  */
 import type { BehaviourRow, BehaviourStats, Color, Outcome, Termination, TimeClass } from '@outpost/shared/api';
 import { colorFromChar, TERMINATIONS, type ColorChar } from '@outpost/shared/chess';
-import { round, scopeWhere, type StatsScope } from './common.ts';
+import { GAMES_STATS_INDEX, PLAYER_GAMES_BY_PK, round, scopeWhere, type StatsScope } from './common.ts';
 
 /** One cell of the outcome × termination × time class × colour breakdown. */
 export interface OutcomeCell {
@@ -29,7 +29,7 @@ export function outcomeBreakdown(scope: StatsScope): OutcomeCell[] {
     .all<{ outcome: Outcome; termination: Termination; time_class: TimeClass; color: ColorChar; games: number; moves: number }>(
       `SELECT pg.outcome AS outcome, g.termination AS termination, pg.time_class AS time_class, pg.color AS color,
               COUNT(*) AS games, SUM((g.ply_count + 1) / 2) AS moves
-         FROM player_games pg JOIN games g ON g.id = pg.game_id
+         FROM ${PLAYER_GAMES_BY_PK} JOIN ${GAMES_STATS_INDEX} ON g.id = pg.game_id
         WHERE ${where.sql}
         GROUP BY 1, 2, 3, 4`,
       where.params,

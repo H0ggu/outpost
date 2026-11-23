@@ -12,7 +12,7 @@
  */
 import type { EpochMs, Id, RatingAverage, RatingSeries, RatingStats, TimeClass } from '@outpost/shared/api';
 import { TIME_CLASSES } from '@outpost/shared/chess';
-import { floorToSql, scopeWhere, scoreOf, type StatsScope } from './common.ts';
+import { floorToSql, PLAYER_GAMES_BY_PK, scopeWhere, scoreOf, type StatsScope } from './common.ts';
 import { DAY_MS } from './tz.ts';
 
 /** Most points per series on the rating tab and in the overview sparkline. */
@@ -73,7 +73,7 @@ export function ratingSeries(scope: StatsScope, opts: { since?: EpochMs; maxPoin
   const rows = scope.db.all<{ source_id: Id; time_class: TimeClass; t: number; r: number }>(
     `SELECT pg.source_id AS source_id, pg.time_class AS time_class, ${day.sql} AS day,
             MAX(pg.ended_at) AS t, COALESCE(pg.rating_after, pg.rating) AS r
-       FROM player_games pg
+       FROM ${PLAYER_GAMES_BY_PK}
       WHERE ${where.sql} AND pg.rated = 1 AND pg.ended_at IS NOT NULL
         AND COALESCE(pg.rating_after, pg.rating) IS NOT NULL${sinceSql}
       GROUP BY 1, 2, 3
@@ -117,7 +117,7 @@ export function ratingAverages(scope: StatsScope): RatingAverage[] {
     `WITH f AS (
         SELECT pg.rating, pg.opp_rating, pg.outcome,
                ROW_NUMBER() OVER (ORDER BY pg.ended_at DESC, pg.game_id DESC, pg.source_id) AS rn
-          FROM player_games pg WHERE ${where.sql})
+          FROM ${PLAYER_GAMES_BY_PK} WHERE ${where.sql})
       SELECT CASE ${cases} ELSE ${RATING_AVERAGE_SIZES.length} END AS b, COUNT(*) AS games,
              SUM(rating) AS sr, COUNT(rating) AS cr, SUM(opp_rating) AS so, COUNT(opp_rating) AS co,
              SUM(outcome = 'w') AS w, SUM(outcome = 'd') AS d

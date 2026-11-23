@@ -17,6 +17,22 @@ export interface StatsScope {
   now?: number;
 }
 
+/**
+ * `player_games pg` read through its primary key `(source_id, game_id)`. Aggregates over a whole
+ * profile are fastest that way (one range per source, and `games` is then visited in id order),
+ * but once `sqlite_stat1` exists (`PRAGMA optimize` on close runs ANALYZE) SQLite prefers a
+ * narrower secondary index plus a primary-key lookup per row, two to three times slower. The
+ * name is SQLite's for the primary key of the WITHOUT ROWID table in 001_init.sql
+ * (stats-perf.test.ts checks it exists).
+ */
+export const PLAYER_GAMES_BY_PK = 'player_games pg INDEXED BY sqlite_autoindex_player_games_1';
+
+/**
+ * `games g` through the covering index of migration 300 (termination, length and opening
+ * columns only): joined per filtered game by the aggregate queries.
+ */
+export const GAMES_STATS_INDEX = 'games g INDEXED BY games_stats';
+
 /** The filter WHERE expression of a scope over `player_games` aliased `alias`. */
 export const scopeWhere = (s: StatsScope, alias = 'pg'): SqlFragment =>
   playerGamesWhere(s.filters, { sourceIds: s.sourceIds, alias, ...(s.now !== undefined ? { now: s.now } : {}) });

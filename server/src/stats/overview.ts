@@ -14,7 +14,7 @@ import { emptyWdl, TERMINATIONS, TIME_CLASSES } from '@outpost/shared/chess';
 import type { OpeningBook } from '../chess/openings.ts';
 import { recentDays } from './activity.ts';
 import { outcomeBreakdown } from './behaviour.ts';
-import { scopeWhere, type StatsScope } from './common.ts';
+import { PLAYER_GAMES_BY_PK, scopeWhere, type StatsScope } from './common.ts';
 import { latestGames } from './games.ts';
 import { openingsStats } from './openings.ts';
 import { ratingSeries, SPARKLINE_MAX_POINTS } from './rating.ts';
@@ -34,7 +34,7 @@ export function currentRatings(scope: StatsScope): Array<{ sourceId: Id; timeCla
     .all<{ source_id: Id; time_class: TimeClass; t: number | null; r: number }>(
       `SELECT pg.source_id AS source_id, pg.time_class AS time_class, MAX(pg.ended_at) AS t,
               COALESCE(pg.rating_after, pg.rating) AS r
-         FROM player_games pg
+         FROM ${PLAYER_GAMES_BY_PK}
         WHERE ${where.sql} AND pg.rated = 1 AND COALESCE(pg.rating_after, pg.rating) IS NOT NULL
         GROUP BY 1, 2
         ORDER BY 1`,
