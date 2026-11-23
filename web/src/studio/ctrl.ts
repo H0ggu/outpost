@@ -621,6 +621,8 @@ export class StudioCtrl {
     // "Board only" hides the side panel: show it for this list (the saved layout stays).
     if (document.body.dataset.studioLayout === 'focus') this.applyLayout('default');
     this.redraw();
+    // On phones the side panel is below the board: bring the list into view (a no-op when visible).
+    setTimeout(() => document.querySelector('.studio-side')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
     void this.morePositionGames();
   };
 
@@ -652,6 +654,8 @@ export class StudioCtrl {
   closePositionGames(): void {
     this.positionGames = null;
     if (this.sidePanel === 'position') this.sidePanel = 'files';
+    // back to "Board only" when the list had to show the side panel
+    if (document.body.dataset.studioLayout !== this.prefs.studioLayout) this.applyLayout();
     this.redraw();
   }
 
@@ -679,17 +683,19 @@ export class StudioCtrl {
       data?.isOpening && data.fen === a.node.fen && config.db() === 'player'
         ? (data.games ?? (data.white ?? 0) + (data.draws ?? 0) + (data.black ?? 0))
         : null;
+    const player = config.db() === 'player' ? config.playerName.value() : '';
+    // lila redraws often (the engine, hovering): compare cheaply before replaying the line
+    const key = JSON.stringify([root.fen, a.path, player, config.color(), games]);
+    if (key === this.lastEmbedPosition) return;
+    this.lastEmbedPosition = key;
     const msg: EmbedPositionMessage = {
       type: 'outpost:position',
-      player: config.db() === 'player' ? config.playerName.value() : '',
+      player,
       color: config.color(),
       line: lineFilterOf(root.fen, nodes.slice(1).map(n => n.uci ?? '')),
       fen: a.node.fen,
       games,
     };
-    const key = JSON.stringify(msg);
-    if (key === this.lastEmbedPosition) return;
-    this.lastEmbedPosition = key;
     window.parent.postMessage(msg, location.origin);
   }
 
