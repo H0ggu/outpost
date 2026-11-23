@@ -1,4 +1,5 @@
 import { createReadStream } from 'node:fs';
+import { Readable } from 'node:stream';
 import type { FastifyPluginAsync } from 'fastify';
 import { API_ROUTES } from '@outpost/shared/api';
 import { z } from 'zod';
@@ -18,6 +19,9 @@ import { createNnueStore, NNUE_NAME_RE, NnueError, parseRange } from '../explore
  * browsing on) — lila's ceval fetches it same-origin with the session cookie.
  */
 const nnueParams = z.object({ name: z.string().max(40) });
+
+/** HEAD: Fastify keeps our content-length for a stream payload (and drops the body), not for none. */
+const emptyBody = (): Readable => Readable.from([]);
 
 const assetRoutes: FastifyPluginAsync = async app => {
   const store = createNnueStore({ dir: app.config.nnueDir, upstream: app.upstream, log: app.log });
@@ -66,11 +70,11 @@ const assetRoutes: FastifyPluginAsync = async app => {
         .status(206)
         .header('content-range', `bytes ${range.start}-${range.end}/${file.size}`)
         .header('content-length', range.end - range.start + 1);
-      if (req.method === 'HEAD') return reply.send();
+      if (req.method === 'HEAD') return reply.send(emptyBody());
       return reply.send(createReadStream(file.path, { start: range.start, end: range.end }));
     }
     reply.header('content-length', file.size);
-    if (req.method === 'HEAD') return reply.send();
+    if (req.method === 'HEAD') return reply.send(emptyBody());
     return reply.send(createReadStream(file.path));
   });
 };
