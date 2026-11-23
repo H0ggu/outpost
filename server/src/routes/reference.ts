@@ -114,10 +114,11 @@ const referenceRoutes: FastifyPluginAsync = async app => {
 
   // Uploads left behind by cancelled or crashed imports (local files only, no upstream calls).
   let sweeper: NodeJS.Timeout | null = null;
-  let stopAutoImport: (() => void) | null = null;
+  let sweeping: Promise<unknown> = Promise.resolve();
+  let stopAutoImport: (() => Promise<void>) | null = null;
   app.addHook('onReady', async () => {
     const sweep = (): void => {
-      sweepReferenceUploads(app.db, app.config).catch(err => app.log.warn({ err }, 'reference upload sweep failed'));
+      sweeping = sweepReferenceUploads(app.db, app.config).catch(err => app.log.warn({ err }, 'reference upload sweep failed'));
     };
     sweep();
     sweeper = setInterval(sweep, SWEEP_INTERVAL_MS);
@@ -128,7 +129,8 @@ const referenceRoutes: FastifyPluginAsync = async app => {
   });
   app.addHook('onClose', async () => {
     if (sweeper) clearInterval(sweeper);
-    stopAutoImport?.();
+    await stopAutoImport?.();
+    await sweeping; // the database closes after the app
   });
 };
 

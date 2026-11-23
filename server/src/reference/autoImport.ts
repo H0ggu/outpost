@@ -72,26 +72,34 @@ export async function autoImportFinishedRounds(deps: AutoImportDeps): Promise<Jo
   return queued;
 }
 
-/** Starts the timer (call only when `config.startWorkers`). Returns a stop function. */
-export function startBroadcastAutoImport(deps: Omit<AutoImportDeps, 'now' | 'signal'>): () => void {
+/**
+ * Starts the timer (call only when `config.startWorkers`). Returns a stop function that cancels the
+ * timer and any tick in flight, and resolves once that tick has settled.
+ */
+export function startBroadcastAutoImport(deps: Omit<AutoImportDeps, 'now' | 'signal'>): () => Promise<void> {
   const controller = new AbortController();
-  let running = false;
+  let running: Promise<void> | null = null;
   const tick = (): void => {
-    if (running) return;
-    running = true;
-    autoImportFinishedRounds({ ...deps, signal: controller.signal })
-      .catch(e => deps.log?.warn({ err: e }, 'broadcast auto-import failed'))
+    if (running || controller.signal.aborted) return;
+    running = autoImportFinishedRounds({ ...deps, signal: controller.signal })
+      .then(
+        () => {},
+        e => {
+          if (!controller.signal.aborted) deps.log?.warn({ err: e }, 'broadcast auto-import failed');
+        },
+      )
       .finally(() => {
-        running = false;
+        running = null;
       });
   };
   const first = setTimeout(tick, AUTO_IMPORT_FIRST_DELAY_MS);
   const every = setInterval(tick, AUTO_IMPORT_INTERVAL_MS);
   first.unref();
   every.unref();
-  return () => {
+  return async () => {
     clearTimeout(first);
     clearInterval(every);
     controller.abort();
+    await running;
   };
 }

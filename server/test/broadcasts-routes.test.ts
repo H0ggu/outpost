@@ -337,7 +337,7 @@ describe('broadcast auto-import', () => {
       const stop = startBroadcastAutoImport({ db: t.db, config: t.config, upstream: t.app.upstream });
       await vi.advanceTimersByTimeAsync(61_000);
       expect(calls.map(c => c.url)).toEqual(['https://lichess.org/api/broadcast?nb=60']);
-      stop();
+      await stop();
       await vi.advanceTimersByTimeAsync(3600_000);
       expect(calls).toHaveLength(1);
     } finally {
