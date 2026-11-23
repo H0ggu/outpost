@@ -11,7 +11,9 @@
  *   lines (any length from 2 plies, at least `minGames` games; a line is shown at its longest
  *   form when every game of it continued the same way);
  * - the 10 most recent games (`GAME_ROW_SELECT` / `toGameRow`);
- * - activity by hour and weekday in `tz`;
+ * - activity by hour and weekday in `tz`, by the same rules as the profile's Activity tab
+ *   (`localActivity`: by when each game ended; date-only PGN and reference games count on their
+ *   PGN date's weekday and never in an hour), and `tz` in its canonical spelling;
  * - current ratings per visible source.
  * All scores are from the opponent's side. Games and W/D/L count every selected game; the lines
  * and the activity come from the `PREP_MAX_GAMES` most recent ones (`sampledGames` says when
@@ -22,7 +24,6 @@ import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { Chess } from 'chessops/chess';
 import { makeSanAndPlay, parseSan } from 'chessops/san';
 import type {
-  ActivityCell,
   CreatePrepRequest,
   EpochMs,
   Id,
@@ -44,7 +45,7 @@ import type { AuthUser } from '../http/types.ts';
 import { loadProfileByIdForViewer, type ViewableProfile } from '../profiles/access.ts';
 import { profileSummaries } from '../profiles/service.ts';
 import { currentRatings, SOURCE_COLUMNS, type SourceRow } from '../profiles/sources.ts';
-import { GAME_ROW_SELECT, playerGamesWhere, toGameRow, type GameRowRecord } from '../stats/index.ts';
+import { activityCell, GAME_ROW_SELECT, localActivity, playerGamesWhere, resolveTimeZone, toGameRow, type GameRowRecord } from '../stats/index.ts';
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -312,35 +313,6 @@ export function buildSide(
   };
 }
 
-const emptyCell = (): ActivityCell => ({ games: 0, score: null });
-const WEEKDAYS: Record<string, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
-
-/** Games and score by local hour and weekday (Monday = 0) in `tz`. */
-export function activityBuckets(
-  games: ReadonlyArray<{ outcome: Outcome; at: EpochMs | null }>,
-  tz: string,
-): { byHour: ActivityCell[]; byWeekday: ActivityCell[] } {
-  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', hour: '2-digit', weekday: 'short' });
-  const hours = Array.from({ length: 24 }, () => ({ games: 0, points: 0 }));
-  const days = Array.from({ length: 7 }, () => ({ games: 0, points: 0 }));
-  for (const g of games) {
-    if (g.at === null) continue;
-    let hour = 0;
-    let day = 0;
-    for (const p of fmt.formatToParts(g.at)) {
-      if (p.type === 'hour') hour = Number(p.value) % 24;
-      else if (p.type === 'weekday') day = WEEKDAYS[p.value] ?? 0;
-    }
-    const pts = g.outcome === 'w' ? 1 : g.outcome === 'd' ? 0.5 : 0;
-    hours[hour]!.games++;
-    hours[hour]!.points += pts;
-    days[day]!.games++;
-    days[day]!.points += pts;
-  }
-  const cell = (b: { games: number; points: number }): ActivityCell => (b.games ? { games: b.games, score: b.points / b.games } : emptyCell());
-  return { byHour: hours.map(cell), byWeekday: days.map(cell) };
-}
-
 /** The report card of one opponent. */
 export function opponentReport(
   db: Db,
@@ -364,8 +336,8 @@ export function opponentReport(
     totals[r.color][r.outcome] = r.n;
   }
   const maxGames = opts.maxGames ?? PREP_MAX_GAMES;
-  const rows = db.all<{ color: ColorChar; outcome: Outcome; at: EpochMs | null; head: string }>(
-    `SELECT pg.color, pg.outcome, COALESCE(g.started_at, pg.ended_at) AS at, substr(g.moves_san, 1, ?) AS head
+  const rows = db.all<{ game_id: Id; color: ColorChar; outcome: Outcome; at: EpochMs | null; head: string }>(
+    `SELECT pg.game_id, pg.color, pg.outcome, COALESCE(g.started_at, pg.ended_at) AS at, substr(g.moves_san, 1, ?) AS head
        FROM player_games pg JOIN games g ON g.id = pg.game_id
       WHERE ${where.sql}
       ORDER BY pg.ended_at DESC, pg.game_id DESC LIMIT ?`,
@@ -393,12 +365,20 @@ export function opponentReport(
       )
     : [];
 
+  // Activity of the sampled games, by the Activity tab's rules (stats/activity.ts).
+  const tz = resolveTimeZone(opts.tz) ?? 'UTC';
+  const activity = localActivity(
+    { db, now: opts.now },
+    { sql: `${where.sql} AND pg.game_id IN (SELECT value FROM json_each(?))`, params: [...where.params, JSON.stringify(rows.map(r => r.game_id))] },
+    tz,
+  );
+
   return {
     profile: summary,
     asWhite: side('w'),
     asBlack: side('b'),
     recentGames,
-    activity: { tz: opts.tz, ...activityBuckets(rows, opts.tz) },
+    activity: { tz, byHour: activity.byHour.map(activityCell), byWeekday: activity.byWeekday.map(activityCell) },
     ratings: sources.map(s => ({ sourceId: s.id, kind: s.kind, ratings: currentRatings(db, s) })),
     sampledGames: all > rows.length ? rows.length : null,
   };

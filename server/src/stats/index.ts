@@ -24,7 +24,7 @@ export {
   type GameRowRecord,
 } from './gameRows.ts';
 export { scopeWhere, type StatsScope } from './common.ts';
-export { activityStats, localActivity, recentDays } from './activity.ts';
+export { activityStats, localActivity, recentDays, toCell as activityCell } from './activity.ts';
 export { behaviourStats, outcomeBreakdown } from './behaviour.ts';
 export { eventSuggestions } from './events.ts';
 export { canViewGame, loadGameForViewer } from './gameDetail.ts';
