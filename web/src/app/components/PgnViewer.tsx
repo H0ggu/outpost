@@ -8,6 +8,7 @@
  * "Analyse" should open Outpost's Studio instead (paths.studio).
  */
 import 'lpv-css';
+import './PgnViewer.css';
 import LichessPgnViewer from '@lichess-org/pgn-viewer';
 import type { Opts } from '@lichess-org/pgn-viewer/interfaces';
 import type PgnViewerApi from '@lichess-org/pgn-viewer/pgnViewer';
