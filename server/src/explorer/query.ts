@@ -122,7 +122,7 @@ export function hitsQuery(
     plan: chosen,
     sql: `SELECT ${HIT_COLUMNS} FROM positions p CROSS JOIN ${from.sql}
            WHERE p.pos_key = ? AND pg.game_id = p.game_id AND ${where.sql}`,
-    params: [key, ...from.params, ...where.params],
+    params: [...from.params, key, ...where.params],
   };
 }
 
@@ -150,7 +150,7 @@ export function gamesAtPosition(
   const body = rare
     ? {
         sql: `FROM positions p CROSS JOIN ${from.sql} WHERE p.pos_key = ? AND pg.game_id = p.game_id AND ${where.sql}`,
-        params: [key, ...from.params, ...where.params],
+        params: [...from.params, key, ...where.params],
       }
     : {
         sql: `FROM ${from.sql} WHERE ${where.sql} AND EXISTS (SELECT 1 FROM positions p WHERE p.pos_key = ? AND p.game_id = pg.game_id)`,
