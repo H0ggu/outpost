@@ -9,7 +9,10 @@
  * gone, or the browser keeps the failed module), Retry reloads the page instead.
  */
 import { Component, type ReactNode } from 'react';
+import { isChunkLoadError } from '../../../chunkErrors.ts';
 import { ErrorBox } from '../../../components/index.ts';
+
+export { isChunkLoadError };
 
 interface Props {
   title: string;
@@ -22,12 +25,6 @@ interface State {
   error: unknown;
   /** Chunk-load failures since the last retry that rendered without one. */
   chunkFailures: number;
-}
-
-/** Whether an error is a failed dynamic import (Chromium, Firefox, Safari wording; Vite preload). */
-export function isChunkLoadError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : typeof e === 'string' ? e : '';
-  return /dynamically imported module|Importing a module script failed|Unable to preload|ChunkLoadError|Loading chunk/i.test(msg);
 }
 
 export class Boundary extends Component<Props, State> {
