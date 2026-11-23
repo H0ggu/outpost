@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { requireUser, requireViewer } from '../auth/session.ts';
 import { parseBody, parseParams, parseQuery, slugParams, zId } from '../http/validate.ts';
 import { loadProfileForViewer } from '../profiles/access.ts';
+import { perUserRateLimit } from '../profiles/rateLimit.ts';
 import {
   addProfileSource,
   AnonymousViews,
@@ -49,14 +50,20 @@ import {
  *   - GET /api/bookmarks (ProfileListResponse)
  *
  * Reads: requireViewer + loadProfileForViewer (404 for private profiles of others). Mutations:
- * requireUser, then owner or admin (403 otherwise). Logic and the orphan policy live in
+ * requireUser, then owner or admin (403 otherwise); a manual update only needs a signed-in viewer
+ * of the profile (requestUpdate). Creating, adding accounts and updating are throttled per user. Logic and the orphan policy live in
  * src/profiles/service.ts; source checks (upstream through app.upstream) in src/profiles/sources.ts.
  * When this process runs the workers, the orphan sweep (sweepOrphans) runs at startup and every
  * ORPHAN_SWEEP_EVERY_MS; large clean-ups continue in the background and stop at shutdown.
  */
 
-/** Creating profiles and adding accounts call Lichess / Chess.com: throttled per IP. */
-export const ACCOUNT_CHECK_RATE_LIMIT = { max: 60, timeWindow: 60_000 } as const;
+/**
+ * Creating profiles and adding accounts call Lichess / Chess.com and link stored games: throttled
+ * per user (the routes need one).
+ */
+export const ACCOUNT_CHECK_RATE_LIMIT = perUserRateLimit(30, 60_000);
+/** Manual updates per user and minute, over all profiles (each profile also has its cooldown). */
+export const UPDATE_RATE_LIMIT = perUserRateLimit(30, 60_000);
 /** How often the orphan sweep runs while the workers run (and once at startup). */
 export const ORPHAN_SWEEP_EVERY_MS = 6 * 3_600_000;
 
@@ -161,10 +168,14 @@ const profileRoutes: FastifyPluginAsync = async app => {
     return profileHeader(app.db, app.config, profile, req.user);
   });
 
-  app.post(API_ROUTES.profileUpdate(':slug'), { preHandler: requireUser }, async (req): Promise<ProfileUpdateResponse> => {
+  app.post(
+    API_ROUTES.profileUpdate(':slug'),
+    { preHandler: requireUser, config: { rateLimit: UPDATE_RATE_LIMIT } },
+    async (req): Promise<ProfileUpdateResponse> => {
     const { slug } = parseParams(slugParams, req.params);
-    return requestUpdate(app.db, app.config, loadProfileForViewer(app.db, slug, req.user), req.user!);
-  });
+      return requestUpdate(app.db, app.config, loadProfileForViewer(app.db, slug, req.user), req.user!);
+    },
+  );
 
   app.get(API_ROUTES.profileStatus(':slug'), { preHandler: requireViewer }, async (req): Promise<ProfileStatus> => {
     const { slug } = parseParams(slugParams, req.params);

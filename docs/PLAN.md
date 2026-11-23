@@ -235,7 +235,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 | DELETE | `/api/profiles/:slug` | |
 | POST | `/api/profiles/:slug/sources` | |
 | DELETE | `/api/profiles/:slug/sources/:sourceId` | |
-| POST | `/api/profiles/:slug/update` | Enqueue a sync for each source; respects the cooldown |
+| POST | `/api/profiles/:slug/update` | Enqueue a sync for each source the viewer sees; any signed-in viewer; respects the cooldown (admins exempt, high priority); 30 per user and minute |
 | GET | `/api/profiles/:slug/status` | |
 | PUT/DELETE | `/api/profiles/:slug/bookmark` | |
 | GET | `/api/bookmarks` | |
@@ -320,7 +320,8 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
   1. Classify the opening: the deepest ply among the first 40 whose EPD matches lichess chess-openings.
   2. Write `positions` (50 plies) and `player_games` (one row per source that appears in the game). `fide` sources only link reference-database games, one copy per game across reference databases (migration `601`, decision 1), so a FIDE profile never shows a user's PGN database.
   3. Queue opponent geo lookups: Lichess `POST /api/users` (300 ids per batch, no limit per run); Chess.com `/pub/player/{u}` serially at low priority, most recently met opponents first, at most 1,000 requests per run (the hourly sweep continues after a pause).
-- **Scheduling.** Daily auto refresh at `autoRefreshHourUtc` for profiles with `auto_refresh`. Manual updates enforce `updateCooldownMinutes`. The initial import can be limited to the last N months (`initialSyncMonths`).
+- **Scheduling.** Daily auto refresh at `autoRefreshHourUtc` for profiles with `auto_refresh`. Any signed-in viewer of a profile may ask for a manual update (its accounts are shared with every other profile of them anyway; DECISIONS R3). Manual updates enforce `updateCooldownMinutes` per profile for everyone but admins, whose updates are exempt and run at high priority. The initial import can be limited to the last N months (`initialSyncMonths`).
+- **Local sources.** `pgn` and `fide` sources link games already stored: on attach in batches that yield to the event loop, on an update as a `sync` job on the local lane, which does nothing while their databases are unchanged.
 
 ## 8. Studio (vendored lila analyse)
 Follow `docs/research/lila-ui-extraction.md`, option A.

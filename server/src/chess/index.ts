@@ -41,6 +41,8 @@ export {
   pgnSourceKey,
   POSITION_MAX_PLY,
   rebuildPlayerGames,
+  rebuildPlayerGamesInBatches,
+  REBUILD_LINK_BATCH,
   relinkFideSources,
   reindexGames,
   type InsertGameResult,

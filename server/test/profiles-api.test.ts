@@ -1,6 +1,7 @@
 import type { ProfileHeader, ProfileListResponse, ProfileStatus, ProfileUpdateResponse } from '@outpost/shared/api';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { insertGame } from '../src/chess/store.ts';
+import { MAX_PROFILES_PER_USER } from '../src/profiles/service.ts';
 import { writeSettings } from '../src/settings.ts';
 import { createUserSession, makeTestApp, mutationHeaders, testGame, type TestApp } from './helpers.ts';
 import { fakeUpstream, hikaruRoutes, json, lichessUser, networkDown } from './fixtures/profiles/upstream.ts';
@@ -356,7 +357,7 @@ describe('profiles API', () => {
     expect(t.db.value("SELECT COUNT(*) FROM sources WHERE kind = 'lichess' AND key = 'bob'")).toBe(1);
   });
 
-  it('enforces the update cooldown for owners; admins bypass it with high priority', async () => {
+  it('lets any signed-in viewer update; the cooldown applies to everyone but admins, who get high priority', async () => {
     writeSettings(t.db, { updateCooldownMinutes: 30 });
     up.routes['GET lichess.org/api/user/gina'] = () => json(lichessUser('Gina'));
     const h = await create(owner, { displayName: 'Updater', visibility: 'public', sources: [{ kind: 'lichess', key: 'gina' }] });
@@ -365,12 +366,14 @@ describe('profiles API', () => {
     t.db.run("UPDATE jobs SET status = 'done' WHERE dedupe_key = ?", [`sync:${sourceId}`]);
     t.db.run('UPDATE sources SET last_synced_at = ? WHERE id = ?', [Date.now() - 3_600_000, sourceId]);
 
-    expect((await req(other, 'POST', `/api/profiles/${h.slug}/update`)).statusCode).toBe(403);
-    const first = await req(owner, 'POST', `/api/profiles/${h.slug}/update`);
+    expect((await req(other, 'GET', `/api/profiles/${h.slug}`)).json<ProfileHeader>()).toMatchObject({ canEdit: false, canUpdate: true });
+    // Another signed-in viewer of the public profile may update it (anonymous visitors may not).
+    expect((await req(null, 'POST', `/api/profiles/${h.slug}/update`)).statusCode).toBe(401);
+    const first = await req(other, 'POST', `/api/profiles/${h.slug}/update`);
     expect(first.statusCode, first.body).toBe(200);
     const body = first.json<ProfileUpdateResponse>();
     expect(body.jobs).toHaveLength(1);
-    expect(body.jobs[0]).toMatchObject({ kind: 'sync', status: 'queued', priority: 10, userId: owner.userId });
+    expect(body.jobs[0]).toMatchObject({ kind: 'sync', status: 'queued', priority: 10, userId: other.userId });
     expect(body.queue.busy).toBe(true);
     expect(body.queue.cooldownUntil).toBeGreaterThan(Date.now() + 29 * 60_000);
 
@@ -390,6 +393,39 @@ describe('profiles API', () => {
     expect(status.queue).toMatchObject({ busy: true, queuePosition: expect.any(Number) });
     expect(status.lastUpdated).toBeGreaterThan(0);
     writeSettings(t.db, { updateCooldownMinutes: 15 });
+  });
+
+  it("syncs only the sources a viewer sees when they ask for someone else's update", async () => {
+    up.routes['GET lichess.org/api/user/hank'] = () => json(lichessUser('Hank'));
+    up.routes['GET lichess.org/api/user/hidey'] = () => json(lichessUser('Hidey'));
+    const h = await create(owner, { displayName: 'Two accounts', visibility: 'public', sources: [{ kind: 'lichess', key: 'hank' }, { kind: 'lichess', key: 'hidey' }] });
+    const [shown, hidden] = h.sources.map(s => s.id) as [number, number];
+    expect((await req(owner, 'PATCH', `/api/profiles/${h.slug}`, { hiddenSourceIds: [hidden] })).statusCode).toBe(200);
+    t.db.run("UPDATE jobs SET status = 'done' WHERE dedupe_key IN (?, ?)", [`sync:${shown}`, `sync:${hidden}`]);
+    const res = await req(other, 'POST', `/api/profiles/${h.slug}/update`);
+    expect(res.statusCode, res.body).toBe(200);
+    const jobs = res.json<ProfileUpdateResponse>().jobs;
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.label).toMatch(/hank/i);
+  });
+
+  it('caps the profiles one user may own (admins excepted)', async () => {
+    const heavy = createUserSession(t.db, { username: 'heavy' });
+    const now = Date.now();
+    for (let i = 0; i < MAX_PROFILES_PER_USER; i++) {
+      t.db.run('INSERT INTO profiles (slug, display_name, owner_user_id, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [
+        `heavy-${i}`,
+        'x',
+        heavy.userId,
+        'private',
+        now,
+        now,
+      ]);
+    }
+    up.routes['GET lichess.org/api/user/ivan'] = () => json(lichessUser('Ivan'));
+    const res = await req(heavy, 'POST', '/api/profiles', { displayName: 'One more', sources: [{ kind: 'lichess', key: 'ivan' }] });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.message).toMatch(/at most 200 profiles/);
   });
 
   it('bookmarks visible profiles', async () => {

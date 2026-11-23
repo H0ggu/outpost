@@ -9,6 +9,7 @@
  *
  * Owner: jobs. The signatures are the cross-module contract; the bodies may be optimised.
  */
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { Chess } from 'chessops/chess';
 import { makeSanAndPlay, parseSan } from 'chessops/san';
 import type { EpochMs, GameOrigin, GameResult, Id, SourceKind, Termination, TimeClass, Title } from '@outpost/shared/api';
@@ -321,73 +322,119 @@ interface GameSideRow {
   black_fide_id: string | null;
 }
 
+const GAME_SIDE_COLUMNS = `id, origin, database_id, result, ended_at, time_class, rated, white, black, white_key, black_key,
+    white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id`;
+
+/** A source's games from one side: the indexed column, its value and the extra conditions. */
+interface SideQuery {
+  color: Color;
+  sql: string;
+  params: Array<string | number>;
+}
+
+/**
+ * The queries that find a source's games, one per side. Each reads one index (`white_key`,
+ * `black_key`, `white_fide_id`, `black_fide_id`, all ordered by rowid within a value), so batches
+ * can walk it by id. Games of a `fide` source: public reference databases only (migration 602).
+ */
+function sourceSideQueries(db: Db, sourceId: Id): SideQuery[] | null {
+  const src = db.get<{ kind: SourceKind; key: string }>('SELECT kind, key FROM sources WHERE id = ?', [sourceId]);
+  if (!src) return null;
+  return (['white', 'black'] as const).map(color => {
+    switch (src.kind) {
+      case 'lichess':
+      case 'chesscom':
+        return { color, sql: `${color}_key = ? AND origin = ?`, params: [src.key, src.kind] };
+      case 'fide':
+        return {
+          color,
+          sql: `${color}_fide_id = ? AND origin = 'reference'
+                AND database_id IN (SELECT id FROM databases WHERE kind = 'reference' AND visibility = 'public')`,
+          params: [src.key],
+        };
+      case 'pgn': {
+        const sep = src.key.indexOf(':');
+        return { color, sql: `${color}_key = ? AND database_id = ?`, params: [src.key.slice(sep + 1), Number(src.key.slice(0, sep))] };
+      }
+    }
+  });
+}
+
+/** Writes the missing rows of `sourceId` for these games, playing `color`. */
+function linkRows(db: Db, sourceId: Id, color: Color, rows: readonly GameSideRow[]): number {
+  let added = 0;
+  for (const r of rows) {
+    const facts: GameFacts = {
+      origin: r.origin,
+      databaseId: r.database_id,
+      result: r.result,
+      endedAt: r.ended_at,
+      timeClass: r.time_class,
+      rated: r.rated === 1,
+      white: { name: r.white, key: r.white_key, rating: r.white_rating, ratingAfter: null, title: r.white_title, fideId: r.white_fide_id },
+      black: { name: r.black, key: r.black_key, rating: r.black_rating, ratingAfter: null, title: r.black_title, fideId: r.black_fide_id },
+    };
+    if (writePlayerGame(db, sourceId, r.id, color, facts)) added++;
+  }
+  return added;
+}
+
 /**
  * Adds the missing `player_games` rows of one source from games already stored: a `pgn` source's
- * player in its database, a `fide` source's games in the reference databases (one copy per game,
- * oldest first: see `matchSources`), or a lichess/chesscom source's games imported while syncing
- * someone else. Existing rows are kept (so `rating_after` survives).
- * Returns the number of rows added. Runs in one transaction.
+ * player in its database, a `fide` source's games in the public reference databases (one copy per
+ * game, oldest first: see `matchSources`), or a lichess/chesscom source's games imported while
+ * syncing someone else. Existing rows are kept (so `rating_after` survives).
+ * Returns the number of rows added. Runs in one transaction: for a source with many games use
+ * `rebuildPlayerGamesInBatches`, which lets the server breathe in between.
  */
 export function rebuildPlayerGames(db: Db, sourceId: Id): number {
-  const src = db.get<{ kind: SourceKind; key: string; database_id: Id | null }>(
-    'SELECT kind, key, database_id FROM sources WHERE id = ?',
-    [sourceId],
-  );
-  if (!src) return 0;
-  const cols = `id, origin, database_id, result, ended_at, time_class, rated, white, black, white_key, black_key,
-    white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id`;
-  let rows: GameSideRow[];
-  let isWhite: (r: GameSideRow) => boolean;
-  switch (src.kind) {
-    case 'lichess':
-    case 'chesscom':
-      rows = db.all<GameSideRow>(`SELECT ${cols} FROM games WHERE origin = ? AND (white_key = ? OR black_key = ?)`, [
-        src.kind,
-        src.key,
-        src.key,
-      ]);
-      isWhite = r => r.white_key === src.key;
-      break;
-    case 'fide':
-      rows = db.all<GameSideRow>(
-        `SELECT ${cols} FROM games
-          WHERE origin = 'reference' AND (white_fide_id = ? OR black_fide_id = ?)
-            AND database_id IN (SELECT id FROM databases WHERE kind = 'reference' AND visibility = 'public')
-          ORDER BY id`,
-        [src.key, src.key],
-      );
-      isWhite = r => r.white_fide_id === src.key;
-      break;
-    case 'pgn': {
-      const sep = src.key.indexOf(':');
-      const dbId = Number(src.key.slice(0, sep));
-      const name = src.key.slice(sep + 1);
-      rows = db.all<GameSideRow>(`SELECT ${cols} FROM games WHERE database_id = ? AND (white_key = ? OR black_key = ?)`, [
-        dbId,
-        name,
-        name,
-      ]);
-      isWhite = r => r.white_key === name;
-      break;
-    }
-  }
+  const sides = sourceSideQueries(db, sourceId);
+  if (!sides) return 0;
   return db.tx(() => {
     let added = 0;
-    for (const r of rows) {
-      const facts: GameFacts = {
-        origin: r.origin,
-        databaseId: r.database_id,
-        result: r.result,
-        endedAt: r.ended_at,
-        timeClass: r.time_class,
-        rated: r.rated === 1,
-        white: { name: r.white, key: r.white_key, rating: r.white_rating, ratingAfter: null, title: r.white_title, fideId: r.white_fide_id },
-        black: { name: r.black, key: r.black_key, rating: r.black_rating, ratingAfter: null, title: r.black_title, fideId: r.black_fide_id },
-      };
-      if (writePlayerGame(db, sourceId, r.id, isWhite(r) ? 'white' : 'black', facts)) added++;
+    for (const side of sides) {
+      const rows = db.all<GameSideRow>(`SELECT ${GAME_SIDE_COLUMNS} FROM games WHERE ${side.sql} ORDER BY id`, side.params);
+      added += linkRows(db, sourceId, side.color, rows);
     }
     return added;
   });
+}
+
+/** Games per transaction of `rebuildPlayerGamesInBatches`. */
+export const REBUILD_LINK_BATCH = 2000;
+
+/**
+ * `rebuildPlayerGames` in batches of `batchSize` games (by id, through the side's index), each in
+ * its own transaction, yielding to the event loop in between, so linking a player with millions of
+ * stored games never holds the server. Stops between batches when `signal` aborts (throws its
+ * reason). Returns the number of rows added.
+ */
+export async function rebuildPlayerGamesInBatches(
+  db: Db,
+  sourceId: Id,
+  opts: { signal?: AbortSignal; batchSize?: number } = {},
+): Promise<number> {
+  const sides = sourceSideQueries(db, sourceId);
+  if (!sides) return 0;
+  const batchSize = Math.max(1, opts.batchSize ?? REBUILD_LINK_BATCH);
+  let added = 0;
+  for (const side of sides) {
+    let after = 0;
+    for (;;) {
+      opts.signal?.throwIfAborted();
+      const rows = db.all<GameSideRow>(`SELECT ${GAME_SIDE_COLUMNS} FROM games WHERE ${side.sql} AND id > ? ORDER BY id LIMIT ?`, [
+        ...side.params,
+        after,
+        batchSize,
+      ]);
+      if (rows.length === 0) break;
+      added += db.tx(() => linkRows(db, sourceId, side.color, rows));
+      after = rows[rows.length - 1]!.id;
+      if (rows.length < batchSize) break;
+      await yieldToLoop();
+    }
+  }
+  return added;
 }
 
 /**
