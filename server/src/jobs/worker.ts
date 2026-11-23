@@ -364,10 +364,12 @@ export class JobRunner {
     }
     if (e instanceof UpstreamError && e.reason === 'rate_limited') {
       const at = e.retryAt !== null ? Math.max(e.retryAt, now + 1000) : now + RATE_LIMIT_COOLDOWN_MS;
+      const iso = new Date(at).toISOString();
       requeueJob(this.#db, row.id, {
         runAfter: at,
         refundAttempt: true,
-        error: `${e.message}; waiting until ${new Date(at).toISOString()}`,
+        // The client's cool-down message already names the time when it matches.
+        error: e.message.includes(iso) ? e.message : `${e.message}; waiting until ${iso}`,
       });
       log.info({ retryAt: at }, 'rate limited, job re-queued');
       return;

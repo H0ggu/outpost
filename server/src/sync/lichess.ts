@@ -11,7 +11,9 @@
  * 3. `GET /api/games/user/{u}` as NDJSON (`since` = last `createdAt` + 1, `sort=dateAsc`, opening,
  *    accuracy, standard perf types, ongoing games listed so they can be tracked). Games are stored
  *    in short batches; the cursor is saved in the same transaction, so an interrupted sync resumes
- *    after the last stored batch. The first import starts `initialSyncMonths` back (0 = all).
+ *    after the last stored batch. The first import starts `initialSyncMonths` back (0 = all); a
+ *    `full` resync forgets the cursor and re-reads the whole history (resuming, not restarting,
+ *    when that same job is interrupted).
  *
  * Mapping (`mapLichessGame`): variants, from-position games, games against the AI and anonymous
  * players are skipped; UltraBullet counts as bullet; ratings are pre-game and
@@ -37,12 +39,13 @@ import {
   finishSync,
   GameImporter,
   initialCutoff,
-  parseJsonObject,
   readJsonBody,
   readNdjson,
+  savedSyncState,
   saveSyncState,
   SyncError,
   titleOrNull,
+  type FullResyncMarker,
   type SourceRow,
 } from './common.ts';
 import { ratingValue, storeSourceProfile, type SourceProfileRating, type SourceProfileSnapshot } from './profile.ts';
@@ -312,7 +315,7 @@ export function mapLichessGame(g: LichessGame): NormalizedGame | { skip: Lichess
 }
 
 /** `sources.sync_state_json` of a Lichess source. */
-export interface LichessSyncState {
+export interface LichessSyncState extends FullResyncMarker {
   v: 1;
   /** Next `since` (epoch ms): last seen `createdAt` + 1. */
   since: EpochMs | null;
@@ -358,12 +361,14 @@ export async function syncLichess(ctx: JobContext<'sync'>, src: SourceRow, opts:
   const warning = snapshot.violation ? `Lichess marks "${snapshot.username}" for violating its Terms of Service` : null;
 
   // 2. Cursor.
-  const saved = ctx.job.payload.full ? null : parseJsonObject<LichessSyncState>(src.sync_state_json);
-  const firstSince = initialCutoff(startedAt, readSettings(db, ctx.config).initialSyncMonths);
+  const full = ctx.job.payload.full === true;
+  const saved = savedSyncState<LichessSyncState>(ctx, src.sync_state_json);
+  const firstSince = full ? null : initialCutoff(startedAt, readSettings(db, ctx.config).initialSyncMonths);
   const state: LichessSyncState = {
     v: 1,
     since: typeof saved?.since === 'number' ? saved.since : firstSince,
     pendingIds: [],
+    ...(full ? { fullJob: ctx.job.id } : {}),
   };
   // Games that were still being played last time. They stay in `pending` until Lichess reports
   // them finished (or forgets them), so a sync interrupted while re-checking them loses none.
@@ -440,6 +445,7 @@ export async function syncLichess(ctx: JobContext<'sync'>, src: SourceRow, opts:
     if (g && typeof g.id === 'string' && consume(g)) await importer.flush(() => saveSyncState(db, src.id, remember()));
     report();
   }
+  delete state.fullJob;
   await importer.flush(() => finishSync(db, src.id, remember(), warning, Date.now()));
   report();
   return state;

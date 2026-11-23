@@ -137,26 +137,60 @@ export function jobLabel<K extends JobKind>(db: Db, kind: K, payload: JobPayload
   }
 }
 
-/** 1-based position in the job's lane queue while queued, 0 while running, null otherwise. */
+/**
+ * 1-based position in the job's lane queue while queued, 0 while running, null otherwise.
+ * Jobs that can run now are counted in claim order (priority, then age). A job waiting for its
+ * `run_after` (backoff, rate limit) comes after all of those, among the waiting ones by
+ * `run_after` — an estimate, since a job queued later with a higher priority may still pass it.
+ */
 export function queuePosition(db: Db, jobId: Id): number | null {
-  const row = db.get<Pick<JobRow, 'id' | 'lane' | 'status' | 'priority' | 'created_at'>>(
-    'SELECT id, lane, status, priority, created_at FROM jobs WHERE id = ?',
-    [jobId],
-  );
+  const row = db.get<QueuedRow>('SELECT id, lane, status, priority, created_at, run_after FROM jobs WHERE id = ?', [jobId]);
   return row ? positionOf(db, row) : null;
 }
 
-function positionOf(db: Db, row: Pick<JobRow, 'id' | 'lane' | 'status' | 'priority' | 'created_at'>): number | null {
+type QueuedRow = Pick<JobRow, 'id' | 'lane' | 'status' | 'priority' | 'created_at' | 'run_after'>;
+
+/** Earlier in claim order than the job in `:priority` / `:created` / `:id`. */
+const CLAIMED_EARLIER = '(priority > :priority OR (priority = :priority AND (created_at < :created OR (created_at = :created AND id < :id))))';
+/** Runnable at `:now`. */
+const RUNNABLE = '(run_after IS NULL OR run_after <= :now)';
+
+function positionOf(db: Db, row: QueuedRow, now: EpochMs = Date.now()): number | null {
   if (row.status === 'running') return 0;
   if (row.status !== 'queued') return null;
+  const base = { lane: row.lane, priority: row.priority, created: row.created_at, id: row.id, now };
   const ahead =
-    db.value<number>(
-      `SELECT COUNT(*) FROM jobs
-        WHERE lane = :lane AND status = 'queued'
-          AND (priority > :priority OR (priority = :priority AND (created_at < :created OR (created_at = :created AND id < :id))))`,
-      { lane: row.lane, priority: row.priority, created: row.created_at, id: row.id },
-    ) ?? 0;
+    (row.run_after !== null && row.run_after > now
+      ? db.value<number>(
+          `SELECT COUNT(*) FROM jobs
+            WHERE lane = :lane AND status = 'queued' AND id <> :id
+              AND (${RUNNABLE} OR run_after < :runAfter OR (run_after = :runAfter AND ${CLAIMED_EARLIER}))`,
+          { ...base, runAfter: row.run_after },
+        )
+      : db.value<number>(
+          `SELECT COUNT(*) FROM jobs
+            WHERE lane = :lane AND status = 'queued' AND id <> :id AND ${RUNNABLE} AND ${CLAIMED_EARLIER}`,
+          base,
+        )) ?? 0;
   return ahead + 1;
+}
+
+/**
+ * True when another job of the same lane can run now and would be claimed before this one: a long
+ * handler checks it between batches and throws `RequeueJob` to let that job go first (saving its
+ * cursor with `saveJobCheckpoint`). False for unknown ids.
+ */
+export function jobWaitingAhead(db: Db, jobId: Id, now: EpochMs = Date.now()): boolean {
+  const row = db.get<QueuedRow>('SELECT id, lane, status, priority, created_at, run_after FROM jobs WHERE id = ?', [jobId]);
+  if (!row) return false;
+  return (
+    db.value(
+      `SELECT 1 FROM jobs
+        WHERE lane = :lane AND status = 'queued' AND id <> :id AND ${RUNNABLE} AND ${CLAIMED_EARLIER}
+        LIMIT 1`,
+      { lane: row.lane, priority: row.priority, created: row.created_at, id: row.id, now },
+    ) !== undefined
+  );
 }
 
 const parseJson = <T>(json: string | null): T | null => {
@@ -239,7 +273,12 @@ export function enqueueJob<K extends JobKind>(
   return job;
 }
 
-/** Enqueues a sync of one source (deduplicated with `syncDedupeKey`). */
+/**
+ * Enqueues a sync of one source (deduplicated with `syncDedupeKey`). `full: true` re-reads the
+ * source's whole history: the cursor, Chess.com ETags and the first-import window
+ * (`initialSyncMonths`) are ignored, and games already stored count as duplicates. A full job
+ * that is interrupted resumes where it stopped.
+ */
 export function enqueueSync(db: Db, sourceId: Id, opts: Omit<EnqueueOptions, 'dedupeKey'> & { full?: boolean } = {}): JobInfo {
   const { full, ...rest } = opts;
   return enqueueJob(db, 'sync', full ? { sourceId, full: true } : { sourceId }, { ...rest, dedupeKey: syncDedupeKey(sourceId) });

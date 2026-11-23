@@ -146,8 +146,8 @@ describe('Lichess sync', () => {
   });
   afterEach(async () => t.close());
 
-  const run = async (sourceId: number, opts: { full?: boolean } = {}) => {
-    const { ctx, updates } = makeJobContext(t, 'sync', opts.full ? { sourceId, full: true } : { sourceId });
+  const run = async (sourceId: number, opts: { full?: boolean; jobId?: number } = {}) => {
+    const { ctx, updates } = makeJobContext(t, 'sync', opts.full ? { sourceId, full: true } : { sourceId }, { jobId: opts.jobId });
     await syncHandler(ctx);
     return updates;
   };
@@ -293,6 +293,41 @@ describe('Lichess sync', () => {
     const updates = await run(id, { full: true });
     expect(fake.callsTo('/api/games/user/synthplayer')[1]!.url.searchParams.has('since')).toBe(false);
     expect(updates.at(-1)?.counts).toMatchObject({ imported: 0, duplicates: 10 });
+  });
+
+  it('re-reads the whole history on a full sync even with an initial import window', async () => {
+    writeSettings(t.db, { initialSyncMonths: 3 });
+    const id = createSource(t.db, { kind: 'lichess', key: 'synthplayer' });
+    await run(id);
+    expect(fake.callsTo('/api/games/user/synthplayer')[0]!.url.searchParams.has('since')).toBe(true);
+    await run(id, { full: true, jobId: 41 });
+    expect(fake.callsTo('/api/games/user/synthplayer')[1]!.url.searchParams.has('since')).toBe(false);
+    const state = JSON.parse(t.db.value<string>('SELECT sync_state_json FROM sources WHERE id = ?', [id])!);
+    expect(state).toEqual({ v: 1, since: GAMES.at(-1)!.createdAt! + 1, pendingIds: ['synth013'] });
+  });
+
+  it('resumes an interrupted full sync of the same job instead of starting over', async () => {
+    const base = GAMES[0]!;
+    games = Array.from({ length: 150 }, (_, i) => ({ ...base, id: `full${String(i).padStart(4, '0')}`, createdAt: base.createdAt! + i * 1000 }));
+    const id = createSource(t.db, { kind: 'lichess', key: 'synthplayer' });
+    t.db.run('UPDATE sources SET sync_state_json = ? WHERE id = ?', [JSON.stringify({ v: 1, since: games[140]!.createdAt, pendingIds: [] }), id]);
+    streamOpts = { failAfter: 120 };
+    await expect(run(id, { full: true, jobId: 7 })).rejects.toThrow(UpstreamError);
+    expect(fake.callsTo('/api/games/user/synthplayer')[0]!.url.searchParams.has('since')).toBe(false);
+    let state = JSON.parse(t.db.value<string>('SELECT sync_state_json FROM sources WHERE id = ?', [id])!);
+    expect(state).toMatchObject({ since: games[99]!.createdAt! + 1, fullJob: 7 });
+
+    // The same job (re-queued by the worker) continues from its own cursor.
+    streamOpts = {};
+    await run(id, { full: true, jobId: 7 });
+    expect(Number(fake.callsTo('/api/games/user/synthplayer')[1]!.url.searchParams.get('since'))).toBe(games[99]!.createdAt! + 1);
+    expect(t.db.value("SELECT COUNT(*) FROM games WHERE origin_id LIKE 'full%'")).toBe(150);
+    state = JSON.parse(t.db.value<string>('SELECT sync_state_json FROM sources WHERE id = ?', [id])!);
+    expect(state.fullJob).toBeUndefined();
+
+    // Another full sync starts over.
+    await run(id, { full: true, jobId: 8 });
+    expect(fake.callsTo('/api/games/user/synthplayer')[2]!.url.searchParams.has('since')).toBe(false);
   });
 
   it('records unknown and closed accounts on the source', async () => {

@@ -97,6 +97,14 @@ describe('jobs endpoints', () => {
     expect(retried.statusCode).toBe(200);
     // Behind the manual-priority import on the local lane.
     expect(retried.json<JobInfo>()).toMatchObject({ id: ids.failed, status: 'queued', error: null, queuePosition: 2 });
+    // A job waiting out a backoff doesn't count ahead of runnable ones: the import now waits.
+    t.db.run('UPDATE jobs SET run_after = ? WHERE id = ?', [Date.now() + 30_000, ids.import!]);
+    const again1 = await post(API_ROUTES.admin.jobRetry(ids.failed!), admin.cookie);
+    expect(again1.json<JobInfo>()).toMatchObject({ id: ids.failed, status: 'queued', queuePosition: 1 });
+    const mine = (await get(API_ROUTES.jobsMine, alice.cookie)).json<MyJobsResponse>();
+    expect(mine.jobs.find(j => j.id === ids.import)).toMatchObject({ queuePosition: 2 });
+    const local = (await get(`${API_ROUTES.admin.jobs}?lane=local&status=queued`, admin.cookie)).json<AdminJobsPage>();
+    expect(local.jobs.map(j => j.id)).toEqual([ids.failed, ids.import]);
 
     const cancelled = await post(API_ROUTES.admin.jobCancel(ids.geo!), admin.cookie);
     expect(cancelled.statusCode).toBe(200);

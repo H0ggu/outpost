@@ -19,7 +19,8 @@
  *   errors, timeouts and 5xx are retried with exponential backoff (30 s × 2^n, capped at 30 min,
  *   `MAX_JOB_ATTEMPTS` runs in all); anything else marks the job `error`;
  * - throw `RequeueJob` to stop early and run again later without counting a failure (a long
- *   background job yielding its lane to higher-priority work);
+ *   background job yielding its lane to higher-priority work); keep the cursor to resume from in
+ *   a checkpoint (`saveJobCheckpoint`, checkpoint.ts) saved with the work it covers;
  * - honour `ctx.signal` (cancel, shutdown) and pass it to `ctx.upstream` calls;
  * - write in short `ctx.db.tx()` batches (the API stays responsive); very heavy parsing may move to
  *   a worker thread with its own `openDb(ctx.config.dbPath)`.

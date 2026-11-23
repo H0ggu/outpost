@@ -8,9 +8,14 @@ import {
   getJob,
   JobAbortedError,
   JobRunner,
+  listAdminJobs,
+  loadJobCheckpoint,
+  pruneFinishedJobs,
   registerJobHandler,
   RequeueJob,
+  requeueStaleRunning,
   retryJob,
+  saveJobCheckpoint,
   type JobContext,
   type JobRow,
 } from '../src/jobs/index.ts';
@@ -38,8 +43,8 @@ async function until<T>(fn: () => T, ms = 3000): Promise<NonNullable<T>> {
 }
 
 const row = (t: TestApp, id: number) =>
-  t.db.get<Pick<JobRow, 'status' | 'attempts' | 'run_after' | 'error' | 'progress_json' | 'finished_at'>>(
-    'SELECT status, attempts, run_after, error, progress_json, finished_at FROM jobs WHERE id = ?',
+  t.db.get<Pick<JobRow, 'status' | 'attempts' | 'run_after' | 'error' | 'progress_json' | 'started_at' | 'finished_at'>>(
+    'SELECT status, attempts, run_after, error, progress_json, started_at, finished_at FROM jobs WHERE id = ?',
     [id],
   )!;
 
@@ -111,13 +116,25 @@ describe('job workers', () => {
     });
     const a = round('with');
     await runner.runNext('lichess');
-    expect(row(t, a.id)).toMatchObject({ status: 'queued', attempts: 0, run_after: retryAt });
+    expect(row(t, a.id)).toMatchObject({ status: 'queued', attempts: 0, run_after: retryAt, started_at: null });
+    expect(getJob(t.db, a.id)).toMatchObject({ status: 'queued', startedAt: null });
     expect(row(t, a.id).error).toMatch(/429.*waiting until/);
     t.db.run("UPDATE jobs SET status = 'done' WHERE id = ?", [a.id]);
     const b = round('without');
     const before = now();
     await runner.runNext('lichess');
     expect(row(t, b.id).run_after).toBeGreaterThanOrEqual(before + 60_000);
+  });
+
+  it('does not repeat the retry time the cool-down message already names', async () => {
+    const retryAt = Date.now() + 120_000;
+    const iso = new Date(retryAt).toISOString();
+    registerJobHandler('broadcastRound', async () => {
+      throw new UpstreamError('rate_limited', 'lichess.org', `lichess.org is rate limiting Outpost; retry after ${iso}`, { retryAt });
+    });
+    const job = round('cooling');
+    await runner.runNext('lichess');
+    expect(row(t, job.id)).toMatchObject({ status: 'queued', run_after: retryAt, error: `lichess.org is rate limiting Outpost; retry after ${iso}` });
   });
 
   it('backs off exponentially on network errors and 5xx, then gives up', async () => {
@@ -130,7 +147,7 @@ describe('job workers', () => {
     const job = round('flaky');
     const t0 = now();
     await runner.runNext('lichess');
-    expect(row(t, job.id)).toMatchObject({ status: 'queued', attempts: 1 });
+    expect(row(t, job.id)).toMatchObject({ status: 'queued', attempts: 1, started_at: null });
     expect(row(t, job.id).run_after! - t0).toBeGreaterThanOrEqual(30_000);
     expect(row(t, job.id).run_after! - t0).toBeLessThan(31_000);
     expect(row(t, job.id).error).toMatch(/ECONNRESET \(attempt 1 of 3/);
@@ -263,7 +280,14 @@ describe('job workers', () => {
     expect(row(t, b)).toMatchObject({ status: 'error', error: 'Interrupted by a server restart too many times' });
     await until(() => row(t, a).status === 'running');
     await runner.stop();
-    expect(row(t, a)).toMatchObject({ status: 'queued', attempts: 1 });
+    expect(row(t, a)).toMatchObject({ status: 'queued', attempts: 1, started_at: null });
+  });
+
+  it('clears started_at when a restart re-queues a job', async () => {
+    const a = t.db.run("INSERT INTO jobs (kind, lane, payload_json, status, attempts, created_at, started_at) VALUES ('broadcastRound', 'chesscom', '{}', 'running', 1, 0, 5)").lastInsertRowid;
+    expect(requeueStaleRunning(t.db, 3, now())).toBe(1);
+    expect(row(t, a)).toMatchObject({ status: 'queued', attempts: 1, started_at: null });
+    expect(getJob(t.db, a)?.startedAt).toBeNull();
   });
 
   it('aborts running handlers on shutdown and puts their jobs back in the queue', async () => {
@@ -278,8 +302,60 @@ describe('job workers', () => {
     await runner.stop();
     expect(signal.reason).toBeInstanceOf(JobAbortedError);
     expect((signal.reason as JobAbortedError).why).toBe('shutdown');
-    expect(row(t, job.id)).toMatchObject({ status: 'queued', attempts: 0 });
+    expect(row(t, job.id)).toMatchObject({ status: 'queued', attempts: 0, started_at: null });
     expect(runner.started).toBe(false);
+  });
+
+  it('counts jobs waiting for run_after behind the runnable ones in queue positions and lists', async () => {
+    registerJobHandler('broadcastRound', async () => {
+      throw new UpstreamError('status', 'lichess.org', 'lichess.org answered 502', { status: 502 });
+    });
+    const backoff = round('backoff', { priority: 10 });
+    await runner.runNext('lichess'); // 502 → waits ~30 s
+    expect(row(t, backoff.id)).toMatchObject({ status: 'queued' });
+    const a = round('a', { priority: 0 });
+    const b = round('b', { priority: 0 });
+    const later = round('later', { priority: 20, runAfter: now() + 3_600_000 });
+    // The runnable jobs come first; the waiting ones follow by run_after, whatever their priority.
+    expect([a, b, backoff, later].map(j => getJob(t.db, j.id)?.queuePosition)).toEqual([1, 2, 3, 4]);
+    expect(listAdminJobs(t.db, { status: 'queued', page: 1, pageSize: 10 }).jobs.map(j => j.id)).toEqual([a.id, b.id, backoff.id, later.id]);
+    // Once its backoff is over, the high-priority job is first again.
+    t.db.run('UPDATE jobs SET run_after = ? WHERE id = ?', [Date.now() - 1, backoff.id]);
+    expect([a, b, backoff, later].map(j => getJob(t.db, j.id)?.queuePosition)).toEqual([2, 3, 1, 4]);
+  });
+
+  it('keeps a job’s checkpoint while it is re-queued and drops it when the job ends or is retried', async () => {
+    const seen: (object | null)[] = [];
+    registerJobHandler('broadcastMonth', async ctx => {
+      const cp = loadJobCheckpoint<{ step: number }>(ctx.db, ctx.job.id);
+      seen.push(cp);
+      const step = (cp?.step ?? 0) + 1;
+      saveJobCheckpoint(ctx.db, ctx.job.id, { step });
+      if (step < 3) throw new RequeueJob(`step ${step}`);
+      if (ctx.job.payload.month === '2026-01') throw new Error('fails at the end');
+    });
+    const ok = enqueueJob(t.db, 'broadcastMonth', { databaseId: 1, month: '2026-02' });
+    while (await runner.runNext('local'));
+    expect(seen).toEqual([null, { step: 1 }, { step: 2 }]);
+    expect(row(t, ok.id).status).toBe('done');
+    expect(loadJobCheckpoint(t.db, ok.id)).toBeNull();
+
+    seen.length = 0;
+    const failing = enqueueJob(t.db, 'broadcastMonth', { databaseId: 1, month: '2026-01' });
+    while (await runner.runNext('local'));
+    expect(row(t, failing.id).status).toBe('error');
+    expect(loadJobCheckpoint(t.db, failing.id)).toBeNull();
+    saveJobCheckpoint(t.db, failing.id, { step: 2 }); // e.g. written after an admin cancel
+    retryJob(t.db, failing.id);
+    expect(loadJobCheckpoint(t.db, failing.id)).toBeNull();
+
+    // Checkpoints of jobs that are gone or over are pruned.
+    saveJobCheckpoint(t.db, 424242, { step: 1 });
+    saveJobCheckpoint(t.db, ok.id, { step: 1 });
+    const queued = enqueueJob(t.db, 'broadcastMonth', { databaseId: 1, month: '2026-03' });
+    saveJobCheckpoint(t.db, queued.id, { step: 1 });
+    pruneFinishedJobs(t.db, Date.now(), { doneMs: 86_400_000, errorMs: 86_400_000 });
+    expect(t.db.all<{ job_id: number }>('SELECT job_id FROM job_checkpoints').map(r => r.job_id)).toEqual([queued.id]);
   });
 
   it('wakes on enqueue and on run_after instead of polling', async () => {

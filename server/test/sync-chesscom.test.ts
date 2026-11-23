@@ -3,6 +3,7 @@ import { UpstreamError } from '../src/http/upstream.ts';
 import { writeSettings } from '../src/settings.ts';
 import {
   archiveMonth,
+  chesscomMonthsToFetch,
   chesscomSnapshot,
   countryFromChesscom,
   mapChesscomGame,
@@ -127,15 +128,52 @@ describe('Chess.com mapping', () => {
     expect(archiveMonth('https://api.chess.com/pub/player/hikaru/games/2026/03')).toBe('2026/03');
     expect(monthOf(Date.UTC(2026, 0, 15), -1)).toBe('2025/12');
   });
+
+  it('picks the months to fetch: unprocessed ones and everything since the last sync', () => {
+    const archive = ['2014/04', '2026/09', '2026/10', '2026/11', '2026/12', '2027/01'];
+    const done = { '2014/04': 'a', '2026/09': 'b', '2026/10': 'c', '2026/11': 'd' };
+    const at = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d, 12);
+    // First sync: everything (or from the cutoff's month).
+    expect(chesscomMonthsToFetch(archive, { months: {}, cutoff: null, lastSyncStartedAt: null }, at(2027, 1, 15))).toEqual(archive);
+    expect(chesscomMonthsToFetch(archive, { months: {}, cutoff: at(2026, 10, 20), lastSyncStartedAt: null }, at(2027, 1, 15))).toEqual([
+      '2026/10',
+      '2026/11',
+      '2026/12',
+      '2027/01',
+    ]);
+    // Last sync on 23 Nov, next on 15 Jan: November (and October) are revalidated, not skipped.
+    expect(chesscomMonthsToFetch(archive, { months: done, cutoff: null, lastSyncStartedAt: at(2026, 11, 23) }, at(2027, 1, 15))).toEqual([
+      '2026/10',
+      '2026/11',
+      '2026/12',
+      '2027/01',
+    ]);
+    // Again the same day: the current and previous month only.
+    expect(chesscomMonthsToFetch(archive.slice(0, 4), { months: done, cutoff: null, lastSyncStartedAt: at(2026, 11, 23) }, at(2026, 11, 24))).toEqual([
+      '2026/10',
+      '2026/11',
+    ]);
+    expect(
+      chesscomMonthsToFetch(archive, { months: { ...done, '2026/12': 'e', '2027/01': 'f' }, cutoff: null, lastSyncStartedAt: at(2027, 1, 2) }, at(2027, 1, 3)),
+    ).toEqual(['2026/12', '2027/01']);
+    // A month never processed (e.g. it answered 404) is fetched whatever its age.
+    const { '2026/09': _skipped, ...gap } = { ...done, '2026/12': 'e', '2027/01': 'f' };
+    expect(chesscomMonthsToFetch(archive, { months: gap, cutoff: null, lastSyncStartedAt: at(2027, 1, 2) }, at(2027, 1, 3))).toEqual([
+      '2026/09',
+      '2026/12',
+      '2027/01',
+    ]);
+  });
 });
 
 describe('Chess.com sync', () => {
   let t: TestApp;
   let fake: FakeFetch;
-  let months: Record<string, ChesscomGame[] | 'error'>;
+  let months: Record<string, ChesscomGame[] | 'error' | 'missing'>;
   let archives: string[];
   let profile: ChesscomProfile | null;
   let etagVersion: number;
+  let monthVersion: Record<string, number>;
 
   beforeEach(async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -144,6 +182,7 @@ describe('Chess.com sync', () => {
     archives = [...ARCHIVES.archives];
     profile = PROFILE;
     etagVersion = 1;
+    monthVersion = {};
     fake = fakeFetch([
       ['api.chess.com/pub/player/hikaru', () => (profile ? jsonResponse(profile) : statusResponse(404))],
       ['api.chess.com/pub/player/hikaru/stats', () => jsonResponse(STATS)],
@@ -155,7 +194,8 @@ describe('Chess.com sync', () => {
           const games = months[month];
           if (games === undefined) return jsonResponse({ games: [] });
           if (games === 'error') return jsonResponse({ code: 0, message: 'An internal error has occurred. Please contact us.' });
-          const etag = `W/"${month}-v${etagVersion}"`;
+          if (games === 'missing') return statusResponse(404);
+          const etag = `W/"${month}-v${monthVersion[month] ?? etagVersion}"`;
           if (call.headers.get('if-none-match') === etag) return statusResponse(304, { etag });
           return jsonResponse({ games }, { headers: { etag } });
         },
@@ -168,11 +208,13 @@ describe('Chess.com sync', () => {
     await t.close();
   });
 
-  const run = async (sourceId: number) => {
-    const { ctx, updates } = makeJobContext(t, 'sync', { sourceId });
+  const run = async (sourceId: number, opts: { full?: boolean; jobId?: number } = {}) => {
+    const { ctx, updates } = makeJobContext(t, 'sync', opts.full ? { sourceId, full: true } : { sourceId }, { jobId: opts.jobId });
     await syncHandler(ctx);
     return updates;
   };
+  const stateOf = (id: number) => JSON.parse(t.db.value<string>('SELECT sync_state_json FROM sources WHERE id = ?', [id])!);
+  const monthCalls = () => fake.callsTo(/\/games\/\d{4}\/\d{2}$/).map(c => [c.url.pathname.slice(-7), c.headers.get('if-none-match')]);
   const myGames = (id: number) =>
     t.db.all<{ origin_id: string; time_class: string; rated: number; rating: number; rating_after: number; ended_at: number }>(
       `SELECT g.origin_id, pg.time_class, pg.rated, pg.rating, pg.rating_after, pg.ended_at
@@ -202,6 +244,7 @@ describe('Chess.com sync', () => {
       months: { '2014/04': 'W/"2014/04-v1"', '2026/10': 'W/"2026/10-v1"', '2026/11': 'W/"2026/11-v1"' },
       doneThrough: '2026/11',
       cutoff: null,
+      lastSyncStartedAt: Date.UTC(2026, 10, 23, 12),
     });
 
     const rows = myGames(id);
@@ -262,15 +305,106 @@ describe('Chess.com sync', () => {
     expect(t.db.value("SELECT COUNT(*) FROM games WHERE origin_id = 'late-daily-game'")).toBe(1);
   });
 
-  it('picks up new months after the last completed one', async () => {
+  it('picks up new months and revalidates the months of the last sync', async () => {
     const id = createSource(t.db, { kind: 'chesscom', key: 'hikaru' });
     await run(id);
     vi.setSystemTime(Date.UTC(2027, 1, 3));
     archives = [...archives, 'https://api.chess.com/pub/player/hikaru/games/2026/12', 'https://api.chess.com/pub/player/hikaru/games/2027/02'];
     fake.calls.length = 0;
+    const updates = await run(id);
+    // October and November (the last sync ran on 23 Nov) are revalidated: 304, nothing re-read.
+    expect(monthCalls()).toEqual([
+      ['2026/10', 'W/"2026/10-v1"'],
+      ['2026/11', 'W/"2026/11-v1"'],
+      ['2026/12', null],
+      ['2027/02', null],
+    ]);
+    expect(updates.at(-1)?.counts).toMatchObject({ imported: 0, duplicates: 0, unchangedMonths: 2 });
+    expect(stateOf(id)).toMatchObject({ doneThrough: '2027/02', lastSyncStartedAt: Date.UTC(2027, 1, 3) });
+  });
+
+  it('finds games that ended in the last sync’s month however long the gap until the next one', async () => {
+    const id = createSource(t.db, { kind: 'chesscom', key: 'hikaru' });
+    await run(id); // 23 Nov 2026
+    // A game ends on 28 Nov, after that sync; the next update only comes mid-January.
+    const late = { ...MONTHS['2026/11']![0]!, uuid: 'late-november-game', url: 'https://www.chess.com/game/live/2', end_time: Date.UTC(2026, 10, 28) / 1000 };
+    months['2026/11'] = [...MONTHS['2026/11']!, late];
+    monthVersion['2026/11'] = 2;
+    archives = [...archives, 'https://api.chess.com/pub/player/hikaru/games/2026/12', 'https://api.chess.com/pub/player/hikaru/games/2027/01'];
+    vi.setSystemTime(Date.UTC(2027, 0, 15));
+    fake.calls.length = 0;
+    const updates = await run(id);
+    expect(monthCalls().map(([m]) => m)).toEqual(['2026/10', '2026/11', '2026/12', '2027/01']);
+    expect(updates.at(-1)?.counts).toMatchObject({ imported: 1, unchangedMonths: 1 });
+    expect(t.db.value("SELECT COUNT(*) FROM games WHERE origin_id = 'late-november-game'")).toBe(1);
+  });
+
+  it('uses the last sync time of states written before it was stored', async () => {
+    const id = createSource(t.db, { kind: 'chesscom', key: 'hikaru' });
     await run(id);
-    expect(fake.callsTo(/\/games\/\d{4}\/\d{2}$/).map(c => c.url.pathname.slice(-7))).toEqual(['2026/12', '2027/02']);
-    expect(JSON.parse(t.db.value<string>('SELECT sync_state_json FROM sources WHERE id = ?', [id])!).doneThrough).toBe('2027/02');
+    const { lastSyncStartedAt: _dropped, ...old } = stateOf(id);
+    t.db.run('UPDATE sources SET sync_state_json = ? WHERE id = ?', [JSON.stringify(old), id]);
+    vi.setSystemTime(Date.UTC(2027, 0, 15));
+    fake.calls.length = 0;
+    await run(id);
+    expect(monthCalls().map(([m]) => m)).toEqual(['2026/10', '2026/11']);
+  });
+
+  it('fetches a listed month that answered 404 again next time', async () => {
+    months['2014/04'] = 'missing';
+    const id = createSource(t.db, { kind: 'chesscom', key: 'hikaru' });
+    const first = await run(id);
+    expect(first.at(-1)?.counts).toMatchObject({ imported: 17, missingMonths: 1 });
+    let state = stateOf(id);
+    expect(Object.keys(state.months)).toEqual(['2026/10', '2026/11']);
+    expect(state.doneThrough).toBe('2026/11');
+    expect(t.db.value('SELECT last_sync_error FROM sources WHERE id = ?', [id])).toBeNull();
+
+    months['2014/04'] = MONTHS['2014/04']!;
+    vi.setSystemTime(Date.UTC(2027, 5, 1));
+    fake.calls.length = 0;
+    const second = await run(id);
+    expect(monthCalls().map(([m]) => m)).toEqual(['2014/04', '2026/10', '2026/11']);
+    expect(second.at(-1)?.counts).toMatchObject({ imported: 4 });
+    state = stateOf(id);
+    expect(Object.keys(state.months).sort()).toEqual(['2014/04', '2026/10', '2026/11']);
+  });
+
+  it('re-reads the whole history on a full resync, resuming the same job when interrupted', async () => {
+    writeSettings(t.db, { initialSyncMonths: 1 });
+    const id = createSource(t.db, { kind: 'chesscom', key: 'hikaru' });
+    await run(id);
+    expect(myGames(id)).toHaveLength(4);
+
+    // A full resync ignores the window and the ETags; it breaks at November.
+    months['2026/11'] = 'error';
+    fake.calls.length = 0;
+    await expect(run(id, { full: true, jobId: 31 })).rejects.toThrow(UpstreamError);
+    expect(monthCalls()).toEqual([
+      ['2014/04', null],
+      ['2026/10', null],
+      ['2026/11', null],
+    ]);
+    expect(stateOf(id)).toMatchObject({ cutoff: null, fullJob: 31, doneThrough: '2026/10' });
+
+    // The same job continues where it stopped (2014 is not read again).
+    months['2026/11'] = MONTHS['2026/11']!;
+    fake.calls.length = 0;
+    await run(id, { full: true, jobId: 31 });
+    expect(monthCalls().map(([m]) => m)).toEqual(['2026/10', '2026/11']);
+    expect(myGames(id)).toHaveLength(21);
+    const state = stateOf(id);
+    expect(state.fullJob).toBeUndefined();
+    expect(state.cutoff).toBeNull();
+
+    // A later full resync starts over.
+    fake.calls.length = 0;
+    await run(id, { full: true, jobId: 32 });
+    expect(monthCalls()).toEqual([
+      ['2014/04', null],
+      ['2026/10', null],
+      ['2026/11', null],
+    ]);
   });
 
   it('limits the first import to initialSyncMonths but still chains ratings from earlier games', async () => {

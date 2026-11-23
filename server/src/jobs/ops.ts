@@ -7,7 +7,8 @@
  *     └── requeue ───────┘  (rate limit, backoff, yield, shutdown, restart)
  *
  * Every transition out of `running` is conditional on the row still being `running`, so an admin
- * cancel that lands while the handler is finishing is never overwritten.
+ * cancel that lands while the handler is finishing is never overwritten. A re-queued job has no
+ * `started_at` (the next claim sets it); a finished job loses its checkpoint (checkpoint.ts).
  */
 import type {
   AdminJobsPage,
@@ -20,6 +21,7 @@ import type {
   JobStatus,
 } from '@outpost/shared/api';
 import type { Db, SqlValue } from '../db/index.ts';
+import { clearJobCheckpoint } from './checkpoint.ts';
 import { notifyJobsQueued } from './notify.ts';
 import { getJob, JOB_COLUMNS, toJobInfo, type JobRow } from './queue.ts';
 
@@ -76,33 +78,38 @@ export function saveProgress(db: Db, id: Id, progress: JobProgress): void {
   db.run('UPDATE jobs SET progress_json = ? WHERE id = ?', [JSON.stringify(progress), id]);
 }
 
+/** Runs a transition and drops the job's checkpoint (whether or not this call changed the row: the job is over). */
+function finish(db: Db, id: Id, sql: string, params: SqlValue[]): boolean {
+  return db.tx(() => {
+    const changed = db.run(sql, params).changes > 0;
+    clearJobCheckpoint(db, id);
+    return changed;
+  });
+}
+
 /** running → done. */
 export function completeJob(db: Db, id: Id, now: EpochMs): boolean {
-  return (
-    db.run("UPDATE jobs SET status = 'done', finished_at = ?, error = NULL, run_after = NULL WHERE id = ? AND status = 'running'", [
-      now,
-      id,
-    ]).changes > 0
-  );
+  return finish(db, id, "UPDATE jobs SET status = 'done', finished_at = ?, error = NULL, run_after = NULL WHERE id = ? AND status = 'running'", [
+    now,
+    id,
+  ]);
 }
 
 /** running → error. */
 export function failJob(db: Db, id: Id, error: string, now: EpochMs): boolean {
-  return (
-    db.run("UPDATE jobs SET status = 'error', finished_at = ?, error = ?, run_after = NULL WHERE id = ? AND status = 'running'", [
-      now,
-      truncate(error),
-      id,
-    ]).changes > 0
-  );
+  return finish(db, id, "UPDATE jobs SET status = 'error', finished_at = ?, error = ?, run_after = NULL WHERE id = ? AND status = 'running'", [
+    now,
+    truncate(error),
+    id,
+  ]);
 }
 
 /** running → cancelled (after the handler stopped; the admin endpoint usually got there first). */
 export function markCancelled(db: Db, id: Id, now: EpochMs): boolean {
-  return (
-    db.run("UPDATE jobs SET status = 'cancelled', finished_at = ?, run_after = NULL WHERE id = ? AND status = 'running'", [now, id])
-      .changes > 0
-  );
+  return finish(db, id, "UPDATE jobs SET status = 'cancelled', finished_at = ?, run_after = NULL WHERE id = ? AND status = 'running'", [
+    now,
+    id,
+  ]);
 }
 
 /**
@@ -116,7 +123,7 @@ export function requeueJob(
   opts: { runAfter: EpochMs | null; refundAttempt: boolean; error?: string | null },
 ): boolean {
   const { changes } = db.run(
-    `UPDATE jobs SET status = 'queued', run_after = ?, finished_at = NULL,
+    `UPDATE jobs SET status = 'queued', run_after = ?, started_at = NULL, finished_at = NULL,
             attempts = CASE WHEN ? THEN MAX(attempts - 1, 0) ELSE attempts END,
             error = COALESCE(?, error)
       WHERE id = ? AND status = 'running'`,
@@ -137,7 +144,7 @@ export function requeueStaleRunning(db: Db, maxAttempts: number, now: EpochMs): 
         WHERE status = 'running' AND attempts >= ?`,
       [now, maxAttempts],
     ).changes;
-    const requeued = db.run("UPDATE jobs SET status = 'queued', run_after = NULL WHERE status = 'running'").changes;
+    const requeued = db.run("UPDATE jobs SET status = 'queued', run_after = NULL, started_at = NULL WHERE status = 'running'").changes;
     return failed + requeued;
   });
 }
@@ -156,7 +163,7 @@ export function cancelJob(db: Db, id: Id, now: EpochMs, onCancelled?: (id: Id) =
   const row = db.get<Pick<JobRow, 'status'>>('SELECT status FROM jobs WHERE id = ?', [id]);
   if (!row) return null;
   if (row.status !== 'queued' && row.status !== 'running') throw new JobStateError(`Job ${id} is already ${row.status}`);
-  db.run("UPDATE jobs SET status = 'cancelled', finished_at = ?, run_after = NULL WHERE id = ? AND status IN ('queued', 'running')", [
+  finish(db, id, "UPDATE jobs SET status = 'cancelled', finished_at = ?, run_after = NULL WHERE id = ? AND status IN ('queued', 'running')", [
     now,
     id,
   ]);
@@ -193,6 +200,7 @@ export function retryJob(db: Db, id: Id): JobInfo | null {
         WHERE id = ?`,
       [id],
     );
+    clearJobCheckpoint(db, id);
     return { job: getJob(db, id)!, wake: true };
   });
   if (!result) return null;
@@ -210,10 +218,11 @@ export interface AdminJobsFilter {
 }
 
 /**
- * `GET /api/admin/jobs`: running first, then the queue in run order, then finished jobs newest
- * first. `counts` are per status under the kind/lane filters (the status filter picks the list).
+ * `GET /api/admin/jobs`: running first, then the queue in run order (runnable jobs by priority and
+ * age, then jobs waiting for their `run_after`), then finished jobs newest first. `counts` are per
+ * status under the kind/lane filters (the status filter picks the list).
  */
-export function listAdminJobs(db: Db, f: AdminJobsFilter): AdminJobsPage {
+export function listAdminJobs(db: Db, f: AdminJobsFilter, now: EpochMs = Date.now()): AdminJobsPage {
   const where: string[] = [];
   const params: SqlValue[] = [];
   if (f.kind) {
@@ -240,13 +249,14 @@ export function listAdminJobs(db: Db, f: AdminJobsFilter): AdminJobsPage {
   const rows = db.all<JobRow>(
     `SELECT ${JOB_COLUMNS} FROM jobs ${whereSql}
       ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+               CASE WHEN status = 'queued' AND run_after > ? THEN run_after ELSE 0 END,
                CASE WHEN status = 'queued' THEN -priority ELSE 0 END,
                CASE WHEN status = 'queued' THEN created_at ELSE 0 END,
                CASE WHEN status = 'queued' THEN id ELSE 0 END,
                COALESCE(finished_at, started_at, created_at) DESC,
                id DESC
       LIMIT ? OFFSET ?`,
-    [...params, f.pageSize, (f.page - 1) * f.pageSize],
+    [...params, now, f.pageSize, (f.page - 1) * f.pageSize],
   );
   return { total, page: f.page, pageSize: f.pageSize, counts, jobs: rows.map(r => toJobInfo(db, r)) };
 }
@@ -254,9 +264,9 @@ export function listAdminJobs(db: Db, f: AdminJobsFilter): AdminJobsPage {
 /**
  * `GET /api/jobs/mine`: queued and running jobs that are relevant to a user — the ones they
  * started, syncs of sources in profiles they own, and imports/rebuilds of databases they own.
- * Running first, then by queue order.
+ * Running first, then in queue order (as in the admin list).
  */
-export function listMyJobs(db: Db, userId: Id): JobInfo[] {
+export function listMyJobs(db: Db, userId: Id, now: EpochMs = Date.now()): JobInfo[] {
   const rows = db.all<JobRow>(
     `SELECT ${JOB_COLUMNS} FROM jobs j
       WHERE j.status IN ('queued', 'running')
@@ -268,21 +278,28 @@ export function listMyJobs(db: Db, userId: Id): JobInfo[] {
           OR (j.kind IN ('pgnImport', 'referenceImport', 'broadcastMonth', 'broadcastRound', 'rebuild')
               AND json_extract(j.payload_json, '$.databaseId') IN (SELECT id FROM databases WHERE owner_user_id = :me))
         )
-      ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END, j.priority DESC, j.created_at, j.id
+      ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END,
+               CASE WHEN j.status = 'queued' AND j.run_after > :now THEN j.run_after ELSE 0 END,
+               j.priority DESC, j.created_at, j.id
       LIMIT 200`,
-    { me: userId },
+    { me: userId, now },
   );
   return rows.map(r => toJobInfo(db, r));
 }
 
-/** Deletes finished jobs older than the retention windows. Returns the number deleted. */
+/**
+ * Deletes finished jobs older than the retention windows, and checkpoints no active job owns.
+ * Returns the number of jobs deleted.
+ */
 export function pruneFinishedJobs(db: Db, now: EpochMs, retention: { doneMs: number; errorMs: number }): number {
-  return db.tx(
-    () =>
+  return db.tx(() => {
+    const n =
       db.run("DELETE FROM jobs WHERE status IN ('done', 'cancelled') AND COALESCE(finished_at, created_at) < ?", [now - retention.doneMs])
         .changes +
-      db.run("DELETE FROM jobs WHERE status = 'error' AND COALESCE(finished_at, created_at) < ?", [now - retention.errorMs]).changes,
-  );
+      db.run("DELETE FROM jobs WHERE status = 'error' AND COALESCE(finished_at, created_at) < ?", [now - retention.errorMs]).changes;
+    db.run("DELETE FROM job_checkpoints WHERE job_id NOT IN (SELECT id FROM jobs WHERE status IN ('queued', 'running'))");
+    return n;
+  });
 }
 
 const truncate = (s: string, max = 2000): string => (s.length > max ? `${s.slice(0, max - 1)}…` : s);

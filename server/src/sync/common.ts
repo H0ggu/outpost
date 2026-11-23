@@ -78,6 +78,23 @@ export function parseJsonObject<T extends object>(json: string | null | undefine
   }
 }
 
+/**
+ * The saved cursor (`sources.sync_state_json`) a sync continues from. A `full` resync ignores it
+ * and starts over — unless the cursor was written by this same full-resync job (`fullJob`): that
+ * job was interrupted (rate limit, backoff, shutdown) and resumes where it stopped.
+ */
+export function savedSyncState<T extends object>(ctx: JobContext<'sync'>, json: string | null): Partial<T & FullResyncMarker> | null {
+  const saved = parseJsonObject<T & FullResyncMarker>(json);
+  if (!ctx.job.payload.full) return saved;
+  return saved && saved.fullJob === ctx.job.id ? saved : null;
+}
+
+/** Marks a sync state as written by a running `full` resync (removed when that sync finishes). */
+export interface FullResyncMarker {
+  /** Id of the `full` sync job that is rebuilding this state. */
+  fullJob?: Id;
+}
+
 /** A title the site reported, if Outpost knows it. */
 export const titleOrNull = (v: unknown): Title | null => (isTitle(v) ? v : null);
 

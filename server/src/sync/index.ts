@@ -18,6 +18,7 @@ import { rebuildHandler } from './rebuild.ts';
 export {
   archiveMonth,
   chesscomDisplayName,
+  chesscomMonthsToFetch,
   chesscomSnapshot,
   mapChesscomGame,
   monthOf,
@@ -43,7 +44,7 @@ export {
 } from './geo.ts';
 export { lichessSnapshot, mapLichessGame, syncLichess, type LichessGame, type LichessSyncState, type LichessUser } from './lichess.ts';
 export { parseSourceProfile, readSourceProfile, type SourceProfileRating, type SourceProfileSnapshot } from './profile.ts';
-export { rebuildHandler } from './rebuild.ts';
+export { REBUILD_BATCH, REBUILD_BATCHES_PER_RUN, rebuildHandler, type RebuildOptions } from './rebuild.ts';
 
 /** Failures that say nothing about the source (retry later, cancel, shutdown): not recorded on it. */
 function isTransient(e: unknown, signal: AbortSignal): boolean {
@@ -97,5 +98,5 @@ export async function syncHandler(ctx: JobContext<'sync'>, opts: SyncOptions = {
 export function registerSyncHandlers(): void {
   registerJobHandler('sync', ctx => syncHandler(ctx));
   registerJobHandler('geo', geoHandler);
-  registerJobHandler('rebuild', rebuildHandler);
+  registerJobHandler('rebuild', ctx => rebuildHandler(ctx));
 }

@@ -6,10 +6,15 @@
  *    `player_id`, title, country URL → ISO alpha-2) and `profile_json` (ratings per time class,
  *    FIDE). Unknown accounts (404/410) fail with `last_sync_error`; closed accounts keep a warning.
  * 2. `/games/archives` → months, processed in order: on the first sync from `initialSyncMonths`
- *    back (0 = all), afterwards every month after the last completed one, plus the current and
- *    previous month always (late daily games), revalidated with their stored ETag
- *    (`If-None-Match` → 304 = unchanged). A month's ETag and the cursor are saved in the
- *    transaction that stores its last batch, so an interrupted sync resumes at that month.
+ *    back (0 = all), afterwards every month not processed yet, plus every month from the one
+ *    before the last completed sync started onwards (games finished after that sync, late daily
+ *    games) and always the current and previous month. Months already seen are revalidated with
+ *    their stored ETag (`If-None-Match` → 304 = unchanged), so re-polling costs one cheap request
+ *    each. A month's ETag is saved in the transaction that stores its last batch, so an
+ *    interrupted sync resumes at that month. A listed month that answers 404 is left unprocessed
+ *    and fetched again next time. A `full` resync forgets the cursor, the ETags and the
+ *    first-import window and re-reads the whole history (resuming, not restarting, when that same
+ *    job is interrupted).
  * 3. Mapping (`mapChesscomGame`): only `rules == "chess"` from the standard position; `time_class`
  *    as given (`daily` = correspondence); result and termination from both players' result codes
  *    (PGN `Result`/`Termination` as fallback); moves from the PGN via chessops; dedupe by game
@@ -42,12 +47,13 @@ import {
   finishSync,
   GameImporter,
   initialCutoff,
-  parseJsonObject,
   readJsonBody,
+  savedSyncState,
   saveSyncState,
   SyncError,
   throwIfAborted,
   titleOrNull,
+  type FullResyncMarker,
   type SourceRow,
 } from './common.ts';
 import { ratingValue, storeSourceProfile, type SourceProfileRating, type SourceProfileSnapshot } from './profile.ts';
@@ -292,14 +298,34 @@ export function mapChesscomGame(
 }
 
 /** `sources.sync_state_json` of a Chess.com source. */
-export interface ChesscomSyncState {
+export interface ChesscomSyncState extends FullResyncMarker {
   v: 1;
-  /** ETag (or null) of every month fully processed, by `YYYY/MM`. */
+  /** ETag (or null) of every month fully processed, by `YYYY/MM`. Months missing here are fetched. */
   months: Record<string, string | null>;
   /** Latest month fully processed. */
   doneThrough: string | null;
   /** Start of the first import window (games before it are never imported, except by a full resync). */
   cutoff: EpochMs | null;
+  /**
+   * When the last completed sync started: every month from the one before it onwards is re-polled
+   * next time, so games that ended after it are found however long the gap. Null before the first.
+   */
+  lastSyncStartedAt: EpochMs | null;
+}
+
+/**
+ * Months of the archive list a sync fetches: months not processed yet (after the first-import
+ * window's start), and every month from the one before the earlier of `lastSyncStartedAt` and
+ * `now` onwards (always at least the current and previous month).
+ */
+export function chesscomMonthsToFetch(
+  archive: readonly string[],
+  state: Pick<ChesscomSyncState, 'months' | 'cutoff' | 'lastSyncStartedAt'>,
+  now: EpochMs,
+): string[] {
+  const firstMonth = state.cutoff !== null ? monthOf(state.cutoff) : null;
+  const repollFrom = monthOf(Math.min(now, state.lastSyncStartedAt ?? now), -1);
+  return archive.filter(m => (firstMonth === null || m >= firstMonth) && (!Object.hasOwn(state.months, m) || m >= repollFrom));
 }
 
 /** The player's previous rated rating in a time class before `before`, from stored games. */
@@ -356,21 +382,24 @@ export async function syncChesscom(ctx: JobContext<'sync'>, src: SourceRow): Pro
   const archives = await getJson<{ archives?: unknown }>(`${base}/games/archives`, [404]);
   if (archives.body !== null && !Array.isArray(archives.body.archives)) throw internalError('the archive list', archives.body);
   const months = [...new Set(((archives.body?.archives as unknown[] | undefined) ?? []).map(archiveMonth).filter((m): m is string => m !== null))].sort();
-  const saved = ctx.job.payload.full ? null : parseJsonObject<ChesscomSyncState>(src.sync_state_json);
+  const full = ctx.job.payload.full === true;
+  const saved = savedSyncState<ChesscomSyncState>(ctx, src.sync_state_json);
   const state: ChesscomSyncState = {
     v: 1,
-    months: saved?.months && typeof saved.months === 'object' ? { ...saved.months } : {},
+    months: saved?.months && typeof saved.months === 'object' && !Array.isArray(saved.months) ? { ...saved.months } : {},
     doneThrough: typeof saved?.doneThrough === 'string' ? saved.doneThrough : null,
     cutoff:
       typeof saved?.cutoff === 'number' || (saved && saved.cutoff === null)
         ? (saved.cutoff ?? null)
-        : initialCutoff(startedAt, readSettings(db, ctx.config).initialSyncMonths),
+        : full
+          ? null
+          : initialCutoff(startedAt, readSettings(db, ctx.config).initialSyncMonths),
+    // States written before this field existed: the source's last completed sync is close enough.
+    lastSyncStartedAt:
+      typeof saved?.lastSyncStartedAt === 'number' ? saved.lastSyncStartedAt : saved ? (src.last_synced_at ?? null) : null,
+    ...(full ? { fullJob: ctx.job.id } : {}),
   };
-  const firstMonth = state.cutoff !== null ? monthOf(state.cutoff) : null;
-  const recent = monthOf(startedAt, -1);
-  const toFetch = months.filter(
-    m => (firstMonth === null || m >= firstMonth) && (state.doneThrough === null || m > state.doneThrough || m >= recent),
-  );
+  const toFetch = chesscomMonthsToFetch(months, state, startedAt);
 
   // 3. Each month, oldest first.
   const prevRated = new Map<TimeClass, number>();
@@ -401,10 +430,16 @@ export async function syncChesscom(ctx: JobContext<'sync'>, src: SourceRow): Pro
       state.months[month] = etag;
       if (state.doneThrough === null || month > state.doneThrough) state.doneThrough = month;
     };
-    if (res.status === 304 || res.status === 404) {
-      if (res.status === 304) importer.counts.unchangedMonths!++;
-      done(res.status === 304 ? (known ?? null) : null);
+    if (res.status === 304) {
+      importer.counts.unchangedMonths!++;
+      done(known ?? null);
       saveSyncState(db, src.id, state);
+      continue;
+    }
+    if (res.status === 404) {
+      // Listed in the archive but not served: leave it unprocessed so the next sync asks again.
+      importer.counts.missingMonths = (importer.counts.missingMonths ?? 0) + 1;
+      log.warn({ month }, 'Chess.com listed a month it does not serve (will retry next sync)');
       continue;
     }
     if (!res.body || !Array.isArray(res.body.games)) throw internalError(`games of ${month}`, res.body);
@@ -434,6 +469,8 @@ export async function syncChesscom(ctx: JobContext<'sync'>, src: SourceRow): Pro
     importer.report(i + 1, toFetch.length, `${month.replace('/', '-')}: ${importer.counts.imported} new games so far`);
   }
   if (unknownCodes.size) importer.counts.unknownResultCodes = unknownCodes.size;
+  state.lastSyncStartedAt = startedAt;
+  delete state.fullJob;
   finishSync(db, src.id, state, warning, Date.now());
   importer.report(toFetch.length, toFetch.length, `${importer.counts.imported} new game${importer.counts.imported === 1 ? '' : 's'} imported (${seen} checked)`);
   return state;

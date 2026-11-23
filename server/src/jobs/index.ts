@@ -8,6 +8,8 @@
 //   - handlers.ts: registerJobHandler / JobContext — how profiles (pgnImport) and reference
 //     (referenceImport, broadcastMonth, broadcastRound) plug in their import handlers;
 //     RequeueJob lets a long handler yield its lane.
+//   - checkpoint.ts: loadJobCheckpoint / saveJobCheckpoint — a long handler's cursor, so a run
+//     that yields or is interrupted resumes where it stopped.
 // Internal to the jobs module: ops.ts (state transitions, admin lists), worker.ts (JobRunner),
 // scheduler.ts (Scheduler), notify.ts (wake-up on enqueue).
 // Workers and the scheduler start from routes/jobs.ts in onReady **only when
@@ -18,6 +20,7 @@ export {
   geoDedupeKey,
   getJob,
   JOB_COLUMNS,
+  jobWaitingAhead,
   JOB_PRIORITY,
   jobLabel,
   laneFor,
@@ -30,6 +33,7 @@ export {
 } from './queue.ts';
 export { getJobHandler, registerJobHandler, RequeueJob, type JobContext, type JobHandler } from './handlers.ts';
 export { notifyJobsQueued, onJobsQueued } from './notify.ts';
+export { clearJobCheckpoint, loadJobCheckpoint, saveJobCheckpoint } from './checkpoint.ts';
 export {
   cancelJob,
   claimNextJob,
