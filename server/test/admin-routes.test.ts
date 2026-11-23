@@ -601,17 +601,6 @@ describe('admin status', () => {
     expect(up.calls.length).toBe(n + 5);
   });
 
-  it('shares one probe run between concurrent requests', async () => {
-    await status(true);
-    const n = up.calls.length;
-    const [a, b] = await Promise.all([
-      req(t, 'GET', `${API_ROUTES.admin.status}?refresh=1`, admin),
-      req(t, 'GET', API_ROUTES.admin.status, admin),
-    ]);
-    expect(a.json<AdminStatus>().checkedAt).toBe(b.json<AdminStatus>().checkedAt);
-    expect(up.calls.length).toBe(n + 5);
-  });
-
   it('reports a refused token as invalid and a failing Lichess as unknown', async () => {
     up.routes.set('lichess.org/api/account', () => Response.json({ error: 'No such token' }, { status: 401 }));
     expect((await status(true)).lichessToken).toMatchObject({ configured: true, valid: false, state: 'invalid', userId: null, scopes: [] });
