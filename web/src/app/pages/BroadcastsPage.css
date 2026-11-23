@@ -1,0 +1,307 @@
+/* Broadcasts (`/broadcasts`) and a round's live boards (`/broadcasts/:roundId`). */
+
+.lib-note--warn {
+  border-color: color-mix(in srgb, var(--c-warn) 55%, transparent);
+  background: color-mix(in srgb, var(--c-warn) 8%, var(--c-bg-box));
+}
+
+.lib-note--warn > i {
+  color: var(--c-warn);
+}
+
+.lib-note strong {
+  display: block;
+  color: var(--c-font-clear);
+  margin-bottom: 0.3rem;
+}
+
+.lib-note p {
+  margin: 0 0 0.6rem;
+}
+
+.lib-note code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+/* --- Tournament list ------------------------------------------------------ */
+
+.lib-tours + .lib-tours {
+  margin-top: 1.75rem;
+}
+
+.lib-tours__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: 1rem;
+}
+
+.lib-tour {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 1rem 1.1rem;
+  border-radius: var(--box-radius);
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-zebra);
+  min-width: 0;
+}
+
+.lib-tour--live {
+  border-color: color-mix(in srgb, var(--c-live) 45%, var(--c-border));
+}
+
+.lib-tour__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+}
+
+.lib-tour__name {
+  font-family: var(--font-heading);
+  font-size: 1.2rem;
+  color: var(--c-font-clear);
+  overflow-wrap: anywhere;
+  margin-inline-end: auto;
+}
+
+a.lib-tour__name:hover {
+  color: var(--c-link-hover);
+}
+
+.lib-tour__info,
+.lib-tour__players {
+  color: var(--c-font-dim);
+  font-size: 0.9em;
+}
+
+.lib-tour__players {
+  color: var(--c-font);
+}
+
+.lib-tour__desc {
+  margin: 0;
+  color: var(--c-font-dim);
+  font-size: 0.88em;
+}
+
+.lib-tour__status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9em;
+}
+
+.lib-rounds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.2rem;
+}
+
+.lib-round {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 3px;
+  border: 1px solid var(--c-border);
+  color: var(--c-font-dim);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.lib-round:hover {
+  color: var(--c-font-clear);
+  border-color: color-mix(in oklab, var(--c-primary) 50%, var(--c-bg));
+  background: color-mix(in oklab, var(--c-primary) 12%, var(--c-bg));
+}
+
+.lib-round--done {
+  color: var(--c-font);
+}
+
+.lib-round--live {
+  color: var(--c-font-clear);
+  border-color: color-mix(in srgb, var(--c-live) 60%, transparent);
+}
+
+.lib-round--current,
+.lib-round--current:hover {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: var(--c-over);
+}
+
+.lib-rounds--compact {
+  margin-top: 1rem;
+}
+
+/* --- Round page ----------------------------------------------------------- */
+
+.lib-roundhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.8rem;
+}
+
+.lib-roundhead__name {
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: var(--c-font-clear);
+}
+
+.lib-roundhead__updated {
+  font-size: 0.85em;
+  margin-inline-start: auto;
+}
+
+.lib-roundhead__stale {
+  margin: 0.75rem 0 0;
+}
+
+.lib-back {
+  margin: 1rem 0 0;
+}
+
+.lib-boards-box {
+  padding: 0.6rem;
+}
+
+/* lila's multiboard grid (ui/analyse/css/study/panel/_multiboard.scss): two per row on phones. */
+.lib-boards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100% / 2, max(210px, 100% / 6)), 1fr));
+}
+
+.lib-mini {
+  display: block;
+  container-type: inline-size;
+  min-width: 0;
+  padding: 0.4em 0.3em;
+  border: 1px solid transparent;
+  border-radius: var(--box-radius);
+  color: var(--c-font);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.lib-mini:hover,
+.lib-mini:focus-visible {
+  background: color-mix(in oklab, var(--c-primary) 12%, var(--c-bg));
+  color: var(--c-font-clear);
+  border-color: color-mix(in oklab, var(--c-primary) 50%, var(--c-bg));
+}
+
+.lib-mini--opening {
+  cursor: progress;
+}
+
+/* lila ui/lib/css/component/_mini-game.scss */
+.lib-mini .mini-game__player {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+  padding: 3px 2px 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.lib-mini .mini-game__player:first-child {
+  padding: 0 2px 2px;
+}
+
+.lib-mini .mini-game__user {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lib-mini .mini-game__user .title-badge {
+  margin: 0;
+}
+
+.lib-mini .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-font-clear);
+}
+
+.lib-mini .rating {
+  font-family: var(--font-heading);
+  font-size: 0.9em;
+  color: var(--c-font-dim);
+}
+
+.lib-fed {
+  flex: 0 0 auto;
+  font-size: 0.68em;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--c-font-dimmer);
+  border: 1px solid var(--c-border);
+  border-radius: 2px;
+  padding: 0 0.2em;
+  line-height: 1.35;
+}
+
+.lib-mini .mini-game__clock {
+  flex: 0 0 auto;
+  font-family: var(--font-heading);
+  font-variant-numeric: tabular-nums;
+  padding-inline-start: 1ch;
+  color: var(--c-font-dim);
+}
+
+.lib-mini .mini-game__clock.clock--run {
+  color: var(--c-accent);
+}
+
+.lib-mini .mini-game__result {
+  flex: 0 0 auto;
+  font-weight: bold;
+  margin: 0 0.5ch 0 1ch;
+  color: var(--c-font-clear);
+}
+
+.lib-mini__board {
+  position: relative;
+  display: block;
+}
+
+.lib-mini__board cg-board {
+  box-shadow: none;
+}
+
+.lib-mini__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  font-weight: 500;
+  z-index: 3;
+}
+
+@container (width < 250px) {
+  .lib-mini .rating {
+    display: none;
+  }
+}
+
+@container (width < 190px) {
+  .lib-fed {
+    display: none;
+  }
+}
