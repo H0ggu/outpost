@@ -15,6 +15,7 @@ import * as asset from 'lila/site/asset';
 import Mousetrap from 'lila/site/mousetrap';
 import { redirect, reload, unload } from 'lila/site/reload';
 import sound from 'lila/site/sound';
+import { pubsub } from 'lila/lib/pubsub';
 import { alert } from 'lila/lib/view';
 import engines from 'virtual:studio-engines';
 import { lilaAssetUrl, SHIPPED_SOUNDS } from './assetUrl.ts';
@@ -111,3 +112,6 @@ function installSite(): Site {
 }
 
 installSite();
+// lila's site boot (site/src/browserSupport.ts) announces whether <dialog> needs a polyfill; every lila
+// dialog waits for it before opening. All browsers Outpost supports have <dialog>: no polyfill.
+pubsub.complete('polyfill.dialog', undefined);

@@ -125,10 +125,11 @@ export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<vo
     lilaRedraw();
     clearTimeout(dirtyTimer);
     dirtyTimer = setTimeout(() => {
-      ctrl.checkDirty();
+      ctrl.onBoardChange();
       ctrl.redraw();
     }, DIRTY_CHECK_MS);
   };
+  window.addEventListener('pagehide', () => ctrl.syncActive());
 
   ctrl.openExplorerFromQuery();
   mountChrome(ctrl, {

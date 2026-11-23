@@ -59,7 +59,11 @@ export async function opening(
     signal,
   });
 
-  if (!res.ok) throw new Error(await errorMessage(res));
+  if (!res.ok) {
+    const err = new Error(await errorMessage(res));
+    err.name = ''; // outpost: lila shows `error.toString()`; show just the server's sentence
+    throw err;
+  }
   await readNdJson<Partial<OpeningData>>(res, data => {
     data.isOpening = true;
     data.fen = opts.fen;

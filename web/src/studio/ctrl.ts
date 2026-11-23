@@ -103,8 +103,6 @@ export class StudioCtrl {
   readonly tabs: TabList;
   analyse?: AnalyseCtrl;
   files: FilesState;
-  /** Last live export of the shown game, refreshed by `checkDirty`. */
-  private livePgn?: string;
   private readonly dirtyIds = new Set<string>();
   /** Open dropdown of the Studio bar. */
   menu: 'file' | null = null;
@@ -244,7 +242,6 @@ export class StudioCtrl {
     tab.games[tab.current] = pgn;
     if (tab.baseline[tab.current] === null) tab.baseline[tab.current] = pgn;
     this.tabs.save();
-    this.livePgn = pgn;
     this.updateDirty(tab, pgn);
     this.syncUrl();
   }
@@ -327,8 +324,23 @@ export class StudioCtrl {
   checkDirty(): void {
     const tab = this.activeTab;
     if (!tab || !this.analyse) return;
-    this.livePgn = this.exportTree();
-    this.updateDirty(tab, this.livePgn);
+    this.updateDirty(tab, this.exportTree());
+  }
+
+  /**
+   * After lila changed the board (debounced): records the shown game, cursor and orientation in the
+   * active tab, so a reload of this browser tab restores them, and refreshes the unsaved markers.
+   */
+  onBoardChange(): void {
+    const tab = this.activeTab;
+    const a = this.analyse;
+    if (!tab || !a) return;
+    const pgn = this.exportTree();
+    tab.games[tab.current] = pgn;
+    tab.path = a.path;
+    tab.orientation = a.bottomColor();
+    this.tabs.save();
+    this.updateDirty(tab, pgn);
   }
 
   private updateDirty(active: StudioTab, livePgn: string): void {

@@ -969,6 +969,24 @@ body[data-studio-layout='focus'] .analyse__underboard {
   display: none;
 }
 
+/* On wide screens, board only uses lila's two-column grid, so no empty side column is left. */
+@media (min-width: 1259.3px) {
+  body[data-studio-layout='focus'] main.analyse {
+    grid-template-columns:
+      var(---col2-uniboard-width) var(---analyse-gauge-col)
+      minmax(calc(240px - var(---analyse-gauge-offset)), calc(400px - var(---analyse-gauge-offset)));
+    grid-template-rows: fit-content(0);
+    grid-template-areas:
+      'board      gauge tools'
+      'kb-move    .     controls'
+      'under      .     controls'
+      'under      .     round-training'
+      'under      .     side'
+      'chat       .     side'
+      'uchat      .     side';
+  }
+}
+
 /* Files first: a wider side column on wide screens, the panel above the moves on narrow ones. */
 @media (min-width: 1259.3px) {
   body[data-studio-layout='games'] {
