@@ -326,7 +326,7 @@ export interface LichessSyncOptions {
 }
 
 const gameParams = (): URLSearchParams =>
-  new URLSearchParams({ moves: 'true', opening: 'true', accuracy: 'true', clocks: 'false', evals: 'false', tags: 'false' });
+  new URLSearchParams({ moves: 'true', opening: 'true', accuracy: 'true', clocks: 'false', evals: 'false' });
 
 /** Runs a sync of one Lichess source (see the file header). Returns the stored state. */
 export async function syncLichess(ctx: JobContext<'sync'>, src: SourceRow, opts: LichessSyncOptions = {}): Promise<LichessSyncState> {

@@ -35,10 +35,10 @@ export const JOB_KINDS = [
   'broadcastRound',
   'rebuild',
 ] as const satisfies readonly JobKind[];
-// Compile-time check that the lists are complete.
-type Missing<A extends string, L extends readonly string[]> = Exclude<A, L[number]>;
-const _complete: [Missing<JobStatus, typeof JOB_STATUSES>, Missing<JobKind, typeof JOB_KINDS>] extends [never, never] ? true : never = true;
-void _complete;
+// Compile-time completeness check: a new JobStatus or JobKind missing from the lists fails typecheck.
+type Unlisted = Exclude<JobStatus, (typeof JOB_STATUSES)[number]> | Exclude<JobKind, (typeof JOB_KINDS)[number]>;
+const allListed: [Unlisted] extends [never] ? true : false = true;
+void allListed;
 
 /**
  * Atomically claims the next runnable job of a lane: `queued`, `run_after` reached, highest
@@ -242,6 +242,7 @@ export function listAdminJobs(db: Db, f: AdminJobsFilter): AdminJobsPage {
       ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
                CASE WHEN status = 'queued' THEN -priority ELSE 0 END,
                CASE WHEN status = 'queued' THEN created_at ELSE 0 END,
+               CASE WHEN status = 'queued' THEN id ELSE 0 END,
                COALESCE(finished_at, started_at, created_at) DESC,
                id DESC
       LIMIT ? OFFSET ?`,

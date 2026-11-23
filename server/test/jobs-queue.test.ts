@@ -5,6 +5,7 @@ import {
   getJob,
   getJobHandler,
   JOB_PRIORITY,
+  onJobsQueued,
   queuePosition,
   registerJobHandler,
   sourceSyncStatus,
@@ -87,5 +88,45 @@ describe('job queue', () => {
     await handler(ctx);
     expect(updates).toEqual([{ done: 1, total: 1, message: '2026-10' }]);
     expect(ctx.job.lane).toBe('local');
+  });
+});
+
+describe('job queue notifications and labels', () => {
+  let t: TestApp;
+  let other: TestApp;
+  beforeAll(async () => {
+    t = await makeTestApp();
+    other = await makeTestApp();
+  });
+  afterAll(async () => {
+    await t.close();
+    await other.close();
+  });
+
+  it('wakes the workers of the same database only, for new or re-prioritised work', () => {
+    const seen: string[] = [];
+    const elsewhere: string[] = [];
+    const off = onJobsQueued(t.db, lane => seen.push(lane));
+    const offOther = onJobsQueued(other.db, lane => elsewhere.push(lane));
+    const src = createSource(t.db, { kind: 'chesscom', key: 'notify-me' });
+    enqueueSync(t.db, src);
+    enqueueSync(t.db, src);
+    enqueueJob(t.db, 'pgnImport', { databaseId: 1, file: '/tmp/a.pgn', originalName: null });
+    expect(seen).toEqual(['chesscom', 'chesscom', 'local']);
+    expect(elsewhere).toEqual([]);
+    off();
+    enqueueJob(t.db, 'rebuild', { sourceId: src });
+    expect(seen).toHaveLength(3);
+    offOther();
+  });
+
+  it('labels geo jobs and lets a user adopt a system job', () => {
+    expect(enqueueJob(t.db, 'geo', { kind: 'chesscom', keys: [] }).label).toBe('Look up chesscom opponents (country, title)');
+    expect(enqueueJob(t.db, 'geo', { kind: 'lichess', keys: ['a', 'b'] }).label).toBe('Look up 2 lichess players');
+    const src = createSource(t.db, { kind: 'lichess', key: 'adopt-me' });
+    const system = enqueueSync(t.db, src);
+    const { userId } = createUserSession(t.db, { username: 'adopter' });
+    const mine = enqueueSync(t.db, src, { userId });
+    expect(mine).toMatchObject({ id: system.id, userId, priority: JOB_PRIORITY.manual });
   });
 });
