@@ -292,6 +292,41 @@
   color: var(--c-link-hover);
 }
 
+/* Theme choice for visitors (lila's dasher background picker, inline). */
+.site-theme {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.site-theme__label {
+  margin-right: 0.2rem;
+}
+
+.site-theme button {
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--c-font-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.site-theme button:hover {
+  color: var(--c-font-clear);
+  border-color: var(--c-border-light);
+}
+
+.site-theme button[aria-pressed='true'] {
+  border-color: var(--c-secondary);
+  background: var(--c-secondary);
+  color: #fff;
+}
+
 /* ---------------------------------------------------------------------------
  * Phones
  * ------------------------------------------------------------------------ */

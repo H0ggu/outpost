@@ -449,6 +449,7 @@
 
 .acc-radio {
   display: inline-flex;
+  align-self: flex-start;
   max-width: 100%;
   flex-wrap: wrap;
   gap: 3px;

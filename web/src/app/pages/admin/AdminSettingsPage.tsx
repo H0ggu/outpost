@@ -134,6 +134,10 @@ function SettingsForm({ settings, saved, onSaved }: { settings: AdminSettings; s
                 {draft.clearToken ? 'Will be removed' : token.set ? (token.masked ?? 'Set') : 'Not set'}
                 {token.fromEnv && <span className="acc-badge acc-badge--queued">env</span>}
               </span>
+              {token.fromEnv && (
+                // Read-only stand-in, so the label still names a control.
+                <input id="adm-token" className="form-control" value="Set in the environment" readOnly disabled aria-describedby="adm-token-help" />
+              )}
               {!token.fromEnv && (
                 <>
                   <input

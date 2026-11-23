@@ -25,6 +25,11 @@
   border-bottom: 1px solid var(--c-border);
 }
 
+.adm-section:last-of-type {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+
 .adm-section > h3 {
   font-size: 0.85rem;
   font-weight: 600;

@@ -7,7 +7,8 @@
  */
 import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router';
-import type { SessionInfo } from '@outpost/shared/api';
+import type { SessionInfo, ThemeName } from '@outpost/shared/api';
+import { applyTheme, storedTheme } from '../lichess/assets.ts';
 import { licon } from '../lichess/licon.ts';
 import { useLogout, useSession } from './api/hooks.ts';
 import { Button } from './components/index.ts';
@@ -140,6 +141,8 @@ export default function Layout() {
           </button>{' '}
           · Not affiliated with Lichess or Chess.com
         </p>
+        {/* Signed-in users pick the theme in Settings (saved with the account). */}
+        {info && !user && <ThemeSwitch />}
       </footer>
       {noticeOpen && (
         <Suspense fallback={null}>
@@ -147,6 +150,35 @@ export default function Layout() {
         </Suspense>
       )}
     </>
+  );
+}
+
+const THEME_LABELS: ReadonlyArray<[ThemeName, string]> = [
+  ['black', 'True black'],
+  ['dark', 'Dark'],
+  ['light', 'Light'],
+];
+
+/** Theme choice for visitors without an account, remembered in this browser. */
+function ThemeSwitch() {
+  const [theme, setTheme] = useState<ThemeName>(() => storedTheme() ?? 'black');
+  return (
+    <div className="site-theme" role="group" aria-label="Theme">
+      <span className="site-theme__label">Theme</span>
+      {THEME_LABELS.map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          aria-pressed={theme === value}
+          onClick={() => {
+            applyTheme(value);
+            setTheme(value);
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 

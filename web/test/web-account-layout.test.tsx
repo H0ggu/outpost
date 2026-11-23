@@ -77,6 +77,25 @@ describe('Layout', () => {
     expect(document.body.dataset.board).toBe('blue');
   });
 
+  it('lets visitors switch the theme from the footer (not signed-in users)', async () => {
+    api().on('GET', '/api/session', session(null));
+    const first = renderAt(<Page />, { layout: true });
+    const group = await screen.findByRole('group', { name: 'Theme' });
+    expect(within(group).getByRole('button', { name: 'True black' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(within(group).getByRole('button', { name: 'Light' }));
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(localStorage.getItem('outpost.theme')).toBe('light');
+    expect(within(group).getByRole('button', { name: 'Light' }).getAttribute('aria-pressed')).toBe('true');
+    first.unmount();
+
+    api()
+      .on('GET', '/api/session', session(user()))
+      .on('GET', '/api/jobs/mine', { jobs: [] });
+    renderAt(<Page />, { layout: true });
+    await screen.findByRole('button', { name: 'Account menu (alice)' });
+    expect(screen.queryByRole('group', { name: 'Theme' })).toBeNull();
+  });
+
   it('has a user menu with settings, admin (for admins) and sign out', async () => {
     let signedIn = true;
     api()
