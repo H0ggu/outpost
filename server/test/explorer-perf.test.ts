@@ -174,9 +174,10 @@ describe(`local explorer performance (50k-game profile, ${OTHER_GAMES.toLocaleSt
     expect(db.value<number>('SELECT games FROM explorer_db_stats WHERE database_id = ?', [refDb])).toBe(OTHER_GAMES);
   }, 3_600_000);
 
+  // Closing runs PRAGMA optimize and removes the data dir: long for a million-game DB.
   afterAll(async () => {
     await t?.close();
-  });
+  }, 600_000);
 
   /** Median of three timed requests (after a warm-up), and the last answer. */
   const timed = async (url: string): Promise<{ ms: number; body: string }> => {
