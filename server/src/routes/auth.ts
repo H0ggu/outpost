@@ -11,6 +11,7 @@ import {
 } from '@outpost/shared/api';
 import { z } from 'zod';
 import {
+  assertUsernameFree,
   changePasswordSchema,
   consumeInvite,
   findUserById,
@@ -22,7 +23,6 @@ import {
   loginSchema,
   prefsPatchSchema,
   recordTotpStep,
-  assertUsernameFree,
   setPasswordHash,
   setupSchema,
   signupSchema,

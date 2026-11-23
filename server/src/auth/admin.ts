@@ -174,13 +174,15 @@ const LAST_ADMIN = 'Outpost needs at least one active admin: promote or re-enabl
 
 /**
  * Applies an admin's change to a user (the new password, if any, already hashed).
- * Returns the updated user.
+ * Returns the updated user. `actorSession` (the admin's own session hash) survives when admins
+ * reset their own password, like `POST /api/me/password`.
  */
 export function updateUser(
   db: Db,
   actorId: Id,
   targetId: Id,
   patch: { role?: UserRole; disabled?: boolean; passwordHash?: string; resetTotp?: boolean },
+  actorSession: string | null = null,
 ): AdminUser {
   return db.tx(() => {
     const target = db.get<{ id: Id; role: UserRole; disabled: number }>('SELECT id, role, disabled FROM users WHERE id = ?', [targetId]);
@@ -203,7 +205,9 @@ export function updateUser(
         [targetId],
       );
     }
-    if (patch.disabled === true || patch.passwordHash !== undefined) revokeUserSessions(db, targetId);
+    if (patch.disabled === true || patch.passwordHash !== undefined) {
+      revokeUserSessions(db, targetId, { except: targetId === actorId ? actorSession : null });
+    }
     return getAdminUser(db, targetId)!;
   });
 }

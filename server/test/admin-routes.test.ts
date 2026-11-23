@@ -346,6 +346,16 @@ describe('admin users', () => {
     expect(t.db.get('SELECT totp_secret, totp_last_step FROM users WHERE id = ?', [bob.id])).toEqual({ totp_secret: null, totp_last_step: null });
   });
 
+  it("an admin resetting their own password keeps the current session only", async () => {
+    expect((await login(t, 'root')).statusCode).toBe(200);
+    expect(t.db.value('SELECT COUNT(*) FROM sessions WHERE user_id = ?', [root.id])).toBe(2);
+    const res = await patch(root.cookie, root.id, { password: 'my own new one' });
+    expect(res.statusCode).toBe(200);
+    expect(t.db.value('SELECT COUNT(*) FROM sessions WHERE user_id = ?', [root.id])).toBe(1);
+    expect((await sessionUser(t, root.cookie))?.username).toBe('root');
+    expect((await login(t, 'root', 'my own new one')).statusCode).toBe(200);
+  });
+
   it('validates the id and body; 404 for unknown users', async () => {
     expect((await patch(root.cookie, 999, { role: 'admin' })).statusCode).toBe(404);
     expect((await patch(root.cookie, 'abc', { role: 'admin' })).statusCode).toBe(400);

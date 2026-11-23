@@ -75,16 +75,15 @@ const adminRoutes: FastifyPluginAsync = async app => {
     const { id } = parseParams(userIdParams, req.params);
     const body = parseBody(updateUserSchema, req.body ?? {});
     const passwordHash = body.password === undefined ? undefined : await hashPassword(body.password);
-    const user = updateUser(db, req.user!.id, id, {
+    const changes = {
       ...(body.role !== undefined ? { role: body.role } : {}),
       ...(body.disabled !== undefined ? { disabled: body.disabled } : {}),
       ...(passwordHash !== undefined ? { passwordHash } : {}),
       ...(body.resetTotp !== undefined ? { resetTotp: body.resetTotp } : {}),
-    });
-    req.log.info(
-      { targetUserId: id, changes: Object.keys(body).filter(k => k !== 'password').concat(body.password ? ['password'] : []) },
-      'admin updated user',
-    );
+    };
+    const user = updateUser(db, req.user!.id, id, changes, req.sessionHash);
+    // Field names only, never the password.
+    req.log.info({ targetUserId: id, fields: Object.keys(body) }, 'admin updated user');
     return user;
   });
 
