@@ -5,7 +5,7 @@
  */
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
-import type { AdminUser, Invite, SessionUser } from '@outpost/shared/api';
+import { PASSWORD_MAX_LENGTH, type AdminUser, type Invite, type SessionUser } from '@outpost/shared/api';
 import { useSession } from '../../api/hooks.ts';
 import { Box, Button, EmptyState, ErrorBox, licon, Spinner, Table, useDocumentTitle, type Column } from '../../components/index.ts';
 import { paths } from '../../paths.ts';
@@ -21,7 +21,7 @@ import {
 } from '../account-hooks.ts';
 import { ConfirmDialog, Modal } from '../components/account/Dialog.tsx';
 import { relativeTime, useTimeFormat } from '../components/account/format.ts';
-import { describeError, Flash, formErrors, newPasswordProblems, PASSWORD_MIN_LENGTH, PasswordField } from '../components/account/forms.tsx';
+import { describeError, Flash, formErrors, newPasswordProblems, PASSWORD_HELP, PasswordField } from '../components/account/forms.tsx';
 import { inviteLink, inviteState } from '../components/account/invites.ts';
 import { CopyButton, RowMenu, type RowAction } from '../components/account/misc.tsx';
 import './admin.css';
@@ -296,7 +296,8 @@ function PasswordDialog({ user, onClose, onDone }: { user: AdminUser; onClose: (
           autoFocus
           value={password}
           onChange={e => setPassword(e.target.value)}
-          help={`At least ${PASSWORD_MIN_LENGTH} characters.`}
+          maxLength={PASSWORD_MAX_LENGTH}
+          help={PASSWORD_HELP}
           error={field.password}
         />
         <PasswordField label="Confirm password" autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} error={field.confirm} />

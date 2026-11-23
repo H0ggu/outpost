@@ -11,6 +11,7 @@
  */
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate } from 'react-router';
+import { PASSWORD_MAX_LENGTH, USERNAME_MAX_LENGTH } from '@outpost/shared/api';
 import { ApiError } from '../api/client.ts';
 import { useSession } from '../api/hooks.ts';
 import { Button, ButtonLink, EmptyState, ErrorBox, licon, Spinner } from '../components/index.ts';
@@ -20,10 +21,10 @@ import {
   Flash,
   formErrors,
   newPasswordProblems,
-  PASSWORD_MIN_LENGTH,
+  PASSWORD_HELP,
   PasswordField,
   TextField,
-  USERNAME_MAX_LENGTH,
+  USERNAME_HELP,
   usernameProblem,
 } from './components/account/forms.tsx';
 import { AuthCard } from './components/account/misc.tsx';
@@ -128,7 +129,7 @@ function SetupForm({ setup }: { setup: ReturnType<typeof useSetup> }) {
           maxLength={USERNAME_MAX_LENGTH}
           value={username}
           onChange={e => setUsername(e.target.value)}
-          help="2–30 letters, digits, _ or -."
+          help={USERNAME_HELP}
           error={field.username}
         />
         <PasswordField
@@ -137,7 +138,8 @@ function SetupForm({ setup }: { setup: ReturnType<typeof useSetup> }) {
           autoComplete="new-password"
           value={password}
           onChange={e => setPassword(e.target.value)}
-          help={`At least ${PASSWORD_MIN_LENGTH} characters. Turn on two-factor authentication in your settings afterwards.`}
+          maxLength={PASSWORD_MAX_LENGTH}
+          help={`${PASSWORD_HELP} Turn on two-factor authentication in your settings afterwards.`}
           error={field.password}
         />
         <PasswordField

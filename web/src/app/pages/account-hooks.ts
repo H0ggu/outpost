@@ -23,7 +23,6 @@ import {
   type BroadcastMonthsRequest,
   type ChangePasswordRequest,
   type CreateInviteRequest,
-  type EpochMs,
   type Id,
   type ImportJobsResponse,
   type ImportResponse,
@@ -42,6 +41,7 @@ import {
   type SignupRequest,
   type TotpDisableRequest,
   type TotpEnableRequest,
+  type TotpSetupRequest,
   type TotpSetupResponse,
   type UpdateAdminSettingsRequest,
   type UpdateAdminUserRequest,
@@ -180,21 +180,13 @@ export function useChangePassword() {
 }
 
 /**
- * Body of `POST /api/me/totp/setup`: the current password, so a session alone (a stolen cookie)
- * cannot put somebody else's authenticator on the account. The auth module's contract calls it
- * `TotpSetupRequest`; this is the same shape until that type is on main.
+ * `POST /api/me/totp/setup` with the current password (required, decision 8: a session alone, e.g. a
+ * stolen cookie, cannot put somebody else's authenticator on the account): a pending secret with
+ * its QR code. A missing password is 400 `validation`, a wrong one 403 `forbidden`.
  */
-export interface TotpSetupBody {
-  password: string;
-}
-
-/** `TotpSetupResponse` plus the optional fields newer servers add (a PNG QR code, the expiry). */
-export type TotpSetupResult = TotpSetupResponse & { qrDataUrl?: string; expiresAt?: EpochMs };
-
-/** `POST /api/me/totp/setup` with the current password: a pending secret with its QR code. */
 export function useTotpSetup() {
   return useMutation({
-    mutationFn: (body: TotpSetupBody) => api.post<TotpSetupResult>(API_ROUTES.me.totpSetup, body),
+    mutationFn: (body: TotpSetupRequest) => api.post<TotpSetupResponse>(API_ROUTES.me.totpSetup, body),
   });
 }
 

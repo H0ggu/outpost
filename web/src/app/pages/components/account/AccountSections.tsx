@@ -5,14 +5,14 @@
  */
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
-import type { SessionRow, SessionUser } from '@outpost/shared/api';
+import { PASSWORD_MAX_LENGTH, type SessionRow, type SessionUser, type TotpSetupResponse } from '@outpost/shared/api';
 import { ApiError } from '../../../api/client.ts';
 import { Box, Button, EmptyState, ErrorBox, licon, Spinner } from '../../../components/index.ts';
 import { paths } from '../../../paths.ts';
-import { useChangePassword, useMySessions, useRevokeSession, useTotpChange, useTotpSetup, type TotpSetupResult } from '../../account-hooks.ts';
+import { useChangePassword, useMySessions, useRevokeSession, useTotpChange, useTotpSetup } from '../../account-hooks.ts';
 import { ConfirmDialog } from './Dialog.tsx';
 import { describeUserAgent, relativeTime, useTimeFormat } from './format.ts';
-import { Flash, formErrors, newPasswordProblems, PASSWORD_MIN_LENGTH, PasswordField, TextField } from './forms.tsx';
+import { Flash, formErrors, newPasswordProblems, PASSWORD_HELP, PasswordField, TextField } from './forms.tsx';
 import { CopyButton } from './misc.tsx';
 import './account.css';
 
@@ -85,7 +85,8 @@ export function PasswordSection({ username }: { username: string }) {
           autoComplete="new-password"
           value={next}
           onChange={e => setNext(e.target.value)}
-          help={`At least ${PASSWORD_MIN_LENGTH} characters.`}
+          maxLength={PASSWORD_MAX_LENGTH}
+          help={PASSWORD_HELP}
           error={field.newPassword}
         />
         <PasswordField
@@ -135,7 +136,7 @@ export const groupSecret = (secret: string): string => secret.replace(/\s+/g, ''
 const svgDataUrl = (svg: string): string => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
 /** The QR code to show: the server's PNG when it sends one (a data: URL only), else its SVG. */
-export const totpQrSrc = (setup: TotpSetupResult): string =>
+export const totpQrSrc = (setup: TotpSetupResponse): string =>
   setup.qrDataUrl && /^data:image\/(png|svg\+xml|gif|webp)[;,]/.test(setup.qrDataUrl) ? setup.qrDataUrl : svgDataUrl(setup.qrSvg);
 
 export function TotpSection({ user }: { user: SessionUser }) {
@@ -176,15 +177,21 @@ export function TotpSection({ user }: { user: SessionUser }) {
 function TotpEnable({ username, onStart, onDone }: { username: string; onStart: () => void; onDone: () => void }) {
   const setup = useTotpSetup();
   const change = useTotpChange();
-  const [pending, setPending] = useState<TotpSetupResult | null>(null);
+  const [pending, setPending] = useState<TotpSetupResponse | null>(null);
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
 
   if (!pending) {
+    // A wrong password (403) or the server's validation of it (400, details.issues) goes next to
+    // the field; anything else (throttling, already on, network) is shown above the button.
+    const setupErrors = formErrors(setup.error, ['password']);
     const passwordRefused = wrongPassword(setup.error);
     const passwordError =
-      problem ?? (passwordRefused ? (setup.error instanceof ApiError && setup.error.message) || 'Wrong password.' : undefined);
+      problem ??
+      setupErrors.field.password ??
+      (passwordRefused ? (setup.error instanceof ApiError && setup.error.message) || 'Wrong password.' : undefined);
+    const showSetupError = setup.isError && !passwordRefused && !setupErrors.field.password;
     const start = (e: FormEvent) => {
       e.preventDefault();
       if (!password) {
@@ -217,7 +224,7 @@ function TotpEnable({ username, onStart, onDone }: { username: string; onStart: 
           help="Confirm it is you before adding an authenticator."
           error={passwordError}
         />
-        {setup.isError && !passwordRefused && <ErrorBox error={setup.error} title="Could not start the setup" />}
+        {showSetupError && <ErrorBox error={setup.error} title="Could not start the setup" />}
         <div className="acc-actions acc-actions--start">
           <Button type="submit" icon={licon.Padlock} disabled={setup.isPending}>
             {setup.isPending ? 'Preparing…' : 'Set up two-factor authentication'}

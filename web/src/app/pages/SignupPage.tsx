@@ -6,7 +6,7 @@
  */
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
-import type { SessionInfo } from '@outpost/shared/api';
+import { PASSWORD_MAX_LENGTH, USERNAME_MAX_LENGTH, type SessionInfo } from '@outpost/shared/api';
 import { ApiError } from '../api/client.ts';
 import { useSession } from '../api/hooks.ts';
 import { Button, ButtonLink, EmptyState, ErrorBox, licon, Spinner } from '../components/index.ts';
@@ -16,10 +16,10 @@ import {
   Flash,
   formErrors,
   newPasswordProblems,
-  PASSWORD_MIN_LENGTH,
+  PASSWORD_HELP,
   PasswordField,
   TextField,
-  USERNAME_MAX_LENGTH,
+  USERNAME_HELP,
   usernameProblem,
 } from './components/account/forms.tsx';
 import { AuthCard, useGoTo } from './components/account/misc.tsx';
@@ -140,7 +140,7 @@ function SignupForm({ info }: { info: SessionInfo }) {
           maxLength={USERNAME_MAX_LENGTH}
           value={username}
           onChange={e => setUsername(e.target.value)}
-          help="2–30 letters, digits, _ or -. Shown to the other users of this Outpost."
+          help={`${USERNAME_HELP} Shown to the other users of this Outpost.`}
           error={field.username}
         />
         <PasswordField
@@ -149,7 +149,8 @@ function SignupForm({ info }: { info: SessionInfo }) {
           autoComplete="new-password"
           value={password}
           onChange={e => setPassword(e.target.value)}
-          help={`At least ${PASSWORD_MIN_LENGTH} characters.`}
+          maxLength={PASSWORD_MAX_LENGTH}
+          help={PASSWORD_HELP}
           error={field.password}
         />
         <PasswordField
