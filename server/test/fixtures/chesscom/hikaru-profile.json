@@ -1,0 +1,17 @@
+{
+ "player_id": 15448422,
+ "@id": "https://api.chess.com/pub/player/hikaru",
+ "url": "https://www.chess.com/member/Hikaru",
+ "name": "Hikaru Nakamura",
+ "username": "hikaru",
+ "title": "GM",
+ "followers": 1438557,
+ "country": "https://api.chess.com/pub/country/US",
+ "location": "Florida",
+ "last_online": 1795352360,
+ "joined": 1389043258,
+ "status": "premium",
+ "is_streamer": true,
+ "verified": false,
+ "league": "Legend"
+}
