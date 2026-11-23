@@ -8,6 +8,7 @@ export {
   fetchTopBroadcasts,
   fetchTour,
   parseTop,
+  roundGamePgn,
   standardLastMove,
   toBroadcastRound,
   toBroadcastsResponse,

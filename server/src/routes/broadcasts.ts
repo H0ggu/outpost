@@ -14,6 +14,7 @@ import { parseParams } from '../http/validate.ts';
  *   - GET /api/broadcasts/tour/:tourId (BroadcastTour; cache 30 s)
  *   - GET /api/broadcasts/round/:roundId (BroadcastRound; server cache 5 s, clients poll every 10 s)
  *   - GET /api/broadcasts/round/:roundId.pgn (application/x-chess-pgn; cache 10 s)
+ *   - GET /api/broadcasts/round/:roundId/game/:gameId.pgn (one game of that PGN, cut on the server)
  *
  * All upstream calls carry the Lichess token (PR #21283): without one they fail with 503
  * `upstream_unavailable` (`details.reason: 'no_token'`); an unknown tour or round is 404 (and
@@ -24,6 +25,7 @@ import { parseParams } from '../http/validate.ts';
 const broadcastId = (name: string) => z.string().regex(BROADCAST_ID_RE, `${name} must be 8 letters or digits`);
 const tourParams = z.object({ tourId: broadcastId('tourId') });
 const roundParams = z.object({ roundId: broadcastId('roundId') });
+const gameParams = z.object({ roundId: broadcastId('roundId'), gameId: broadcastId('gameId') });
 
 /** Upstream failures → 502/503 API errors (404s are already HttpErrors). */
 async function proxied<T>(load: () => Promise<T>): Promise<T> {
@@ -53,6 +55,15 @@ const broadcastRoutes: FastifyPluginAsync = async app => {
     return reply
       .header('content-type', 'application/x-chess-pgn; charset=utf-8')
       .header('content-disposition', `attachment; filename="broadcast-${roundId}.pgn"`)
+      .send(pgn);
+  });
+
+  app.get(API_ROUTES.broadcastGamePgn(':roundId', ':gameId'), { preHandler: requireViewer, config: limited }, async (req, reply) => {
+    const { roundId, gameId } = parseParams(gameParams, req.params);
+    const pgn = await proxied(() => service.gamePgn(roundId, gameId));
+    return reply
+      .header('content-type', 'application/x-chess-pgn; charset=utf-8')
+      .header('content-disposition', `attachment; filename="broadcast-${roundId}-${gameId}.pgn"`)
       .send(pgn);
   });
 

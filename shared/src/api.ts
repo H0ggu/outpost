@@ -1873,6 +1873,8 @@ export const API_ROUTES = {
   broadcastTour: (tourId: string) => `/api/broadcasts/tour/${seg(tourId)}`,
   broadcastRound: (roundId: string) => `/api/broadcasts/round/${seg(roundId)}`,
   broadcastRoundPgn: (roundId: string) => `/api/broadcasts/round/${seg(roundId)}.pgn`,
+  /** One game (board) of a round as PGN, with clocks and comments; `gameId` is `BroadcastGamePreview.id`. */
+  broadcastGamePgn: (roundId: string, gameId: string) => `/api/broadcasts/round/${seg(roundId)}/game/${seg(gameId)}.pgn`,
 
   // Prep
   prep: '/api/prep',
@@ -1894,8 +1896,8 @@ export const explorerEndpoint = (origin: string, filtersSegment?: string): strin
 /**
  * Response of every state-changing endpoint (documentation; the server must match it).
  * `OkResponse` is `{ok:true}` with status 200. Non-JSON GETs: `games.pgn`, `export.pgn`,
- * `masters/pgn/:id` and `round/:roundId.pgn` stream `application/x-chess-pgn`; the player
- * explorer answers NDJSON (`ExplorerPlayerResponse`, one line).
+ * `masters/pgn/:id`, `round/:roundId.pgn` and `round/:roundId/game/:gameId.pgn` stream
+ * `application/x-chess-pgn`; the player explorer answers NDJSON (`ExplorerPlayerResponse`, one line).
  */
 export const MUTATION_RESPONSES = {
   'POST /api/setup': 'LoginResponse',

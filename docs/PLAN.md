@@ -282,6 +282,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 | GET | `/api/broadcasts/tour/:tourId` | |
 | GET | `/api/broadcasts/round/:roundId` | Game previews; clients poll every 10 s; server cache 5 s |
 | GET | `/api/broadcasts/round/:roundId.pgn` | |
+| GET | `/api/broadcasts/round/:roundId/game/:gameId.pgn` | One board's game, cut from the cached round PGN (no extra upstream call) |
 | GET/POST | `/api/prep` | |
 | GET/PUT/DELETE | `/api/prep/:id` | |
 | GET | `/api/prep/:id/report` | Per-opponent `{profile, asWhite:{topLines, worstLines}, asBlack:{…}, recentGames, activity, ratings}` |

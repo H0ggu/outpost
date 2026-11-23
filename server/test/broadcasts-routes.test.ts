@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { BroadcastRound, BroadcastsResponse, BroadcastTour } from '@outpost/shared/api';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { parseTop, standardLastMove, toBroadcastsResponse } from '../src/broadcasts/index.ts';
+import { parseTop, roundGamePgn, standardLastMove, toBroadcastsResponse } from '../src/broadcasts/index.ts';
 import { BROADCAST_LIMITS, RequestBudget, TtlCache } from '../src/broadcasts/service.ts';
 import { notFound } from '../src/http/errors.ts';
 import { autoImportFinishedRounds, startBroadcastAutoImport } from '../src/reference/autoImport.ts';
@@ -243,6 +243,51 @@ describe('broadcast routes', () => {
     expect(res.headers['content-disposition']).toBe('attachment; filename="broadcast-RndLV002.pgn"');
     expect(res.body).toBe(ROUND_PGN);
     expect(calls.map(c => c.url)).toEqual(['https://lichess.org/api/broadcast/round/RndLV002.pgn?clocks=true&comments=true']);
+  });
+
+  it('serves one game of the round PGN without another upstream call (decision 17)', async () => {
+    const res = await get('/api/broadcasts/round/RndLV002/game/Game0009.pgn');
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.headers['content-type']).toBe('application/x-chess-pgn; charset=utf-8');
+    expect(res.headers['content-disposition']).toBe('attachment; filename="broadcast-RndLV002-Game0009.pgn"');
+    expect(res.body.match(/^\[Event /gm)).toHaveLength(1);
+    expect(res.body).toContain('[GameURL "https://lichess.org/broadcast/outpost-test-open-2026/round-3/Rnd5EEEE/Game0009"]');
+    expect(res.body.endsWith('\n')).toBe(true);
+    expect(ROUND_PGN).toContain(res.body.trim());
+    // The first and the last game of the round, then an unknown one: the round PGN is fetched once.
+    const ids = [...ROUND_PGN.matchAll(/\[GameURL "[^"]*\/([A-Za-z0-9]{8})"\]/g)].map(m => m[1]!);
+    for (const id of [ids[0]!, ids.at(-1)!]) {
+      const one = await get(`/api/broadcasts/round/RndLV002/game/${id}.pgn`);
+      expect(one.statusCode).toBe(200);
+      expect(one.body).toContain(`/${id}"]`);
+      expect(one.body.match(/^\[Event /gm)).toHaveLength(1);
+    }
+    expect((await get('/api/broadcasts/round/RndLV002/game/Nowhere1.pgn')).statusCode).toBe(404);
+    expect((await get('/api/broadcasts/round/RndLV002/game/bad-id.pgn')).statusCode).toBe(400);
+    // At most the round PGN itself (it may still be cached from the test above).
+    expect(calls.length).toBeLessThanOrEqual(1);
+    expect(calls.every(c => c.url === 'https://lichess.org/api/broadcast/round/RndLV002.pgn?clocks=true&comments=true')).toBe(true);
+  });
+
+  it('cuts games by their URL tags, keeping clocks and comments', () => {
+    const pgn = [
+      '[Event "A"]',
+      '[Site "https://lichess.org/broadcast/t/r/Round001/GameAAAA"]',
+      '',
+      '1. e4 { [%clk 1:30:00] }',
+      '[%evp 1,2] 1-0',
+      '',
+      '',
+      '[Event "B"]',
+      '[GameURL "https://lichess.org/broadcast/t/r/Round001/GameBBBB"]',
+      '',
+      '1. d4 { [%clk 1:29:59] } *',
+    ].join('\r\n');
+    expect(roundGamePgn(pgn, 'GameAAAA')).toBe('[Event "A"]\n[Site "https://lichess.org/broadcast/t/r/Round001/GameAAAA"]\n\n1. e4 { [%clk 1:30:00] }\n[%evp 1,2] 1-0\n');
+    expect(roundGamePgn(pgn, 'GameBBBB')).toBe('[Event "B"]\n[GameURL "https://lichess.org/broadcast/t/r/Round001/GameBBBB"]\n\n1. d4 { [%clk 1:29:59] } *\n');
+    expect(roundGamePgn(pgn, 'Round001')).toBeNull();
+    expect(roundGamePgn(pgn, 'GameCCCC')).toBeNull();
+    expect(roundGamePgn('', 'GameAAAA')).toBeNull();
   });
 
   it('answers clean errors: unknown rounds 404 (remembered a minute), bad ids 400, upstream failures 502', async () => {

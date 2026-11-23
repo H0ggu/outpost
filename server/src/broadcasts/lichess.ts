@@ -533,6 +533,38 @@ export async function fetchRound(upstream: Upstream, roundId: string, signal?: A
   return r;
 }
 
+/** A PGN tag line, `[Name "value"]` (a `[%clk …]` comment line is not one). */
+const TAG_LINE = /^\[([A-Za-z0-9_]+)\s+"((?:[^"\\]|\\.)*)"\]\s*$/;
+/** Tags that hold a game's Lichess URL, which ends with its chapter (game) id. */
+const GAME_URL_TAGS = new Set(['GameURL', 'ChapterURL', 'Site']);
+
+/**
+ * The game of a round PGN export whose `GameURL` (or `ChapterURL` / `Site`) ends with
+ * `/<gameId>`, as written (clocks and comments kept), or null. A line scan over the tag sections;
+ * no moves are parsed, so a round of a few MB is cut in milliseconds.
+ */
+export function roundGamePgn(pgn: string, gameId: string): string | null {
+  const lines = pgn.replace(/^\uFEFF/, '').split(/\r?\n/);
+  let start = -1;
+  let found = false;
+  let inMoves = false;
+  for (let i = 0; i <= lines.length; i++) {
+    const tag = i < lines.length ? TAG_LINE.exec(lines[i]!) : null;
+    const end = i === lines.length || (tag !== null && inMoves);
+    if (end && found) return `${lines.slice(start, i).join('\n').trim()}\n`;
+    if (i === lines.length) break;
+    if (tag) {
+      if (start < 0 || inMoves) {
+        start = i;
+        found = false;
+        inMoves = false;
+      }
+      if (GAME_URL_TAGS.has(tag[1]!) && tag[2]!.replace(/[#?].*$/, '').endsWith(`/${gameId}`)) found = true;
+    } else if (start >= 0 && lines[i]!.trim() !== '') inMoves = true;
+  }
+  return null;
+}
+
 /** URL of a round's PGN export (clocks and comments off unless asked for). */
 export function roundPgnUrl(roundId: string, opts: { clocks?: boolean; comments?: boolean } = {}): string {
   const q = new URLSearchParams({ clocks: String(opts.clocks ?? false), comments: String(opts.comments ?? false) });

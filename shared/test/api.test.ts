@@ -16,6 +16,8 @@ describe('API_ROUTES', () => {
     expect(API_ROUTES.profile('magnus carlsen')).toBe('/api/profiles/magnus%20carlsen');
     expect(API_ROUTES.stats.gamesPgn('m')).toBe('/api/profiles/m/games.pgn');
     expect(API_ROUTES.broadcastRoundPgn('abcd1234')).toBe('/api/broadcasts/round/abcd1234.pgn');
+    expect(API_ROUTES.broadcastGamePgn('abcd1234', 'efgh5678')).toBe('/api/broadcasts/round/abcd1234/game/efgh5678.pgn');
+    expect(API_ROUTES.stats.events('m')).toBe('/api/profiles/m/events');
     expect(API_ROUTES.explorer.playerFiltered('Y29sb3I9d2hpdGU')).toBe('/api/explorer/f/Y29sb3I9d2hpdGU/player');
   });
 

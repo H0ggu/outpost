@@ -13,7 +13,7 @@
  */
 import type { BroadcastRound, BroadcastsResponse, BroadcastTour } from '@outpost/shared/api';
 import type { Db } from '../db/index.ts';
-import { HttpError, upstreamUnavailable } from '../http/errors.ts';
+import { HttpError, notFound, upstreamUnavailable } from '../http/errors.ts';
 import type { Upstream } from '../http/upstream.ts';
 import { updateFederations } from '../reference/players.ts';
 import {
@@ -24,6 +24,7 @@ import {
   federationsOf,
   MAX_ROUND_PGN_BYTES,
   readUpstreamText,
+  roundGamePgn,
   toBroadcastRound,
   toBroadcastsResponse,
   toBroadcastSummary,
@@ -194,5 +195,16 @@ export class BroadcastService {
         return readUpstreamText(res, 'round PGN', { max: MAX_ROUND_PGN_BYTES, signal });
       }),
     );
+  }
+
+  /**
+   * `GET /api/broadcasts/round/:roundId/game/:gameId.pgn`: one board of the round, cut from the
+   * cached round PGN (no extra upstream call), so opening a board downloads a few KB, not the
+   * whole round. 404 when the round has no such game.
+   */
+  async gamePgn(roundId: string, gameId: string): Promise<string> {
+    const game = roundGamePgn(await this.roundPgn(roundId), gameId);
+    if (game === null) throw notFound('Broadcast game not found');
+    return game;
   }
 }
