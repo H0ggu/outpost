@@ -35,6 +35,11 @@ function resultBar(move: OpeningMoveStats): VNode {
 function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
   if (!data.moves.length) return null;
   const sumTotal = data.white + data.black + data.draws;
+  // outpost: the player database says when each move was last played (the total: when this position was)
+  const lastPlayed =
+    ctrl.explorer.db() === 'player' && data.moves.some(m => m.lastPlayed)
+      ? ctrl.explorer.opts.outpost?.lastPlayed
+      : undefined;
   const movesWithCurrent =
     data.moves.length > 1
       ? [
@@ -45,16 +50,18 @@ function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
             draws: data.draws,
             uci: '',
             san: 'Σ',
+            lastPlayed: Math.max(0, ...data.moves.map(m => m.lastPlayed ?? 0)) || undefined,
           },
         ]
       : data.moves;
 
-  return hl('table.moves', [
+  return hl(`table.moves${lastPlayed ? '.with-last' : ''}`, [
     hl('thead', [
       hl('tr', [
         hl('th', i18n.site.move),
         hl('th', { attrs: { colspan: 2 } }, i18n.site.games),
         hl('th', i18n.site.whiteDrawBlack),
+        lastPlayed && hl('th.last', { attrs: { title: 'When the player last played the move' } }, 'Last'),
       ]),
     ]),
     hl(
@@ -71,11 +78,20 @@ function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
           hl('td', ((total / sumTotal) * 100).toFixed(0) + '%'),
           hl('td', bigNumberFormatter ? bigNumberFormatter.format(total) : numberFormat(total)),
           hl('td', { attrs: { title: moveStatsTooltip(ctrl, move) } }, resultBar(move)),
+          lastPlayed && showLastPlayed(lastPlayed, move.lastPlayed),
         ]);
       }),
     ),
   ]);
 }
+
+const showLastPlayed = (
+  format: (at: number) => { text: string; title: string },
+  at: number | undefined,
+): VNode => {
+  const cell = at ? format(at) : undefined;
+  return hl('td.last', cell ? { attrs: { title: cell.title } } : {}, cell?.text ?? '');
+};
 
 const bigNumberFormatter =
   window.Intl && Intl.NumberFormat ? new Intl.NumberFormat(displayLocale, { notation: 'compact' }) : null;
@@ -441,7 +457,10 @@ const showAnon = (ctrl: AnalyseCtrl) =>
   hl('div.data.empty', [
     explorerTitle(ctrl),
     hl('div.message', [
-      hl('p.explanation', i18n.site.youNeedAnAccountToDoThat),
+      hl(
+        'p.explanation',
+        ctrl.explorer.opts.outpost?.signInReason?.(ctrl.explorer.db()) ?? i18n.site.youNeedAnAccountToDoThat,
+      ),
       hl(
         'a.button.button-empty.text',
         { attrs: { ...dataIcon(licon.Checkmark), href: ctrl.explorer.opts.outpost?.loginUrl ?? '/signup' } },

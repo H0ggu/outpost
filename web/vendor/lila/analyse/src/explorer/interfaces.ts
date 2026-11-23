@@ -22,9 +22,11 @@ export interface ExplorerOutpost {
   searchPlayers(term: string): Promise<ExplorerPlayerChoice[]>;
   suggestedPlayers(onLoad?: () => void): ExplorerPlayerChoice[]; // onLoad: they arrived later
   openGame(db: ExplorerDb, id: string, orientation: Color, fen: FEN): void;
-  requiresAuth(): boolean;
+  requiresAuth(db: ExplorerDb): boolean; // db needs a signed-in user here
+  signInReason?(db: ExplorerDb): string | undefined; // why, when only some databases need one
   loginUrl: string;
   unavailable?(db: ExplorerDb): string | undefined; // why the server can't serve db (e.g. Lichess without a token)
+  lastPlayed?(at: number): { text: string; title: string }; // a player move's "last played" cell
 }
 
 export interface ExplorerPlayerChoice {
@@ -114,6 +116,7 @@ export interface OpeningMoveStats extends MoveStats {
   performance?: number;
   game?: OpeningGame;
   opening?: Opening;
+  lastPlayed?: number; // outpost: player database, epoch ms
 }
 export interface TablebaseMoveStats extends MoveStats {
   dtz?: number;

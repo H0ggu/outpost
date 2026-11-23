@@ -6,7 +6,10 @@
  *   - player → `/api/explorer/player` with `player=<profile slug | lichess:… | chesscom:… | db:… | ref:…>`,
  *     or `/api/explorer/f/<filters>/player` for the profile the Studio was opened with (?filters=);
  *   - tablebase → `/api/tablebase/<variant>`;
- *   - game links open in Outpost (stored games, masters PGN) or on lichess.org (Lichess database games).
+ *   - game links open in Outpost (stored games, masters PGN) or on lichess.org (Lichess database games);
+ *   - with anonymous browsing on, a visitor reaches the local databases and masters, but the Lichess one
+ *     (relayed with the server's token, `requireUser`) asks them to sign in;
+ *   - the player database's move rows say when each move was last played (`ExplorerPlayerMove.lastPlayed`).
  */
 import {
   API_ROUTES,
@@ -14,6 +17,7 @@ import {
   SEARCH_QUERY_MIN_LENGTH,
   type Color,
   type DatabaseInfo,
+  type EpochMs,
   type DatabasesResponse,
   type ProfileHeader,
   type ProfileListResponse,
@@ -46,10 +50,18 @@ export interface ExplorerOpts {
     searchPlayers(term: string): Promise<ExplorerPlayerChoice[]>;
     suggestedPlayers(onLoad?: () => void): ExplorerPlayerChoice[];
     openGame(db: ExplorerDb, id: string, orientation: Color, fen: string): void;
-    requiresAuth(): boolean;
+    requiresAuth(db: ExplorerDb): boolean;
+    signInReason(db: ExplorerDb): string | undefined;
     readonly loginUrl: string;
     unavailable(db: ExplorerDb): string | undefined;
+    lastPlayed(at: EpochMs): LastPlayedCell;
   };
+}
+
+/** The player explorer's "last played" cell: a compact age that fits the move table, and the date. */
+export interface LastPlayedCell {
+  text: string;
+  title: string;
 }
 
 /** What the explorer needs from the rest of the Studio. */
@@ -84,6 +96,29 @@ export function fallbackPlayerLabel(spec: string): string {
     case 'ref':
       return `FIDE ${p.fideId}`;
   }
+}
+
+const DAY_MS = 86_400_000;
+const lastPlayedDate = new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' });
+
+/**
+ * "5d", "3w", "4mo", "2y" (ChessMonitor's per-move "last played", narrow enough for lila's move
+ * table), with the date and the age in words as its tooltip.
+ */
+export function lastPlayedCell(at: EpochMs, now: EpochMs = Date.now()): LastPlayedCell {
+  const days = Math.max(0, Math.floor((now - at) / DAY_MS));
+  const [n, short, unit]: [number, string, string] =
+    days < 1
+      ? [0, 'today', '']
+      : days < 14
+        ? [days, 'd', 'day']
+        : days < 61
+          ? [Math.floor(days / 7), 'w', 'week']
+          : days < 365
+            ? [Math.floor(days / 30.44), 'mo', 'month']
+            : [Math.max(1, Math.floor(days / 365.25)), 'y', 'year'];
+  const ago = unit ? `${n} ${unit}${n === 1 ? '' : 's'} ago` : 'today';
+  return { text: unit ? `${n}${short}` : short, title: `Last played ${lastPlayedDate.format(at)} (${ago})` };
 }
 
 /** Builds lila's `ExplorerOpts` for the Studio. */
@@ -190,7 +225,16 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
         return suggestions;
       },
       openGame: deps.openGame,
-      requiresAuth: () => !deps.signedIn() && !deps.anonymousBrowsing(),
+      // Anonymous browsing (PLAN §10) opens the local databases and the masters proxy, not the Lichess
+      // database: the server relays it with its token for signed-in users only (`requireUser`). Without
+      // a token, `unavailable` explains that instead, since signing in wouldn't help.
+      requiresAuth: db =>
+        !deps.signedIn() && (!deps.anonymousBrowsing() || (db === 'lichess' && deps.hasLichessToken() !== false)),
+      signInReason: db =>
+        db === 'lichess' && deps.anonymousBrowsing()
+          ? "The Lichess database is relayed with this server's Lichess API token, so it needs an account here."
+          : undefined,
+      lastPlayed: at => lastPlayedCell(at),
       get loginUrl() {
         return deps.loginUrl();
       },

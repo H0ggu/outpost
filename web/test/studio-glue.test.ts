@@ -246,6 +246,8 @@ describe('vendored lila tree', () => {
     expect(files.get('analyse/src/ctrl.ts')).toContain('this.opts.outpost.changeFen(fen)');
     expect(files.get('analyse/src/keyboard.ts')).toContain('keyboardHelpHtml()');
     expect(files.get('analyse/src/explorer/explorerXhr.ts')).toContain("opts.db === 'player' && opts.playerEndpoint");
+    expect(files.get('analyse/src/explorer/explorerCtrl.ts')).toContain('this.opts.outpost.requiresAuth(this.config.data.db())');
+    expect(files.get('analyse/src/explorer/explorerView.ts')).toContain('ctrl.explorer.opts.outpost?.lastPlayed');
     expect(files.get('analyse/src/pgnImport.ts')).toContain('export const glyphOfNag');
     expect(files.get('analyse/src/view/actionMenu.ts')).toContain('!ctrl.opts.outpost');
     expect(files.get('lib/src/ceval/engines/engines.ts')).not.toContain('ThreadedEngine(');

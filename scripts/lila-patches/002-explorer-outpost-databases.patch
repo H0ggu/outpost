@@ -135,7 +135,7 @@ index 2079cd4..54c66bb 100644
                name && ctrl.data.playerName.previous().includes(name)
                  ? h('button.remove', {
 diff --git a/analyse/src/explorer/explorerCtrl.ts b/analyse/src/explorer/explorerCtrl.ts
-index 01454da..5b6d3d7 100644
+index 01454da..3da5e43 100644
 --- a/analyse/src/explorer/explorerCtrl.ts
 +++ b/analyse/src/explorer/explorerCtrl.ts
 @@ -71,7 +71,8 @@ export default class ExplorerCtrl {
@@ -148,20 +148,23 @@ index 01454da..5b6d3d7 100644
        else if (parts[1]?.match(/[A-Za-z0-9_-]{2,30}/)) {
          this.config.selectPlayer(parts[1]);
          this.config.data.color(parts[2] === 'black' ? 'black' : 'white');
-@@ -82,7 +83,11 @@ export default class ExplorerCtrl {
+@@ -82,7 +83,14 @@ export default class ExplorerCtrl {
  
    isAuth = () => defined(myUserId());
  
 -  requiresAuth = () => this.config.data.db() !== 'masters' && !this.isAuth();
++  // outpost: per database (anonymous browsing reaches the local ones, not the token-relayed Lichess one)
 +  requiresAuth = () =>
-+    this.opts.outpost ? this.opts.outpost.requiresAuth() : this.config.data.db() !== 'masters' && !this.isAuth();
++    this.opts.outpost
++      ? this.opts.outpost.requiresAuth(this.config.data.db())
++      : this.config.data.db() !== 'masters' && !this.isAuth();
 +
 +  // outpost: why the server can't serve the current database (e.g. Lichess without an API token)
 +  unavailable = (): string | undefined => this.opts.outpost?.unavailable?.(this.config.data.db());
  
    reload = () => {
      this.directInteraction = true;
-@@ -93,6 +98,7 @@ export default class ExplorerCtrl {
+@@ -93,6 +101,7 @@ export default class ExplorerCtrl {
  
    private readonly baseXhrOpening = () => ({
      endpoint: this.opts.endpoint,
@@ -169,7 +172,7 @@ index 01454da..5b6d3d7 100644
      config: this.config.data,
    });
  
-@@ -178,7 +184,7 @@ export default class ExplorerCtrl {
+@@ -178,7 +187,7 @@ export default class ExplorerCtrl {
      this.gameMenu(null);
      const node = this.root.node;
      if (
@@ -179,10 +182,64 @@ index 01454da..5b6d3d7 100644
      )
        this.cache[node.fen] = this.empty;
 diff --git a/analyse/src/explorer/explorerView.ts b/analyse/src/explorer/explorerView.ts
-index 5a4b85f..3baf044 100644
+index 5a4b85f..6c042cd 100644
 --- a/analyse/src/explorer/explorerView.ts
 +++ b/analyse/src/explorer/explorerView.ts
-@@ -108,7 +108,7 @@ const showResult = (winner?: Color): VNode =>
+@@ -35,6 +35,11 @@ function resultBar(move: OpeningMoveStats): VNode {
+ function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
+   if (!data.moves.length) return null;
+   const sumTotal = data.white + data.black + data.draws;
++  // outpost: the player database says when each move was last played (the total: when this position was)
++  const lastPlayed =
++    ctrl.explorer.db() === 'player' && data.moves.some(m => m.lastPlayed)
++      ? ctrl.explorer.opts.outpost?.lastPlayed
++      : undefined;
+   const movesWithCurrent =
+     data.moves.length > 1
+       ? [
+@@ -45,16 +50,18 @@ function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
+             draws: data.draws,
+             uci: '',
+             san: 'Σ',
++            lastPlayed: Math.max(0, ...data.moves.map(m => m.lastPlayed ?? 0)) || undefined,
+           },
+         ]
+       : data.moves;
+ 
+-  return hl('table.moves', [
++  return hl(`table.moves${lastPlayed ? '.with-last' : ''}`, [
+     hl('thead', [
+       hl('tr', [
+         hl('th', i18n.site.move),
+         hl('th', { attrs: { colspan: 2 } }, i18n.site.games),
+         hl('th', i18n.site.whiteDrawBlack),
++        lastPlayed && hl('th.last', { attrs: { title: 'When the player last played the move' } }, 'Last'),
+       ]),
+     ]),
+     hl(
+@@ -71,12 +78,21 @@ function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
+           hl('td', ((total / sumTotal) * 100).toFixed(0) + '%'),
+           hl('td', bigNumberFormatter ? bigNumberFormatter.format(total) : numberFormat(total)),
+           hl('td', { attrs: { title: moveStatsTooltip(ctrl, move) } }, resultBar(move)),
++          lastPlayed && showLastPlayed(lastPlayed, move.lastPlayed),
+         ]);
+       }),
+     ),
+   ]);
+ }
+ 
++const showLastPlayed = (
++  format: (at: number) => { text: string; title: string },
++  at: number | undefined,
++): VNode => {
++  const cell = at ? format(at) : undefined;
++  return hl('td.last', cell ? { attrs: { title: cell.title } } : {}, cell?.text ?? '');
++};
++
+ const bigNumberFormatter =
+   window.Intl && Intl.NumberFormat ? new Intl.NumberFormat(displayLocale, { notation: 'compact' }) : null;
+ 
+@@ -108,7 +124,7 @@ const showResult = (winner?: Color): VNode =>
  function showGameTable(ctrl: AnalyseCtrl, fen: FEN, title: string, games: OpeningGame[]): MaybeVNode {
    if (!ctrl.explorer.withGames || !games.length) return null;
    const openedId = ctrl.explorer.gameMenu();
@@ -191,7 +248,7 @@ index 5a4b85f..3baf044 100644
    return hl('table.games', [
      hl('thead', [hl('tr', [hl('th.title', { attrs: { colspan: isMasters ? 4 : 5 } }, title)])]),
      hl(
-@@ -157,6 +157,8 @@ function showGameTable(ctrl: AnalyseCtrl, fen: FEN, title: string, games: Openin
+@@ -157,6 +173,8 @@ function showGameTable(ctrl: AnalyseCtrl, fen: FEN, title: string, games: Openin
  
  function openGame(ctrl: AnalyseCtrl, gameId: string) {
    const orientation = ctrl.chessground.state.orientation;
@@ -200,7 +257,7 @@ index 5a4b85f..3baf044 100644
    const fenParam = ctrl.node.ply > 0 ? '?fen=' + ctrl.node.fen : '';
    const prefix = ctrl.explorer.db() === 'masters' ? '/import/master/' : '/game/';
    const url = prefix + gameId + '/' + orientation + fenParam;
-@@ -170,7 +172,7 @@ function gameActions(ctrl: AnalyseCtrl, game: OpeningGame): VNode {
+@@ -170,7 +188,7 @@ function gameActions(ctrl: AnalyseCtrl, game: OpeningGame): VNode {
      ctrl.redraw();
    };
    return hl('tr', { key: game.id + '-m' }, [
@@ -209,7 +266,7 @@ index 5a4b85f..3baf044 100644
        hl(
          'div.game_title',
          `${playerText(game.white, false)} - ${playerText(game.black, false)}, ${showResult(game.winner).text}, ${game.year}`,
-@@ -238,7 +240,9 @@ const openingTitle = (ctrl: AnalyseCtrl, data?: OpeningData) => {
+@@ -238,7 +256,9 @@ const openingTitle = (ctrl: AnalyseCtrl, data?: OpeningData) => {
      return hl(
        'div.title',
        { attrs: { title } },
@@ -220,7 +277,7 @@ index 5a4b85f..3baf044 100644
      );
    }
    return hl('div.title', showTitle(ctrl.data.game.variant));
-@@ -303,13 +307,20 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+@@ -303,13 +323,20 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
    const db = explorer.db();
    const data = explorer.current();
    const queuePosition = data && isOpening(data) && data.queuePosition;
@@ -244,7 +301,7 @@ index 5a4b85f..3baf044 100644
          hook: bind(
            'click',
            () => {
-@@ -321,7 +332,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+@@ -321,7 +348,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
            explorer.reload,
          ),
        },
@@ -253,7 +310,7 @@ index 5a4b85f..3baf044 100644
      );
    const active = (nodes: LooseVNodes, title: string, icon: LiconValue) =>
      hl(
-@@ -335,16 +346,20 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+@@ -335,16 +362,20 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
  
    return hl('div.explorer-title', [
      db === 'masters'
@@ -279,7 +336,7 @@ index 5a4b85f..3baf044 100644
                ` ${i18n.site[`as${capitalize(config.data.color())}`]}`,
                explorer.isIndexing() &&
                  !configOpened &&
-@@ -359,7 +374,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+@@ -359,7 +390,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
              i18n.site.switchSides,
              licon.User,
            )
@@ -288,7 +345,7 @@ index 5a4b85f..3baf044 100644
        : hl(
            'button.button-link.player',
            {
-@@ -406,6 +421,22 @@ const showFailing = (ctrl: AnalyseCtrl) =>
+@@ -406,15 +437,34 @@ const showFailing = (ctrl: AnalyseCtrl) =>
      ]),
    ]);
  
@@ -311,8 +368,12 @@ index 5a4b85f..3baf044 100644
  const showAnon = (ctrl: AnalyseCtrl) =>
    hl('div.data.empty', [
      explorerTitle(ctrl),
-@@ -413,8 +444,8 @@ const showAnon = (ctrl: AnalyseCtrl) =>
-       hl('p.explanation', i18n.site.youNeedAnAccountToDoThat),
+     hl('div.message', [
+-      hl('p.explanation', i18n.site.youNeedAnAccountToDoThat),
++      hl(
++        'p.explanation',
++        ctrl.explorer.opts.outpost?.signInReason?.(ctrl.explorer.db()) ?? i18n.site.youNeedAnAccountToDoThat,
++      ),
        hl(
          'a.button.button-empty.text',
 -        { attrs: { ...dataIcon(licon.Checkmark), href: '/signup' } },
@@ -322,7 +383,7 @@ index 5a4b85f..3baf044 100644
        ),
        closeButton(ctrl),
      ]),
-@@ -429,19 +460,25 @@ export default function (ctrl: AnalyseCtrl): MaybeVNode {
+@@ -429,19 +479,25 @@ export default function (ctrl: AnalyseCtrl): MaybeVNode {
  
    const data = explorer.current();
    const configOpened = explorer.config.data.open();
@@ -411,7 +472,7 @@ index 60bb1e4..aad8c3d 100644
    endpoint: string,
    variant: VariantKey,
 diff --git a/analyse/src/explorer/interfaces.ts b/analyse/src/explorer/interfaces.ts
-index 8777441..b26e016 100644
+index 8777441..3f7768a 100644
 --- a/analyse/src/explorer/interfaces.ts
 +++ b/analyse/src/explorer/interfaces.ts
 @@ -3,7 +3,7 @@ export interface Hovering {
@@ -423,7 +484,7 @@ index 8777441..b26e016 100644
  export type ExplorerMode = 'casual' | 'rated';
  export type ExplorerSpeed = Speed;
  
-@@ -11,6 +11,26 @@ export interface ExplorerOpts {
+@@ -11,6 +11,28 @@ export interface ExplorerOpts {
    endpoint: string;
    tablebaseEndpoint: string;
    showRatings: boolean;
@@ -438,9 +499,11 @@ index 8777441..b26e016 100644
 +  searchPlayers(term: string): Promise<ExplorerPlayerChoice[]>;
 +  suggestedPlayers(onLoad?: () => void): ExplorerPlayerChoice[]; // onLoad: they arrived later
 +  openGame(db: ExplorerDb, id: string, orientation: Color, fen: FEN): void;
-+  requiresAuth(): boolean;
++  requiresAuth(db: ExplorerDb): boolean; // db needs a signed-in user here
++  signInReason?(db: ExplorerDb): string | undefined; // why, when only some databases need one
 +  loginUrl: string;
 +  unavailable?(db: ExplorerDb): string | undefined; // why the server can't serve db (e.g. Lichess without a token)
++  lastPlayed?(at: number): { text: string; title: string }; // a player move's "last played" cell
 +}
 +
 +export interface ExplorerPlayerChoice {
@@ -450,3 +513,11 @@ index 8777441..b26e016 100644
  }
  
  export interface ExplorerData {
+@@ -94,6 +116,7 @@ export interface OpeningMoveStats extends MoveStats {
+   performance?: number;
+   game?: OpeningGame;
+   opening?: Opening;
++  lastPlayed?: number; // outpost: player database, epoch ms
+ }
+ export interface TablebaseMoveStats extends MoveStats {
+   dtz?: number;

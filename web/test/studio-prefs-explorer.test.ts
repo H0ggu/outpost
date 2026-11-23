@@ -5,7 +5,7 @@
 import { DEFAULT_PREFS } from '@outpost/shared/api';
 import { encodeFiltersSegment } from '@outpost/shared/filters';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fallbackPlayerLabel, makeExplorerOpts, type ExplorerDeps } from '../src/studio/explorer.ts';
+import { fallbackPlayerLabel, lastPlayedCell, makeExplorerOpts, type ExplorerDeps } from '../src/studio/explorer.ts';
 import { applyPieces, applyStudioPrefs, localPrefs, PREFS_STORAGE_KEY, sanitizePrefs, savePrefs } from '../src/studio/prefs.ts';
 
 const jsonResponse = (body: unknown, status = 200) =>
@@ -98,16 +98,49 @@ describe('explorer options', () => {
     expect(o.outpost.loginUrl).toBe('/login?next=%2Fstudio');
   });
 
-  it('needs a session unless anonymous browsing is on', () => {
+  it('needs a session unless anonymous browsing is on, and always for the Lichess database', () => {
     let signedIn = false;
     let anon = false;
-    const o = makeExplorerOpts(deps({ signedIn: () => signedIn, anonymousBrowsing: () => anon }));
-    expect(o.outpost.requiresAuth()).toBe(true);
+    let token: boolean | undefined = true;
+    const o = makeExplorerOpts(
+      deps({ signedIn: () => signedIn, anonymousBrowsing: () => anon, hasLichessToken: () => token }),
+    );
+    const dbs = ['masters', 'reference', 'player', 'lichess'] as const;
+    for (const db of dbs) expect(o.outpost.requiresAuth(db)).toBe(true);
+    expect(o.outpost.signInReason('lichess')).toBeUndefined(); // lila's own "you need an account"
     anon = true;
-    expect(o.outpost.requiresAuth()).toBe(false);
+    // the server relays the Lichess database with its token for signed-in users only (requireUser)
+    for (const db of ['masters', 'reference', 'player'] as const) expect(o.outpost.requiresAuth(db)).toBe(false);
+    expect(o.outpost.requiresAuth('lichess')).toBe(true);
+    expect(o.outpost.signInReason('lichess')).toMatch(/Lichess API token, so it needs an account/);
+    expect(o.outpost.signInReason('masters')).toBeUndefined();
+    token = undefined; // unknown: the route still needs a session
+    expect(o.outpost.requiresAuth('lichess')).toBe(true);
+    token = false; // no token: signing in wouldn't help, `unavailable` says why
+    expect(o.outpost.requiresAuth('lichess')).toBe(false);
+    expect(o.outpost.unavailable('lichess')).toMatch(/none is set/);
     anon = false;
     signedIn = true;
-    expect(o.outpost.requiresAuth()).toBe(false);
+    token = true;
+    for (const db of dbs) expect(o.outpost.requiresAuth(db)).toBe(false);
+  });
+
+  it('formats the player database’s last-played cell compactly, with the date as its title', () => {
+    const now = Date.UTC(2026, 10, 23, 12);
+    const day = 86_400_000;
+    const cell = (daysAgo: number) => lastPlayedCell(now - daysAgo * day, now);
+    expect(cell(0)).toMatchObject({ text: 'today', title: expect.stringMatching(/^Last played Nov 2[34], 2026 \(today\)$/) });
+    expect(cell(-2).text).toBe('today'); // a clock ahead of ours
+    expect(cell(1)).toMatchObject({ text: '1d', title: expect.stringMatching(/\(1 day ago\)$/) });
+    expect(cell(13).text).toBe('13d');
+    expect(cell(14)).toMatchObject({ text: '2w', title: expect.stringMatching(/\(2 weeks ago\)$/) });
+    expect(cell(60).text).toBe('8w');
+    expect(cell(61).text).toBe('2mo');
+    expect(cell(364)).toMatchObject({ text: '11mo', title: expect.stringMatching(/\(11 months ago\)$/) });
+    expect(cell(365)).toMatchObject({ text: '1y', title: expect.stringMatching(/\(1 year ago\)$/) });
+    expect(cell(3 * 365 + 1).text).toBe('3y');
+    const o = makeExplorerOpts(deps());
+    expect(o.outpost.lastPlayed(Date.now() - 3 * day).text).toBe('3d');
   });
 
   it('explains the Lichess database instead of asking for it when the server has no token', () => {

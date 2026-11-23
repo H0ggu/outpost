@@ -998,6 +998,27 @@ body #top {
   font-size: 1.05em;
 }
 
+/* Player database: when each move was last played, after the result bar (patch 002). lila gives the
+   last cell the row's spare width; the bar keeps it. */
+.explorer-box .moves.with-last td:nth-child(4) {
+  width: 100%;
+  padding-inline-end: 0;
+}
+
+.explorer-box .moves.with-last th.last,
+.explorer-box .moves.with-last td.last {
+  width: auto;
+  padding-inline: 0.6em 7px;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.explorer-box .moves.with-last td.last {
+  font-size: 0.75em;
+  color: var(--c-font-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* -------------------------------------------------------------------------
  * Layout presets (body[data-studio-layout], PLAN §8.4)
  * ---------------------------------------------------------------------- */
