@@ -27,13 +27,18 @@ import { forbidden, notFound } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import { getJob } from '../jobs/index.ts';
 import type { ViewableDatabase } from '../profiles/access.ts';
+import { cancelQueuedSyncs } from '../profiles/service.ts';
 import { DB_GAME_ROW_COLUMNS, likeContains, toDbGameRow, type DbGameRowRecord } from '../stats/index.ts';
 import { dropDatabaseUploads } from './import.ts';
 import { gameToPgn, PGN_GAME_COLUMNS, type PgnGameRow } from './pgnWriter.ts';
 
 export {
+  checkImportAllowed,
   enqueuePgnImport,
   importSummary,
+  MAX_GAMES_PER_USER,
+  MAX_PASTE_BYTES,
+  MAX_PENDING_IMPORTS,
   MAX_PGN_BYTES,
   runPgnImport,
   saveUploadStream,
@@ -121,6 +126,7 @@ function importJobs(db: Db, databaseId: Id): { importJob: JobInfo | null; lastIm
 }
 
 function toInfo(db: Db, row: DatabaseRow, viewer: AuthUser | null): DatabaseInfo {
+  const canEdit = canEditRow(row, viewer);
   return {
     id: row.id,
     name: row.name,
@@ -131,8 +137,9 @@ function toInfo(db: Db, row: DatabaseRow, viewer: AuthUser | null): DatabaseInfo
     licence: row.licence,
     createdAt: row.created_at,
     gameCount: row.game_count,
-    canEdit: canEditRow(row, viewer),
-    ...importJobs(db, row.id),
+    canEdit,
+    // Import jobs name the uploader and the uploaded file: editors only.
+    ...(canEdit ? importJobs(db, row.id) : { importJob: null, lastImport: null }),
   };
 }
 
@@ -199,12 +206,18 @@ const DELETE_BATCH = 500;
 
 /**
  * `DELETE /api/databases/:id`: its games (with positions and player_games), its `pgn` sources
- * (detached from every profile) and its pending uploads. Games go in short batches so the server
- * stays responsive while a large database is removed.
+ * (detached from every profile, their queued syncs cancelled) and its pending uploads. Games go in
+ * short batches so the server stays responsive while a large database is removed.
  */
 export async function deleteDatabase(db: Db, config: Config, database: ViewableDatabase): Promise<void> {
   requireDatabaseEditor(database);
   await dropDatabaseUploads(db, config, database.id);
+  db.tx(() =>
+    cancelQueuedSyncs(
+      db,
+      db.all<{ id: Id }>("SELECT id FROM sources WHERE kind = 'pgn' AND database_id = ?", [database.id]).map(r => r.id),
+    ),
+  );
   for (;;) {
     const n = db.tx(
       () =>

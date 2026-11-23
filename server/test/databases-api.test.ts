@@ -2,8 +2,16 @@ import { existsSync, mkdirSync, readdirSync, utimesSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import type { DatabaseInfo, DatabasesResponse, DbGamesPage, ImportResponse, JobProgress, ProfileHeader } from '@outpost/shared/api';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { importSummary, runPgnImport, saveUploadStream, sweepUploads } from '../src/databases/index.ts';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  importSummary,
+  MAX_GAMES_PER_USER,
+  MAX_PASTE_BYTES,
+  MAX_PENDING_IMPORTS,
+  runPgnImport,
+  saveUploadStream,
+  sweepUploads,
+} from '../src/databases/index.ts';
 import { writeSettings } from '../src/settings.ts';
 import { createUserSession, makeJobContext, makeTestApp, mutationHeaders, type TestApp } from './helpers.ts';
 import { MIXED_PGN, pgnGame, RUY } from './fixtures/profiles/pgn.ts';
@@ -25,10 +33,13 @@ describe('databases API', () => {
   let other: Session;
   let admin: Session;
 
+  /** Client address of the requests (the import route is throttled per IP: tests that import a lot use their own). */
+  let clientIp = '127.0.0.1';
   const req = (s: Session | null, method: string, url: string, payload?: unknown, headers: Record<string, string> = {}) =>
     t.app.inject({
       method: method as 'GET',
       url,
+      remoteAddress: clientIp,
       headers: { ...(method === 'GET' ? {} : mutationHeaders), ...(s ? { cookie: s.cookie } : {}), ...headers },
       ...(payload === undefined ? {} : { payload: payload as object }),
     });
@@ -67,6 +78,10 @@ describe('databases API', () => {
     admin = createUserSession(t.db, { username: 'boss', role: 'admin' });
   });
   afterAll(async () => t.close());
+  // Tests run their import jobs directly; settle every leftover so the per-user cap starts fresh.
+  beforeEach(() => {
+    t.db.run("UPDATE jobs SET status = 'done', finished_at = 0 WHERE kind = 'pgnImport' AND status IN ('queued', 'running')");
+  });
 
   it('creates, lists, reads and edits databases with ownership and visibility', async () => {
     const mine = await createDb(owner, { name: 'My games', sourceLabel: 'OTB scoresheets' });
@@ -93,10 +108,11 @@ describe('databases API', () => {
       ['Shared', false],
     ]);
     expect((await req(null, 'GET', '/api/databases')).statusCode).toBe(401);
+    // Databases need a session even with anonymous browsing on (PLAN §10: only public profiles and their stats are open).
     writeSettings(t.db, { anonymousBrowsing: true });
-    expect((await req(null, 'GET', '/api/databases')).json<DatabasesResponse>().databases.map(d => d.name)).toEqual(['Shared']);
-    expect((await req(null, 'GET', `/api/databases/${mine.id}`)).statusCode).toBe(404);
-    expect((await req(null, 'GET', `/api/databases/${shared.id}/games`)).statusCode).toBe(200);
+    for (const url of ['/api/databases', `/api/databases/${shared.id}`, `/api/databases/${shared.id}/games`, `/api/databases/${shared.id}/export.pgn`]) {
+      expect((await req(null, 'GET', url)).statusCode, url).toBe(401);
+    }
     writeSettings(t.db, { anonymousBrowsing: false });
 
     expect((await req(other, 'GET', `/api/databases/${mine.id}`)).statusCode).toBe(404);
@@ -351,7 +367,7 @@ describe('databases API', () => {
           ['DELETE', `/api/databases/${d.id}/games/${gameId}`, undefined],
         ] as const) {
           const res = await req(s, method, url, body);
-          expect(res.statusCode, `${s ? 'other' : 'anonymous'} ${method} ${url}`).toBe(s === null && method !== 'GET' ? 401 : 404);
+          expect(res.statusCode, `${s ? 'other' : 'anonymous'} ${method} ${url}`).toBe(s === null ? 401 : 404);
         }
       }
     } finally {
@@ -360,6 +376,78 @@ describe('databases API', () => {
     expect((await req(admin, 'GET', `/api/databases/${d.id}/export.pgn`)).statusCode).toBe(200);
     expect((await req(owner, 'GET', '/api/databases/999999')).statusCode).toBe(404);
     expect((await req(owner, 'GET', '/api/databases/abc')).statusCode).toBe(400);
+  });
+
+  it('shows import jobs (uploader, file name) to editors only', async () => {
+    clientIp = '10.0.0.1';
+    const d = await createDb(owner, { name: 'Public with imports', visibility: 'public' });
+    await importPgn(owner, d.id, MIXED_PGN);
+    const mp = multipart('my-secret-prep.pgn', RUY);
+    expect((await req(owner, 'POST', `/api/databases/${d.id}/import`, mp.payload, mp.headers)).statusCode).toBe(200);
+    const mine = (await req(owner, 'GET', `/api/databases/${d.id}`)).json<DatabaseInfo>();
+    expect(mine.importJob?.label).toBe('Import my-secret-prep.pgn into Public with imports');
+    expect(mine.lastImport?.status).toBe('done');
+    const theirs = (await req(other, 'GET', `/api/databases/${d.id}`)).json<DatabaseInfo>();
+    expect(theirs).toMatchObject({ canEdit: false, importJob: null, lastImport: null, gameCount: 2 });
+    const listed = (await req(other, 'GET', '/api/databases')).json<DatabasesResponse>().databases.find(x => x.id === d.id)!;
+    expect([listed.importJob, listed.lastImport]).toEqual([null, null]);
+    expect((await req(admin, 'GET', `/api/databases/${d.id}`)).json<DatabaseInfo>().importJob?.label).toMatch(/my-secret-prep/);
+  });
+
+  it('limits pasted PGN, pending imports per user and exports per user', async () => {
+    clientIp = '10.0.0.2';
+    const d = await createDb(other, { name: 'Limits' });
+    // Pasted text: 5 MB at most (413 before or after JSON parsing); files go through the upload.
+    const tooBig = 'x'.repeat(MAX_PASTE_BYTES + 1);
+    const pasted = await req(other, 'POST', `/api/databases/${d.id}/import`, { pgn: tooBig });
+    expect(pasted.statusCode).toBe(413);
+    expect(pasted.json().error.code).toBe('payload_too_large');
+    const huge = await req(other, 'POST', `/api/databases/${d.id}/import`, { pgn: 'x'.repeat(8 * 1024 * 1024) });
+    expect(huge.statusCode).toBe(413);
+
+    // Three imports may wait at a time; the fourth is refused before anything is written.
+    for (let i = 0; i < MAX_PENDING_IMPORTS; i++) expect((await req(other, 'POST', `/api/databases/${d.id}/import`, { pgn: RUY })).statusCode).toBe(200);
+    const files = readdirSync(t.config.uploadsDir).length;
+    const fourth = await req(other, 'POST', `/api/databases/${d.id}/import`, { pgn: RUY });
+    expect(fourth.statusCode).toBe(429);
+    expect(fourth.json().error).toMatchObject({ code: 'rate_limited', details: { pending: 3, max: 3 } });
+    const mp = multipart('more.pgn', RUY);
+    expect((await req(other, 'POST', `/api/databases/${d.id}/import`, mp.payload, mp.headers)).statusCode).toBe(429);
+    expect(readdirSync(t.config.uploadsDir).length).toBe(files);
+    // Other users are not affected; finishing one frees a slot.
+    expect((await req(owner, 'POST', `/api/databases/${(await createDb(owner, { name: 'Free' })).id}/import`, { pgn: RUY })).statusCode).toBe(200);
+    t.db.run("UPDATE jobs SET status = 'done' WHERE id = (SELECT MIN(id) FROM jobs WHERE kind = 'pgnImport' AND user_id = ? AND status = 'queued')", [other.userId]);
+    expect((await req(other, 'POST', `/api/databases/${d.id}/import`, { pgn: RUY })).statusCode).toBe(200);
+
+    // Exports: 10 per minute per user.
+    let status = 0;
+    for (let i = 0; i < 11 && status !== 429; i++) status = (await req(other, 'GET', `/api/databases/${d.id}/export.pgn`)).statusCode;
+    expect(status).toBe(429);
+    expect((await req(owner, 'GET', `/api/databases/${d.id}/export.pgn`)).statusCode).toBe(404);
+  });
+
+  it("stops imports at the owner's game allowance (admins have none)", async () => {
+    clientIp = '10.0.0.3';
+    const capped = createUserSession(t.db, { username: 'capped' });
+    const d = await createDb(capped, { name: 'Nearly full' });
+    // Pretend the user's other databases already hold all but 3 of the allowed games.
+    const filler = await createDb(capped, { name: 'Filler' });
+    t.db.run('UPDATE databases SET game_count = ? WHERE id = ?', [MAX_GAMES_PER_USER - 3, filler.id]);
+    const many = Array.from({ length: 250 }, (_, i) =>
+      pgnGame({ Event: 'Bulk', Date: '2024.01.01', White: `W${i}`, Black: `B${i}`, Result: '1-0' }, RUY),
+    ).join('\n');
+    const r = await importPgn(capped, d.id, many);
+    expect(r.error).toBeNull();
+    expect(r.last?.message).toMatch(/^Stopped after \d+ games: the owner's databases hold the most games allowed/);
+    // The allowance is checked per batch of 100 games.
+    expect(r.last?.counts?.imported).toBe(100);
+    const refused = await req(capped, 'POST', `/api/databases/${d.id}/import`, { pgn: RUY });
+    expect(refused.statusCode).toBe(403);
+    // Admins' own databases have no allowance.
+    const adminDb = await createDb(admin, { name: 'Admin bulk' });
+    t.db.run('UPDATE databases SET game_count = ? WHERE id = ?', [MAX_GAMES_PER_USER + 5, adminDb.id]);
+    const one = pgnGame({ Event: 'Admin', Date: '2024.01.01', White: 'X', Black: 'Y', Result: '1-0' }, RUY);
+    expect((await importPgn(admin, adminDb.id, one)).last?.counts?.imported).toBe(1);
   });
 
   it('summarises counters for the UI', () => {

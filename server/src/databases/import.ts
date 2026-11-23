@@ -13,6 +13,11 @@
  *    unreadable PGN). It is kept when the job was interrupted (shutdown, cancel) so a retry can
  *    run; `sweepUploads` removes leftovers older than a week at startup.
  *
+ * Limits (disk and database growth per user): pasted PGN up to `MAX_PASTE_BYTES` (larger files go
+ * through the streamed upload), at most `MAX_PENDING_IMPORTS` queued or running imports per user
+ * (429), and at most `MAX_GAMES_PER_USER` games across a user's databases (admins: no limit; an
+ * import stops when the owner reaches it).
+ *
  * Files that are not valid UTF-8 (ChessBase and older tools write Windows-1252) are decoded as
  * Windows-1252 so names keep their accents.
  */
@@ -34,6 +39,12 @@ import { enqueueJob, type JobContext } from '../jobs/index.ts';
 
 /** Largest PGN upload (PLAN §10). */
 export const MAX_PGN_BYTES = 50 * 1024 * 1024;
+/** Largest pasted PGN (the JSON body is buffered and parsed in memory: big files are uploaded). */
+export const MAX_PASTE_BYTES = 5 * 1024 * 1024;
+/** Queued or running imports one user may have. */
+export const MAX_PENDING_IMPORTS = 3;
+/** Games one (non-admin) user may keep across their databases. */
+export const MAX_GAMES_PER_USER = 2_000_000;
 /** Games per write transaction (the event loop gets a turn between batches). */
 export const IMPORT_BATCH = 100;
 /** Uploads older than this with no pending job are removed at startup. */
@@ -79,9 +90,46 @@ export async function saveUploadText(config: Config, pgn: string): Promise<strin
   return name;
 }
 
-/** Queues the import of an upload into a database. */
+/** Queued or running imports started by a user. */
+export const pendingImports = (db: Db, userId: Id): number =>
+  db.value<number>("SELECT COUNT(*) FROM jobs WHERE kind = 'pgnImport' AND user_id = ? AND status IN ('queued', 'running')", [userId]) ?? 0;
+
+/**
+ * Games the database's owner may still add (`MAX_GAMES_PER_USER` over all their databases), or
+ * null when unlimited (admins, databases without an owner).
+ */
+export function remainingGameAllowance(db: Db, databaseId: Id): number | null {
+  const owner = db.get<{ id: Id; role: string }>(
+    'SELECT u.id, u.role FROM databases d JOIN users u ON u.id = d.owner_user_id WHERE d.id = ?',
+    [databaseId],
+  );
+  if (!owner || owner.role === 'admin') return null;
+  const stored = db.value<number>("SELECT COALESCE(SUM(game_count), 0) FROM databases WHERE owner_user_id = ? AND kind = 'games'", [owner.id]) ?? 0;
+  return Math.max(0, MAX_GAMES_PER_USER - stored);
+}
+
+/**
+ * Throws when `userId` may not start another import into the database right now: 429 with too
+ * many imports pending, 403 when its owner has no game allowance left. Checked before an upload
+ * is written to disk and again when it is queued.
+ */
+export function checkImportAllowed(db: Db, databaseId: Id, userId: Id): void {
+  const pending = pendingImports(db, userId);
+  if (pending >= MAX_PENDING_IMPORTS) {
+    throw new HttpError(429, 'rate_limited', `You already have ${pending} imports waiting; try again when one has finished`, {
+      pending,
+      max: MAX_PENDING_IMPORTS,
+    });
+  }
+  if (remainingGameAllowance(db, databaseId) === 0) {
+    throw new HttpError(403, 'forbidden', `A user's databases hold at most ${MAX_GAMES_PER_USER.toLocaleString('en-US')} games`);
+  }
+}
+
+/** Queues the import of an upload into a database (rechecking `checkImportAllowed`). */
 export function enqueuePgnImport(db: Db, databaseId: Id, file: string, originalName: string | null, userId: Id): ImportResponse {
   return db.tx(() => {
+    checkImportAllowed(db, databaseId, userId);
     const job = enqueueJob(db, 'pgnImport', { databaseId, file, originalName }, { userId });
     db.run('INSERT OR REPLACE INTO database_imports (job_id, database_id, file, created_at) VALUES (?, ?, ?, ?)', [
       job.id,
@@ -216,6 +264,7 @@ export async function runPgnImport(ctx: JobContext<'pgnImport'>): Promise<void> 
   const origin = target.kind === 'reference' ? 'reference' : 'pgn';
   const openings = getOpeningBook(config.openingsDir);
   const counts: Record<string, number> = { imported: 0, duplicates: 0, skipped: 0 };
+  let limitReached = false;
   let parsed = 0;
   let batch: NormalizedGame[] = [];
   const skip = (reason: PgnSkipReason): void => {
@@ -232,6 +281,10 @@ export async function runPgnImport(ctx: JobContext<'pgnImport'>): Promise<void> 
     batch = [];
     db.tx(() => {
       if (db.value('SELECT 1 FROM databases WHERE id = ?', [databaseId]) === undefined) throw new DatabaseGoneError();
+      if (remainingGameAllowance(db, databaseId) === 0) {
+        limitReached = true;
+        return;
+      }
       let inserted = 0;
       for (const g of games) {
         try {
@@ -276,10 +329,11 @@ export async function runPgnImport(ctx: JobContext<'pgnImport'>): Promise<void> 
       else batch.push(g);
       if (batch.length >= IMPORT_BATCH) {
         flush();
+        if (limitReached) break;
         await yieldToLoop();
       }
     }
-    flush();
+    if (!limitReached) flush();
   } catch (e) {
     if (e instanceof DatabaseGoneError) {
       await dropUpload(db, config, file);
@@ -291,7 +345,11 @@ export async function runPgnImport(ctx: JobContext<'pgnImport'>): Promise<void> 
     await games.return?.(undefined).catch(() => {});
   }
   finish();
-  report(importSummary(counts));
+  report(
+    limitReached
+      ? `Stopped after ${parsed} games: the owner's databases hold the most games allowed (${MAX_GAMES_PER_USER.toLocaleString('en-US')}). ${importSummary(counts)}`
+      : importSummary(counts),
+  );
   await dropUpload(db, config, file);
 }
 

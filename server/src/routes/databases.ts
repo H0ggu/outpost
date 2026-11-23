@@ -1,5 +1,6 @@
+import { rm } from 'node:fs/promises';
 import { Readable } from 'node:stream';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import {
   API_ROUTES,
   slugify,
@@ -10,8 +11,9 @@ import {
   type OkResponse,
 } from '@outpost/shared/api';
 import { z } from 'zod';
-import { requireUser, requireViewer } from '../auth/session.ts';
+import { requireUser } from '../auth/session.ts';
 import {
+  checkImportAllowed,
   createDatabase,
   createDatabaseSchema,
   databaseGames,
@@ -23,6 +25,7 @@ import {
   exportDatabasePgn,
   importPgnSchema,
   listDatabases,
+  MAX_PASTE_BYTES,
   MAX_PGN_BYTES,
   requireDatabaseEditor,
   runPgnImport,
@@ -31,6 +34,7 @@ import {
   sweepUploads,
   updateDatabase,
   updateDatabaseSchema,
+  uploadPath,
 } from '../databases/index.ts';
 import { badRequest, HttpError } from '../http/errors.ts';
 import { idParams, parseBody, parseParams, parseQuery, zId } from '../http/validate.ts';
@@ -48,13 +52,23 @@ import { loadDatabaseForViewer } from '../profiles/access.ts';
  *   - GET /api/databases/:id/export.pgn (streamed)
  *   - DELETE /api/databases/:id/games/:gameId (→ OkResponse)
  *
- * Reads: requireViewer + loadDatabaseForViewer (404 for private databases of others). Mutations:
- * requireUser, then owner or admin (403). Imports run as the 'pgnImport' job registered here
- * (src/databases/import.ts). Logic lives in src/databases/.
+ * Reads: requireUser (PLAN §10: only public profiles and their stats are anonymous) +
+ * loadDatabaseForViewer (404 for private databases of others). Mutations: requireUser, then owner
+ * or admin (403). Imports run as the 'pgnImport' job registered here (src/databases/import.ts),
+ * at most MAX_PENDING_IMPORTS per user at a time; pasted PGN is limited to MAX_PASTE_BYTES (the
+ * JSON body is buffered), files to MAX_PGN_BYTES (streamed to disk). Exports are throttled per
+ * user. Logic lives in src/databases/.
  */
 
 /** Imports per IP per minute. */
 export const IMPORT_RATE_LIMIT = { max: 20, timeWindow: 60_000 } as const;
+/** Per-user throttle on the route hook after `requireUser` (so the user is known). */
+const perUser = (max: number, timeWindow: number) =>
+  ({ max, timeWindow, hook: 'preHandler', keyGenerator: (req: FastifyRequest) => `user:${req.user?.id ?? req.ip}` }) as const;
+/** Exports per user per minute (a reference DB can be millions of games). */
+export const EXPORT_RATE_LIMIT = perUser(10, 60_000);
+/** JSON body limit of the import route: pasted PGN plus JSON escaping. Uploads (multipart) are streamed and not affected. */
+const PASTE_BODY_LIMIT = Math.ceil(MAX_PASTE_BYTES * 1.25) + 64 * 1024;
 
 const gameParams = z.object({ id: zId, gameId: zId });
 const PGN_FILE_RE = /\.(pgn|txt)$/i;
@@ -66,7 +80,7 @@ const databaseRoutes: FastifyPluginAsync = async app => {
     await sweepUploads(app.db, app.config).catch(err => app.log.warn({ err }, 'could not sweep old PGN uploads'));
   });
 
-  app.get(API_ROUTES.databases, { preHandler: requireViewer }, async (req): Promise<DatabasesResponse> => ({
+  app.get(API_ROUTES.databases, { preHandler: requireUser }, async (req): Promise<DatabasesResponse> => ({
     databases: listDatabases(app.db, req.user),
   }));
 
@@ -76,7 +90,7 @@ const databaseRoutes: FastifyPluginAsync = async app => {
     return databaseInfo(app.db, loadDatabaseForViewer(app.db, id, req.user), req.user);
   });
 
-  app.get(API_ROUTES.database(':id'), { preHandler: requireViewer }, async (req): Promise<DatabaseInfo> => {
+  app.get(API_ROUTES.database(':id'), { preHandler: requireUser }, async (req): Promise<DatabaseInfo> => {
     const { id } = parseParams(idParams, req.params);
     return databaseInfo(app.db, loadDatabaseForViewer(app.db, id, req.user), req.user);
   });
@@ -99,8 +113,7 @@ const databaseRoutes: FastifyPluginAsync = async app => {
     API_ROUTES.databaseImport(':id'),
     {
       preHandler: requireUser,
-      // Pasted PGN as JSON: 50 MB of PGN plus JSON escaping.
-      bodyLimit: MAX_PGN_BYTES + 10 * 1024 * 1024,
+      bodyLimit: PASTE_BODY_LIMIT,
       config: { rateLimit: IMPORT_RATE_LIMIT },
     },
     async (req): Promise<ImportResponse> => {
@@ -108,6 +121,8 @@ const databaseRoutes: FastifyPluginAsync = async app => {
       const database = loadDatabaseForViewer(app.db, id, req.user);
       requireDatabaseEditor(database);
       if (database.kind !== 'games') throw badRequest('Reference databases are imported from the admin reference page');
+      // Before anything is written to disk (and again when the job is queued).
+      checkImportAllowed(app.db, database.id, req.user!.id);
 
       let file: string;
       let originalName: string | null = null;
@@ -122,22 +137,31 @@ const databaseRoutes: FastifyPluginAsync = async app => {
         file = await saveUploadStream(app.config, part.file);
       } else {
         const { pgn } = parseBody(importPgnSchema, req.body);
-        if (Buffer.byteLength(pgn, 'utf8') > MAX_PGN_BYTES) {
-          throw new HttpError(413, 'payload_too_large', `PGN is limited to ${MAX_PGN_BYTES / 1024 / 1024} MB`);
+        if (Buffer.byteLength(pgn, 'utf8') > MAX_PASTE_BYTES) {
+          throw new HttpError(
+            413,
+            'payload_too_large',
+            `Pasted PGN is limited to ${MAX_PASTE_BYTES / 1024 / 1024} MB; upload larger files (up to ${MAX_PGN_BYTES / 1024 / 1024} MB)`,
+          );
         }
         file = await saveUploadText(app.config, pgn);
       }
-      return enqueuePgnImport(app.db, database.id, file, originalName, req.user!.id);
+      try {
+        return enqueuePgnImport(app.db, database.id, file, originalName, req.user!.id);
+      } catch (e) {
+        await rm(uploadPath(app.config, file), { force: true });
+        throw e;
+      }
     },
   );
 
-  app.get(API_ROUTES.databaseGames(':id'), { preHandler: requireViewer }, async (req): Promise<DbGamesPage> => {
+  app.get(API_ROUTES.databaseGames(':id'), { preHandler: requireUser }, async (req): Promise<DbGamesPage> => {
     const { id } = parseParams(idParams, req.params);
     const query = parseQuery(dbGamesQuerySchema, req.query);
     return databaseGames(app.db, loadDatabaseForViewer(app.db, id, req.user), query);
   });
 
-  app.get(API_ROUTES.databaseExport(':id'), { preHandler: requireViewer }, async (req, reply) => {
+  app.get(API_ROUTES.databaseExport(':id'), { preHandler: requireUser, config: { rateLimit: EXPORT_RATE_LIMIT } }, async (req, reply) => {
     const { id } = parseParams(idParams, req.params);
     const database = loadDatabaseForViewer(app.db, id, req.user);
     const filename = `${slugify(database.name)}.pgn`;
