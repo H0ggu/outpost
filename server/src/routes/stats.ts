@@ -81,7 +81,15 @@ const opponentsParams = pageQuery(OPPONENTS_PAGE_SIZE, OPPONENTS_MAX_PAGE_SIZE).
   view: z.enum(['most', 'titled']).default('most'),
 });
 
-const activityParams = z.object({ tz: z.string().max(200).default('UTC') });
+/** `tz` (IANA zone); absent or empty means UTC, like an empty filter value means no filter. */
+const activityParams = z.object({
+  tz: z
+    .string()
+    .trim()
+    .max(200)
+    .optional()
+    .transform(tz => tz || 'UTC'),
+});
 
 const statsRoutes: FastifyPluginAsync = async app => {
   const book = () => getOpeningBook(app.config.openingsDir);

@@ -360,6 +360,8 @@ describe('stats endpoints on a seeded profile', () => {
     expect(body.grid.every(r => r.length === 24)).toBe(true);
     const tz = (await get<ActivityStats>(t, url('activity', 'tz=europe/oslo'), cookie)).body;
     expect(tz.tz).toBe('Europe/Oslo');
+    expect((await get<ActivityStats>(t, url('activity', 'tz='), cookie)).body.tz).toBe('UTC');
+    expect((await get<ActivityStats>(t, url('activity', 'tz=%20Asia/Tokyo%20'), cookie)).body.tz).toBe('Asia/Tokyo');
   });
 
   it('rating history and averages', async () => {
