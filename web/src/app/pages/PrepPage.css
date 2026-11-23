@@ -282,6 +282,17 @@
   margin: 0;
 }
 
+.lib-prep-card__sampled {
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.lib-prep-side__min {
+  font-weight: normal;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
 .lib-prep-ratings {
   display: flex;
   flex-wrap: wrap;

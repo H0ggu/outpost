@@ -149,6 +149,29 @@ describe('PrepPage', () => {
     await waitFor(() => expect(location()).toBe('/prep/3?period=3m'));
   });
 
+  it('asks for a different minimum of games for the weakest lines (decision 32)', async () => {
+    base();
+    const { location } = renderPage(<PrepPage />, { route: '/prep/:id', path: '/prep/3?period=3m' });
+    await screen.findByRole('heading', { name: 'Olga Opponent' });
+    // the server default (3 games) is not sent
+    expect(api().find('GET', '/api/prep/3/report')[0]!.query.get('minGames')).toBeNull();
+    expect((screen.getByLabelText('Weakest lines') as HTMLSelectElement).value).toBe('3');
+    expect(screen.getAllByText('(min 3 games)').length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByLabelText('Weakest lines'), { target: { value: '10' } });
+    await waitFor(() => expect(location()).toBe('/prep/3?period=3m&minGames=10'));
+    await waitFor(() => expect(api().find('GET', '/api/prep/3/report').at(-1)!.query.get('minGames')).toBe('10'));
+    expect(api().find('GET', '/api/prep/3/report').at(-1)!.query.get('period')).toBe('3m');
+    expect(screen.getByText(/weakest\s+lines from 10 games/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Weakest lines'), { target: { value: '3' } });
+    await waitFor(() => expect(location()).toBe('/prep/3?period=3m'));
+  });
+
+  it('says when the lines come from the most recent games only', async () => {
+    base(undefined, () => report([{ ...oppReport(), sampledGames: 5000 }]));
+    renderPage(<PrepPage />, ROUTE);
+    expect(await screen.findByText(/Lines and activity come from the latest 5,000 of/)).toBeTruthy();
+  });
+
   it('adds and removes opponents', async () => {
     let current = set();
     base(() => current);

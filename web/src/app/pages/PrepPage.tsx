@@ -44,6 +44,19 @@ export function parsePlies(v: string | null): number | undefined {
 }
 
 /**
+ * Fewest games for a line to count among the weakest lines (`PrepReportParams.minGames`, 1–100;
+ * the server's default is 3).
+ */
+export const WEAK_MIN_GAMES = [1, 2, 3, 5, 10, 20, 50] as const;
+export const DEFAULT_MIN_GAMES = 3;
+
+/** `?minGames=` when it is one of WEAK_MIN_GAMES, else undefined (the server default). */
+export function parseMinGames(v: string | null): number | undefined {
+  const n = Number(v);
+  return (WEAK_MIN_GAMES as readonly number[]).includes(n) && n !== DEFAULT_MIN_GAMES ? n : undefined;
+}
+
+/**
  * The filters a prep report applies: dates, time controls, rated. The others (colour, outcome,
  * sources, opponent, event, line) belong to one profile's pages, not to a set of opponents.
  */
@@ -261,11 +274,15 @@ function PrepFilters({
   setFilters,
   plies,
   setPlies,
+  minGames,
+  setMinGames,
 }: {
   filters: ProfileFilters;
   setFilters: (f: ProfileFilters) => void;
   plies: number | undefined;
   setPlies: (plies: number | undefined) => void;
+  minGames: number | undefined;
+  setMinGames: (minGames: number | undefined) => void;
 }) {
   const id = useId();
   // From/to dates come only from a link (no date inputs here); the select shows them as one option.
@@ -328,6 +345,21 @@ function PrepFilters({
           ))}
         </select>
       </div>
+      <div className="form-group">
+        <label htmlFor={`${id}-mingames`}>Weakest lines</label>
+        <select
+          id={`${id}-mingames`}
+          value={minGames ?? DEFAULT_MIN_GAMES}
+          title="Fewest games for a line to count among the weakest lines"
+          onChange={e => setMinGames(parseMinGames(e.target.value))}
+        >
+          {WEAK_MIN_GAMES.map(n => (
+            <option key={n} value={n}>
+              {n === 1 ? 'From 1 game' : `From ${n} games`}
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }
@@ -340,6 +372,7 @@ function Report({ set }: { set: PrepSet }) {
   const filters = useMemo(() => prepFilters(urlFilters), [urlFilters]);
   const [params, setParams] = useSearchParams();
   const plies = parsePlies(params.get('plies'));
+  const minGames = parseMinGames(params.get('minGames'));
   // Filters this page doesn't apply (a link from a profile page, say) leave the address, so the
   // controls, the print header and the explorer links all say what the report shows.
   const stray = urlHasOtherFilters(params, filters);
@@ -355,23 +388,32 @@ function Report({ set }: { set: PrepSet }) {
       { replace: true },
     );
   }, [stray, filters, setParams]);
-  const setPlies = (n: number | undefined) =>
+  /** Sets (or, for the server default, removes) one report parameter in the address. */
+  const setParam = (key: 'plies' | 'minGames', n: number | undefined) =>
     setParams(prev => {
       const next = new URLSearchParams(prev);
-      if (n === undefined) next.delete('plies');
-      else next.set('plies', String(n));
+      if (n === undefined) next.delete(key);
+      else next.set(key, String(n));
       return next;
     });
-  const report = usePrepReport(set.id, filters, tz, plies);
+  const report = usePrepReport(set.id, filters, tz, { plies, minGames });
 
   return (
     <section className="lib-prep-report" aria-label="Report cards">
-      <PrepFilters filters={filters} setFilters={f => setFilters(f)} plies={plies} setPlies={setPlies} />
+      <PrepFilters
+        filters={filters}
+        setFilters={f => setFilters(f)}
+        plies={plies}
+        setPlies={n => setParam('plies', n)}
+        minGames={minGames}
+        setMinGames={n => setParam('minGames', n)}
+      />
       <QueryView query={report} what="this report" errorTitle="Could not build the report">
         {r => (
           <div className={report.isPlaceholderData ? 'lib-prep-cards lib-results--stale' : 'lib-prep-cards'} aria-busy={report.isFetching}>
             <p className="lib-prep-printhead">
-              <strong>{r.prep.name}</strong> · {describeFilters(filters)} · lines of {(plies ?? DEFAULT_PLIES) / 2} moves · generated{' '}
+              <strong>{r.prep.name}</strong> · {describeFilters(filters)} · lines of {(plies ?? DEFAULT_PLIES) / 2} moves · weakest
+              lines from {minGames ?? DEFAULT_MIN_GAMES} game{(minGames ?? DEFAULT_MIN_GAMES) === 1 ? '' : 's'} · generated{' '}
               {formatDateTime(r.generatedAt, utc)}
             </p>
             {r.opponents.length === 0 ? (
@@ -379,7 +421,9 @@ function Report({ set }: { set: PrepSet }) {
                 <p>The opponents in this set have no games yet. Check back once their profiles have synced.</p>
               </EmptyState>
             ) : (
-              r.opponents.map(o => <PrepReportCard key={o.profile.id} report={o} filters={filters} utc={utc} />)
+              r.opponents.map(o => (
+                <PrepReportCard key={o.profile.id} report={o} filters={filters} utc={utc} minGames={minGames ?? DEFAULT_MIN_GAMES} />
+              ))
             )}
           </div>
         )}

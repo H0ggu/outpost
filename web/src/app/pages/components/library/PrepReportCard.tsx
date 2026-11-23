@@ -28,7 +28,18 @@ const HOUR_NAMES = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2,
 /** One letter per day (the bar's tooltip names it), so seven labels fit under a narrow chart. */
 const DAY_LABELS = WEEKDAYS.map(d => d[0]!);
 
-export function PrepReportCard({ report, filters, utc }: { report: PrepOpponentReport; filters: ProfileFilters; utc: boolean }) {
+export function PrepReportCard({
+  report,
+  filters,
+  utc,
+  minGames,
+}: {
+  report: PrepOpponentReport;
+  filters: ProfileFilters;
+  utc: boolean;
+  /** Fewest games of a weakest line, as requested (shown in the heading). */
+  minGames?: number;
+}) {
   const p = report.profile;
   const totalGames = report.asWhite.games + report.asBlack.games;
   return (
@@ -58,9 +69,15 @@ export function PrepReportCard({ report, filters, utc }: { report: PrepOpponentR
         </p>
       ) : (
         <>
+          {report.sampledGames != null && (
+            <p className="muted lib-prep-card__sampled">
+              Lines and activity come from the latest {fullNumber(report.sampledGames)} of {fullNumber(totalGames)} games; the
+              game counts and results include them all.
+            </p>
+          )}
           <div className="lib-prep-sides">
-            <SideReport side="white" data={report.asWhite} slug={p.slug} filters={filters} />
-            <SideReport side="black" data={report.asBlack} slug={p.slug} filters={filters} />
+            <SideReport side="white" data={report.asWhite} slug={p.slug} filters={filters} minGames={minGames} />
+            <SideReport side="black" data={report.asBlack} slug={p.slug} filters={filters} minGames={minGames} />
           </div>
           <div className="lib-prep-bottom">
             <RecentGames games={report.recentGames} utc={utc} />
@@ -105,7 +122,19 @@ function Ratings({ ratings }: { ratings: PrepOpponentReport['ratings'] }) {
   );
 }
 
-function SideReport({ side, data, slug, filters }: { side: Color; data: PrepSide; slug: string; filters: ProfileFilters }) {
+function SideReport({
+  side,
+  data,
+  slug,
+  filters,
+  minGames,
+}: {
+  side: Color;
+  data: PrepSide;
+  slug: string;
+  filters: ProfileFilters;
+  minGames: number | undefined;
+}) {
   const total = data.wdl.w + data.wdl.d + data.wdl.l;
   const score = total ? (data.wdl.w + data.wdl.d / 2) / total : null;
   return (
@@ -120,7 +149,10 @@ function SideReport({ side, data, slug, filters }: { side: Color; data: PrepSide
       {total > 0 && <WdlBar w={data.wdl.w} d={data.wdl.d} l={data.wdl.l} />}
       <h4>Main lines</h4>
       <LineTable lines={data.topLines} side={side} slug={slug} filters={filters} empty="No repeated lines yet." />
-      <h4>Weakest lines</h4>
+      <h4>
+        Weakest lines
+        {minGames !== undefined && <span className="muted lib-prep-side__min"> (min {plural(minGames, 'game')})</span>}
+      </h4>
       <LineTable lines={data.worstLines} side={side} slug={slug} filters={filters} empty="No weak spot stands out." />
     </section>
   );

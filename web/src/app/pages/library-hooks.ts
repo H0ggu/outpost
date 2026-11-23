@@ -25,6 +25,7 @@ import {
   type OkResponse,
   type PrepListResponse,
   type PrepReport,
+  type PrepReportParams,
   type PrepSet,
   type ProfileHeader,
   type ReferenceInfo,
@@ -45,8 +46,8 @@ export const libraryKeys = {
     ['databases', id, 'games', { page, pageSize, q }] as const,
   prepList: ['prep'] as const,
   prep: (id: Id) => ['prep', id] as const,
-  prepReport: (id: Id, filters: ProfileFilters, tz: string, plies?: number) =>
-    ['prep', id, 'report', filtersKey(filters), tz, plies ?? null] as const,
+  prepReport: (id: Id, filters: ProfileFilters, tz: string, plies?: number, minGames?: number) =>
+    ['prep', id, 'report', filtersKey(filters), tz, plies ?? null, minGames ?? null] as const,
   broadcasts: ['broadcasts'] as const,
   broadcastTour: (tourId: string) => ['broadcasts', 'tour', tourId] as const,
   broadcastRound: (roundId: string) => ['broadcasts', 'round', roundId] as const,
@@ -300,13 +301,21 @@ export function usePrepSet(id: Id | undefined) {
 }
 
 /**
- * `GET /api/prep/:id/report` with the filters (applied to every opponent), the activity zone and
- * the length of the repertoire lines (`plies`; the server's default when omitted).
+ * `GET /api/prep/:id/report` with the filters (applied to every opponent), the activity zone, the
+ * length of the repertoire lines (`plies`) and the fewest games of a weakest line (`minGames`);
+ * the server's defaults when omitted.
  */
-export function usePrepReport(id: Id | undefined, filters: ProfileFilters, tz: string, plies?: number, enabled = true) {
+export function usePrepReport(
+  id: Id | undefined,
+  filters: ProfileFilters,
+  tz: string,
+  opts: Pick<PrepReportParams, 'plies' | 'minGames'> = {},
+  enabled = true,
+) {
+  const { plies, minGames } = opts;
   return useQuery({
-    queryKey: libraryKeys.prepReport(id ?? 0, filters, tz, plies),
-    queryFn: ({ signal }) => api.get<PrepReport>(API_ROUTES.prepReport(id!), statsQuery(filters, { tz, plies }), signal),
+    queryKey: libraryKeys.prepReport(id ?? 0, filters, tz, plies, minGames),
+    queryFn: ({ signal }) => api.get<PrepReport>(API_ROUTES.prepReport(id!), statsQuery(filters, { tz, plies, minGames }), signal),
     enabled: id !== undefined && enabled,
     placeholderData: keepPreviousData,
   });
