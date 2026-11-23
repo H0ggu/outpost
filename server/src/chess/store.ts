@@ -14,7 +14,7 @@ import { makeSanAndPlay, parseSan } from 'chessops/san';
 import type { EpochMs, GameOrigin, GameResult, Id, SourceKind, Termination, TimeClass, Title } from '@outpost/shared/api';
 import { colorChar, epdOf, outcomeFor, playerKey, stdUci, type Color } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
-import { classifyOpening, getOpeningBook, type OpeningBook } from './openings.ts';
+import { classifyOpening, getOpeningBook, type OpeningBook, type OpeningMatch } from './openings.ts';
 import { posKey } from './posKey.ts';
 
 /** Positions are stored for plies 0…50 (PLAN §4). */
@@ -133,11 +133,22 @@ const INSERT_PLAYER_GAME = `INSERT OR IGNORE INTO player_games
    opp_source_kind, ended_at, time_class, rated)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-function writePlayerGame(db: Db, sourceId: Id, gameId: Id, color: Color, g: GameFacts): boolean {
+/** Same row, but an existing one takes this import's ratings and titles (the source's own sync knows best). */
+const UPSERT_PLAYER_GAME = `INSERT INTO player_games
+  (source_id, game_id, color, outcome, rating, rating_after, opp_name, opp_key, opp_rating, opp_title,
+   opp_source_kind, ended_at, time_class, rated)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT (source_id, game_id) DO UPDATE SET
+    rating = excluded.rating,
+    rating_after = COALESCE(excluded.rating_after, player_games.rating_after),
+    opp_rating = excluded.opp_rating,
+    opp_title = COALESCE(excluded.opp_title, player_games.opp_title)`;
+
+function writePlayerGame(db: Db, sourceId: Id, gameId: Id, color: Color, g: GameFacts, refresh = false): boolean {
   const me = g[color];
   const opp = g[color === 'white' ? 'black' : 'white'];
   const oppId = opponentIdentity(g.origin, opp);
-  const r = db.run(INSERT_PLAYER_GAME, [
+  const r = db.run(refresh ? UPSERT_PLAYER_GAME : INSERT_PLAYER_GAME, [
     sourceId,
     gameId,
     colorChar(color),
@@ -156,6 +167,38 @@ function writePlayerGame(db: Db, sourceId: Id, gameId: Id, color: Color, g: Game
   return r.changes > 0;
 }
 
+/** What `insertGame` derives from the moves. */
+interface MoveAnalysis {
+  sans: string[];
+  /** EPD after 0…min(50, plies) plies. */
+  epds: string[];
+  /** Move played from each of those positions (standard castling). */
+  ucis: string[];
+  opening: OpeningMatch | null;
+}
+
+/** Validates and normalises the SAN mainline, and derives positions and the opening. */
+function analyseMoves(moves: readonly string[], book: OpeningBook): MoveAnalysis {
+  const pos = Chess.default();
+  const epds = [epdOf(pos)];
+  const ucis: string[] = [];
+  const sans: string[] = [];
+  for (const [i, san] of moves.entries()) {
+    const move = parseSan(pos, san);
+    if (!move) throw new InvalidGameError(`Illegal or unparsable move ${JSON.stringify(san)} at ply ${i + 1}`);
+    if (i < POSITION_MAX_PLY + 1) ucis.push(stdUci(pos, move));
+    sans.push(makeSanAndPlay(pos, move));
+    if (i + 1 <= POSITION_MAX_PLY) epds.push(epdOf(pos));
+  }
+  return { sans, epds, ucis, opening: classifyOpening(book, epds) };
+}
+
+function writePositions(db: Db, gameId: Id, epds: readonly string[], ucis: readonly string[]): void {
+  for (const [ply, epd] of epds.entries()) {
+    db.run('INSERT INTO positions (game_id, ply, pos_key, next_uci) VALUES (?, ?, ?, ?)', [gameId, ply, posKey(epd), ucis[ply] ?? null]);
+  }
+}
+
 /**
  * Stores one game: validates and normalises the moves, classifies the opening, writes `games`,
  * `positions` (plies 0…50) and a `player_games` row for every existing source that played it
@@ -163,8 +206,16 @@ function writePlayerGame(db: Db, sourceId: Id, gameId: Id, color: Color, g: Game
  * Idempotent: a duplicate returns the stored id with `inserted: false`.
  * Synchronous; call it inside `db.tx()` in batches (e.g. 500 games per transaction).
  * Throws `InvalidGameError` for an illegal move.
+ *
+ * `opts.sourceId`: the source whose own sync produced this game. Its existing `player_games` row
+ * (written earlier while syncing the opponent, with less precise ratings) takes this game's
+ * ratings and titles; every other source's row is only created when missing.
  */
-export function insertGame(db: Db, game: NormalizedGame, opts: { openings?: OpeningBook } = {}): InsertGameResult {
+export function insertGame(
+  db: Db,
+  game: NormalizedGame,
+  opts: { openings?: OpeningBook; sourceId?: Id } = {},
+): InsertGameResult {
   const facts: GameFacts = {
     origin: game.origin,
     databaseId: game.databaseId,
@@ -180,18 +231,7 @@ export function insertGame(db: Db, game: NormalizedGame, opts: { openings?: Open
     let gameId = db.value<Id>('SELECT id FROM games WHERE origin = ? AND origin_id = ?', [game.origin, game.originId]);
     const inserted = gameId === undefined;
     if (gameId === undefined) {
-      const pos = Chess.default();
-      const epds = [epdOf(pos)];
-      const ucis: string[] = [];
-      const sans: string[] = [];
-      for (const [i, san] of game.moves.entries()) {
-        const move = parseSan(pos, san);
-        if (!move) throw new InvalidGameError(`Illegal or unparsable move ${JSON.stringify(san)} at ply ${i + 1}`);
-        if (i < POSITION_MAX_PLY + 1) ucis.push(stdUci(pos, move));
-        sans.push(makeSanAndPlay(pos, move));
-        if (i + 1 <= POSITION_MAX_PLY) epds.push(epdOf(pos));
-      }
-      const opening = classifyOpening(opts.openings ?? getOpeningBook(), epds);
+      const { sans, epds, ucis, opening } = analyseMoves(game.moves, opts.openings ?? getOpeningBook());
 
       gameId = db.run(
         `INSERT INTO games (origin, origin_id, url, database_id, white, black, white_key, black_key,
@@ -234,19 +274,12 @@ export function insertGame(db: Db, game: NormalizedGame, opts: { openings?: Open
         ],
       ).lastInsertRowid;
 
-      for (const [ply, epd] of epds.entries()) {
-        db.run('INSERT INTO positions (game_id, ply, pos_key, next_uci) VALUES (?, ?, ?, ?)', [
-          gameId,
-          ply,
-          posKey(epd),
-          ucis[ply] ?? null,
-        ]);
-      }
+      writePositions(db, gameId, epds, ucis);
     }
 
     const sourceIds: Id[] = [];
     for (const m of matchSources(db, facts)) {
-      writePlayerGame(db, m.sourceId, gameId, m.color, facts);
+      writePlayerGame(db, m.sourceId, gameId, m.color, facts, m.sourceId === opts.sourceId);
       sourceIds.push(m.sourceId);
     }
     return { gameId, inserted, sourceIds };
@@ -332,5 +365,63 @@ export function rebuildPlayerGames(db: Db, sourceId: Id): number {
       if (writePlayerGame(db, sourceId, r.id, isWhite(r) ? 'white' : 'black', facts)) added++;
     }
     return added;
+  });
+}
+
+/**
+ * Recomputes the derived data of stored games from their `moves_san`: the opening (after an
+ * update of the chess-openings book) and the `positions` rows. Games whose moves no longer parse
+ * are left alone and counted. Runs in one transaction; call it in batches.
+ */
+export function reindexGames(
+  db: Db,
+  gameIds: readonly Id[],
+  opts: { openings?: OpeningBook } = {},
+): { updated: number; invalid: number } {
+  const book = opts.openings ?? getOpeningBook();
+  return db.tx(() => {
+    let updated = 0;
+    let invalid = 0;
+    for (const id of gameIds) {
+      const moves = db.value<string>('SELECT moves_san FROM games WHERE id = ?', [id]);
+      if (moves === undefined) continue;
+      let a: MoveAnalysis;
+      try {
+        a = analyseMoves(moves ? moves.split(' ') : [], book);
+      } catch (e) {
+        if (e instanceof InvalidGameError) {
+          invalid++;
+          continue;
+        }
+        throw e;
+      }
+      db.run('UPDATE games SET eco = ?, opening_name = ?, opening_ply = ?, ply_count = ?, moves_san = ? WHERE id = ?', [
+        a.opening?.eco ?? null,
+        a.opening?.name ?? null,
+        a.opening?.ply ?? null,
+        a.sans.length,
+        a.sans.join(' '),
+        id,
+      ]);
+      db.run('DELETE FROM positions WHERE game_id = ?', [id]);
+      writePositions(db, id, a.epds, a.ucis);
+      updated++;
+    }
+    return { updated, invalid };
+  });
+}
+
+/**
+ * Fills in opponent titles learnt later (Chess.com game objects carry no titles; the geo lookup
+ * finds them on the player's profile): `games.white_title`/`black_title` of that site's games and
+ * `player_games.opp_title`, only where still unknown. Returns the number of rows changed.
+ */
+export function backfillPlayerTitle(db: Db, kind: 'lichess' | 'chesscom', key: string, title: Title): number {
+  return db.tx(() => {
+    let n = db.run('UPDATE games SET white_title = ? WHERE origin = ? AND white_key = ? AND white_title IS NULL', [title, kind, key]).changes;
+    n += db.run('UPDATE games SET black_title = ? WHERE origin = ? AND black_key = ? AND black_title IS NULL', [title, kind, key]).changes;
+    n += db.run('UPDATE player_games SET opp_title = ? WHERE opp_source_kind = ? AND opp_key = ? AND opp_title IS NULL', [title, kind, key])
+      .changes;
+    return n;
   });
 }
