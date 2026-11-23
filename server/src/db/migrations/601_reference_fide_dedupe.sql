@@ -6,11 +6,14 @@
 -- build '<otherDatabaseId>:<hash>' for every other reference database (a handful) and use the
 -- UNIQUE (origin, origin_id) index.
 
--- 1. `player_games` rows of `fide` sources: reference games only (never a user's PGN database,
---    whose WhiteFideId/BlackFideId tags would otherwise put private games on a possibly public
---    FIDE profile), and one copy per game when several reference databases hold it (e.g. the
---    Lichess broadcasts plus a licensed OTB database). Applies to every writer (insertGame's
---    source matching, rebuildPlayerGames, syncs): the insert is skipped (RAISE(IGNORE), no error).
+-- 1. The one rule for `player_games` rows of `fide` sources (docs/DECISIONS.md, decision 1):
+--    reference games only (never a user's PGN database, whose WhiteFideId/BlackFideId tags would
+--    otherwise put private games on a possibly public FIDE profile), and one copy per game when
+--    several reference databases hold it (e.g. the Lichess broadcasts plus a licensed OTB
+--    database; the copy stored first wins). chess/store.ts follows it (`matchSources` and
+--    `rebuildPlayerGames` only look at reference games); this trigger enforces it for every
+--    writer: a disallowed insert is skipped (RAISE(IGNORE), no error, no row).
+--    The two DELETEs clean up rows written before the rule existed.
 DELETE FROM player_games
  WHERE source_id IN (SELECT id FROM sources WHERE kind = 'fide')
    AND game_id IN (SELECT id FROM games WHERE origin <> 'reference');

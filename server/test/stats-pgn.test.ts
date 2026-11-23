@@ -161,8 +161,9 @@ describe('PGN export of OTB games', () => {
   beforeAll(async () => {
     t = await makeTestApp();
     cookie = createUserSession(t.db, { username: 'otb-viewer' }).cookie;
-    const dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('Club', 'games', 0)").lastInsertRowid;
-    // A FIDE player and the spelling of their name in a club database: both match some games.
+    // FIDE sources read reference databases only (decision 1), so the OTB games live in one; the
+    // PGN spelling of the name is a `pgn` source of the same reference database.
+    const dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'reference', 0)").lastInsertRowid;
     const fide = createSource(t.db, { kind: 'fide', key: '999001', displayName: 'Testplayer, Anna' });
     const pgn = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(dbId, 'Testplayer, A'), displayName: 'Testplayer, A', databaseId: dbId });
     createProfile(t.db, { slug: 'anna', displayName: 'Anna T.', ownerUserId: null, sources: [{ id: pgn }, { id: fide }] });
@@ -170,7 +171,7 @@ describe('PGN export of OTB games', () => {
       insertGame(
         t.db,
         testGame({
-          origin: 'pgn',
+          origin: 'reference',
           originId: `${dbId}:g${n}`,
           databaseId: dbId,
           white: { name: white.name, fideId: white.fideId ?? null },
@@ -183,6 +184,12 @@ describe('PGN export of OTB games', () => {
     otb(1, { name: 'Testplayer, A' }, { name: 'Rival, R' }); // the PGN spelling only
     otb(2, { name: 'Testplayer,Anna', fideId: '999001' }, { name: 'Other, O' }); // FIDE id, another spelling
     otb(3, { name: 'Club, C' }, { name: 'Testplayer, A', fideId: '999001' }); // both sources: FIDE wins
+    // The same FIDE id in somebody's PGN database stays out of the FIDE profile.
+    const club = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('Club', 'games', 'public', 0)").lastInsertRowid;
+    insertGame(
+      t.db,
+      testGame({ origin: 'pgn', originId: `${club}:x`, databaseId: club, white: { name: 'Testplayer, Anna', fideId: '999001' }, black: { name: 'Club, D' } }),
+    );
   });
   afterAll(async () => t.close());
 

@@ -23,7 +23,7 @@ describe('profiles migrations on existing data', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('501 keeps every source and its references; 502 drops FIDE rows of non-reference games; 503 sizes files', () => {
+  it('501 keeps every source and its references; 503 sizes files', () => {
     dir = mkdtempSync(join(tmpdir(), 'outpost-mig-'));
     db = openDb(':memory:');
     migrateWith(['001_init.sql', '500_databases_files.sql']);
@@ -46,7 +46,7 @@ describe('profiles migrations on existing data', () => {
     const lichess = src('lichess', 'lin');
     const profile = db.run("INSERT INTO profiles (slug, display_name, created_at, updated_at) VALUES ('p', 'P', 0, 0)").lastInsertRowid;
     for (const s of [fide, pgn, lichess]) db.run('INSERT INTO profile_sources (profile_id, source_id) VALUES (?, ?)', [profile, s]);
-    // Before 502, insertGame attaches the FIDE source to the user DB game too.
+    // The FIDE source links the reference game only (chess/store.ts; migration 601 guards it).
     const userGame = insertGame(
       db,
       testGame({ origin: 'pgn', originId: `${userDb}:g1`, databaseId: userDb, white: { name: 'Pat', fideId: '5000005' } }),
@@ -55,10 +55,11 @@ describe('profiles migrations on existing data', () => {
       db,
       testGame({ origin: 'reference', originId: `${refDb}:g2`, databaseId: refDb, white: { name: 'Pat', fideId: '5000005' } }),
     );
-    expect(userGame.sourceIds.sort()).toEqual([fide, pgn].sort());
+    expect(userGame.sourceIds).toEqual([pgn]);
+    expect(refGame.sourceIds).toEqual([fide]);
     db.run("INSERT INTO files (owner_user_id, name, kind, pgn, created_at, updated_at) VALUES (?, 'f', 'study', '1. e4 Ω', 0, 0)", [user]);
 
-    migrateWith(['501_sources_autoincrement.sql', '502_fide_reference_only.sql', '503_files_quota.sql']);
+    migrateWith(['501_sources_autoincrement.sql', '503_files_quota.sql']);
 
     // 501: same rows, ids and columns; foreign keys intact; ids are never handed out twice.
     expect(db.all('SELECT id, kind, key, display_name, database_id, sync_state_json, created_at FROM sources ORDER BY id')).toEqual([
@@ -75,10 +76,8 @@ describe('profiles migrations on existing data', () => {
     db.run('DELETE FROM sources WHERE id = ?', [pgn]);
     expect(db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [pgn])).toBe(0);
 
-    // 502: the FIDE source keeps its reference game only, now and for later inserts.
+    // The FIDE source's rows survive the rebuild of `sources`.
     expect(db.all('SELECT game_id FROM player_games WHERE source_id = ?', [fide])).toEqual([{ game_id: refGame.gameId }]);
-    insertGame(db, testGame({ origin: 'pgn', originId: `${userDb}:g3`, databaseId: userDb, white: { name: 'Pat', fideId: '5000005' } }));
-    expect(db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fide])).toBe(1);
 
     // 503: existing files got their size (UTF-8 bytes).
     expect(db.value('SELECT pgn_bytes FROM files')).toBe(Buffer.byteLength('1. e4 Ω'));

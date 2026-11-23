@@ -7,11 +7,16 @@ import { createSource, makeJobContext, makeTestApp, testGame, type TestApp } fro
 describe('rebuild and local sync jobs', () => {
   let t: TestApp;
   let dbId: number;
+  let refDb: number;
   beforeAll(async () => {
     t = await makeTestApp();
     dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('Club games', 'games', 0)").lastInsertRowid;
     insertGame(t.db, testGame({ origin: 'pgn', originId: `${dbId}:a`, databaseId: dbId, white: { name: 'Carol Smith' }, black: { name: 'Dave Jones', fideId: '999001' } }));
     insertGame(t.db, testGame({ origin: 'pgn', originId: `${dbId}:b`, databaseId: dbId, white: { name: 'Dave Jones', fideId: '999001' }, black: { name: 'Carol Smith' }, result: '0-1' }));
+    // The same player in a reference database: FIDE sources link these games only (decision 1).
+    refDb = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'reference', 0)").lastInsertRowid;
+    insertGame(t.db, testGame({ origin: 'reference', originId: `${refDb}:a`, databaseId: refDb, white: { name: 'Erin Park' }, black: { name: 'Jones, Dave', fideId: '999001' } }));
+    insertGame(t.db, testGame({ origin: 'reference', originId: `${refDb}:b`, databaseId: refDb, white: { name: 'Jones, Dave', fideId: '999001' }, black: { name: 'Erin Park' }, result: '0-1' }));
   });
   afterAll(async () => t.close());
 
@@ -30,16 +35,29 @@ describe('rebuild and local sync jobs', () => {
 
   it('rebuilds a database: player links for its fide players, openings and positions', async () => {
     const fide = createSource(t.db, { kind: 'fide', key: '999001' });
-    t.db.run("UPDATE games SET eco = NULL, opening_name = NULL, opening_ply = NULL WHERE database_id = ?", [dbId]);
-    t.db.run('DELETE FROM positions WHERE game_id IN (SELECT id FROM games WHERE database_id = ?)', [dbId]);
-    const { ctx, updates } = makeJobContext(t, 'rebuild', { databaseId: dbId });
+    const fideGames = () => t.db.all('SELECT g.database_id, pg.color FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.source_id = ? ORDER BY g.id', [fide]);
+    for (const id of [dbId, refDb]) {
+      t.db.run("UPDATE games SET eco = NULL, opening_name = NULL, opening_ply = NULL WHERE database_id = ?", [id]);
+      t.db.run('DELETE FROM positions WHERE game_id IN (SELECT id FROM games WHERE database_id = ?)', [id]);
+    }
+    const { ctx, updates } = makeJobContext(t, 'rebuild', { databaseId: refDb });
     await rebuildHandler(ctx);
-    expect(t.db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fide])).toBe(2);
-    expect(t.db.all('SELECT DISTINCT eco, opening_name FROM games WHERE database_id = ?', [dbId])).toEqual([
+    expect(fideGames()).toEqual([
+      { database_id: refDb, color: 'b' },
+      { database_id: refDb, color: 'w' },
+    ]);
+    expect(t.db.all('SELECT DISTINCT eco, opening_name FROM games WHERE database_id = ?', [refDb])).toEqual([
       { eco: 'C70', opening_name: 'Ruy Lopez: Morphy Defense' },
     ]);
-    expect(t.db.value('SELECT COUNT(*) FROM positions WHERE game_id IN (SELECT id FROM games WHERE database_id = ?)', [dbId])).toBe(14);
+    expect(t.db.value('SELECT COUNT(*) FROM positions WHERE game_id IN (SELECT id FROM games WHERE database_id = ?)', [refDb])).toBe(14);
     expect(updates.at(-1)).toMatchObject({ done: 2, total: 2, counts: { playerGames: 2, invalid: 0 } });
+
+    // A user database re-indexes its games, but its FideId tags never link the FIDE source.
+    const club = makeJobContext(t, 'rebuild', { databaseId: dbId });
+    await rebuildHandler(club.ctx);
+    expect(fideGames()).toHaveLength(2);
+    expect(t.db.value('SELECT COUNT(*) FROM positions WHERE game_id IN (SELECT id FROM games WHERE database_id = ?)', [dbId])).toBe(14);
+    expect(club.updates.at(-1)).toMatchObject({ done: 2, total: 2, counts: { playerGames: 0, invalid: 0 } });
   });
 
   it('rebuilds one source and rejects bad payloads', async () => {

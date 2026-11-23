@@ -18,7 +18,7 @@ function migratedUpTo(upTo: number): { db: Db; dir: string } {
   return { db, dir };
 }
 
-describe('migration 601 (reference FIDE dedupe)', () => {
+describe('migration 601 (FIDE sources: reference games only, one copy each)', () => {
   const cleanup: Array<() => void> = [];
   afterEach(() => {
     for (const f of cleanup.splice(0)) f();
@@ -35,10 +35,19 @@ describe('migration 601 (reference FIDE dedupe)', () => {
     const refB = db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'reference', 0)").lastInsertRowid;
     const fide = createSource(db, { kind: 'fide', key: '1503014' });
     const carlsen = { name: 'Carlsen, Magnus', fideId: '1503014' };
-    // Before 601 every one of these got a row for the FIDE source.
-    insertGame(db, testGame({ origin: 'pgn', originId: `${userDb}:h1`, databaseId: userDb, white: carlsen }));
+    // Rows as an earlier insertGame wrote them: the FIDE source on a user-database game (insertGame
+    // itself links reference games only) and, with no trigger before 601, on both reference copies.
+    const legacy = (gameId: number) =>
+      db.run(
+        `INSERT INTO player_games (source_id, game_id, color, outcome, opp_name, opp_key, opp_source_kind, ended_at, time_class, rated)
+         SELECT ?, id, 'w', 'w', black, black_key, 'pgn', ended_at, time_class, rated FROM games WHERE id = ?`,
+        [fide, gameId],
+      );
+    const u = insertGame(db, testGame({ origin: 'pgn', originId: `${userDb}:h1`, databaseId: userDb, white: carlsen }));
+    expect(u.sourceIds).toEqual([]);
+    legacy(u.gameId);
     const a = insertGame(db, testGame({ origin: 'reference', originId: `${refA}:h2`, databaseId: refA, white: carlsen })).gameId;
-    insertGame(db, testGame({ origin: 'reference', originId: `${refB}:h2`, databaseId: refB, white: carlsen }));
+    expect(insertGame(db, testGame({ origin: 'reference', originId: `${refB}:h2`, databaseId: refB, white: carlsen })).sourceIds).toEqual([fide]);
     expect(db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fide])).toBe(3);
 
     migrate(db); // applies 601
@@ -48,9 +57,13 @@ describe('migration 601 (reference FIDE dedupe)', () => {
     expect(db.value("SELECT COUNT(*) FROM sqlite_master WHERE name = 'reference_broadcast_tours'")).toBe(1);
 
     // New rows follow the same rules; other sources are untouched.
-    insertGame(db, testGame({ origin: 'pgn', originId: `${userDb}:h3`, databaseId: userDb, white: carlsen }));
-    insertGame(db, testGame({ origin: 'reference', originId: `${refB}:h4`, databaseId: refB, white: carlsen }));
-    insertGame(db, testGame({ origin: 'reference', originId: `${refA}:h4`, databaseId: refA, white: carlsen }));
+    const u2 = insertGame(db, testGame({ origin: 'pgn', originId: `${userDb}:h3`, databaseId: userDb, white: carlsen })).gameId;
+    expect(insertGame(db, testGame({ origin: 'reference', originId: `${refB}:h4`, databaseId: refB, white: carlsen })).sourceIds).toEqual([fide]);
+    // The second copy is skipped by the trigger, and insertGame does not report it.
+    expect(insertGame(db, testGame({ origin: 'reference', originId: `${refA}:h4`, databaseId: refA, white: carlsen })).sourceIds).toEqual([]);
+    expect(db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fide])).toBe(2);
+    // Any other writer is held to the rule too.
+    legacy(u2);
     expect(db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fide])).toBe(2);
     const lichess = createSource(db, { kind: 'lichess', key: 'alice' });
     insertGame(db, testGame({}));

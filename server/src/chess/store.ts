@@ -75,7 +75,10 @@ export interface InsertGameResult {
   gameId: Id;
   /** False when `(origin, originId)` was already stored (a duplicate); player_games rows are still ensured. */
   inserted: boolean;
-  /** Sources that now have a player_games row for this game. */
+  /**
+   * Sources that now have a player_games row for this game (a `fide` source skipped because
+   * another reference database's copy of the game is already linked to it is not listed).
+   */
   sourceIds: Id[];
 }
 
@@ -109,7 +112,15 @@ function opponentIdentity(origin: GameOrigin, opp: SideFacts): { kind: SourceKin
   return { kind: 'pgn', key: opp.key };
 }
 
-/** Sources that played this game, with their colour (PLAN §7: one row per source that appears). */
+/**
+ * Sources that played this game, with their colour (PLAN §7: one row per source that appears).
+ *
+ * `fide` sources link **reference-database games only** (PLAN §5 "A FIDE player profile is built
+ * from reference-DB games"; docs/DECISIONS.md): a WhiteFideId / BlackFideId tag in a user's PGN
+ * database never puts that game on a (possibly public) FIDE profile. Migration 601's trigger
+ * `reference_fide_player_games` enforces the same rule for every writer and also keeps one copy
+ * per game when several reference databases hold it (the first copy stored wins).
+ */
 function matchSources(db: Db, g: GameFacts): Array<{ sourceId: Id; color: Color }> {
   const out: Array<{ sourceId: Id; color: Color }> = [];
   const add = (kind: SourceKind, key: string | null, color: Color): void => {
@@ -122,7 +133,7 @@ function matchSources(db: Db, g: GameFacts): Array<{ sourceId: Id; color: Color 
     if (g.origin === 'lichess' || g.origin === 'chesscom') add(g.origin, side.key, color);
     else {
       if (g.databaseId !== null) add('pgn', `${g.databaseId}:${side.key}`, color);
-      add('fide', side.fideId, color);
+      if (g.origin === 'reference') add('fide', side.fideId, color);
     }
   }
   return out;
@@ -279,8 +290,11 @@ export function insertGame(
 
     const sourceIds: Id[] = [];
     for (const m of matchSources(db, facts)) {
-      writePlayerGame(db, m.sourceId, gameId, m.color, facts, m.sourceId === opts.sourceId);
-      sourceIds.push(m.sourceId);
+      const written = writePlayerGame(db, m.sourceId, gameId, m.color, facts, m.sourceId === opts.sourceId);
+      // Not written: the row existed already, or migration 601's trigger skipped a second copy.
+      if (written || db.value('SELECT 1 FROM player_games WHERE source_id = ? AND game_id = ?', [m.sourceId, gameId]) !== undefined) {
+        sourceIds.push(m.sourceId);
+      }
     }
     return { gameId, inserted, sourceIds };
   });
@@ -308,8 +322,9 @@ interface GameSideRow {
 
 /**
  * Adds the missing `player_games` rows of one source from games already stored: a `pgn` source's
- * player in its database, a `fide` source's games in any database, or a lichess/chesscom source's
- * games imported while syncing someone else. Existing rows are kept (so `rating_after` survives).
+ * player in its database, a `fide` source's games in the reference databases (one copy per game,
+ * oldest first: see `matchSources`), or a lichess/chesscom source's games imported while syncing
+ * someone else. Existing rows are kept (so `rating_after` survives).
  * Returns the number of rows added. Runs in one transaction.
  */
 export function rebuildPlayerGames(db: Db, sourceId: Id): number {
@@ -333,7 +348,10 @@ export function rebuildPlayerGames(db: Db, sourceId: Id): number {
       isWhite = r => r.white_key === src.key;
       break;
     case 'fide':
-      rows = db.all<GameSideRow>(`SELECT ${cols} FROM games WHERE white_fide_id = ? OR black_fide_id = ?`, [src.key, src.key]);
+      rows = db.all<GameSideRow>(
+        `SELECT ${cols} FROM games WHERE origin = 'reference' AND (white_fide_id = ? OR black_fide_id = ?) ORDER BY id`,
+        [src.key, src.key],
+      );
       isWhite = r => r.white_fide_id === src.key;
       break;
     case 'pgn': {

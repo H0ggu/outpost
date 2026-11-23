@@ -45,15 +45,18 @@ export interface RebuildOptions {
   batchesPerRun?: number;
 }
 
-/** Sources whose games live in a database: its `pgn` players and the FIDE ids that appear in it. */
+/**
+ * Sources whose games live in a database: its `pgn` players and, for a reference database, the
+ * FIDE ids that appear in it (`fide` sources link reference games only, see chess/store.ts).
+ */
 function databaseSourceIds(db: Db, databaseId: Id): Id[] {
   return db
     .all<{ id: Id }>(
       `SELECT id FROM sources WHERE kind = 'pgn' AND (database_id = :db OR substr(key, 1, length(:prefix)) = :prefix)
        UNION
        SELECT s.id FROM sources s WHERE s.kind = 'fide' AND s.key IN (
-         SELECT white_fide_id FROM games WHERE database_id = :db AND white_fide_id IS NOT NULL
-         UNION SELECT black_fide_id FROM games WHERE database_id = :db AND black_fide_id IS NOT NULL)`,
+         SELECT white_fide_id FROM games WHERE database_id = :db AND origin = 'reference' AND white_fide_id IS NOT NULL
+         UNION SELECT black_fide_id FROM games WHERE database_id = :db AND origin = 'reference' AND black_fide_id IS NOT NULL)`,
       { db: databaseId, prefix: `${databaseId}:` },
     )
     .map(r => r.id);
