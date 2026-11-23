@@ -41,6 +41,7 @@ import { chesscomSnapshot, type ChesscomProfile, type ChesscomStats } from '../s
 import { lichessSnapshot, type LichessUser } from '../sync/lichess.ts';
 import { parseSourceProfile } from '../sync/profile.ts';
 import { loadDatabaseForViewer } from './access.ts';
+import { accountLookups, type AccountLookups, type LookupSite } from './lookups.ts';
 import { upstreamJsonWithin } from './upstreamJson.ts';
 
 /** Lichess usernames: 2–30 letters, digits, `_` or `-`. */
@@ -124,6 +125,7 @@ export async function resolveSource(
   index = 0,
 ): Promise<ResolvedSource> {
   const timeoutMs = ctx.timeoutMs ?? CHECK_TIMEOUT_MS;
+  const lookup: Lookup = { lookups: accountLookups(ctx.upstream), client: `user:${ctx.viewer.id}` };
   const fail = (message: string): never => {
     throw validationError(message, { issues: [{ path: `sources.${index}.key`, message }] });
   };
@@ -134,20 +136,20 @@ export async function resolveSource(
       const key = playerKey(raw);
       const row = existingSource(ctx.db, 'lichess', key);
       if (row) return reuse(row);
-      return checkLichessUser(ctx.upstream, key, fail, timeoutMs);
+      return checkLichessUser(ctx.upstream, key, fail, timeoutMs, lookup);
     }
     case 'chesscom': {
       if (!CHESSCOM_USERNAME_RE.test(raw)) fail(`"${raw}" is not a valid Chess.com username`);
       const key = playerKey(raw);
       const row = existingSource(ctx.db, 'chesscom', key);
       if (row) return reuse(row);
-      return checkChesscomUser(ctx.upstream, key, fail, timeoutMs);
+      return checkChesscomUser(ctx.upstream, key, fail, timeoutMs, lookup);
     }
     case 'fide': {
       if (!FIDE_ID_RE.test(raw)) fail(`"${raw}" is not a FIDE id`);
       const row = existingSource(ctx.db, 'fide', raw);
       if (row) return reuse(row);
-      return checkFideId(ctx.db, ctx.upstream, raw, fail, timeoutMs);
+      return checkFideId(ctx.db, ctx.upstream, raw, fail, timeoutMs, lookup);
     }
     case 'pgn': {
       if (input.databaseId === undefined) {
@@ -204,7 +206,30 @@ function hasPendingImport(db: Db, databaseId: Id): boolean {
   );
 }
 
-async function checkLichessUser(upstream: Upstream, key: string, fail: (m: string) => never, timeoutMs: number): Promise<ResolvedSource> {
+/** The lookup budget an account check counts against (profiles/lookups.ts), and whose. */
+interface Lookup {
+  lookups: AccountLookups;
+  client: string;
+}
+
+/** 503 when the account checks of this client or of the instance are used up for the minute. */
+function takeLookup(lookup: Lookup, site: LookupSite): void {
+  if (!lookup.lookups.take(site, lookup.client)) {
+    throw new HttpError(503, 'upstream_unavailable', `Too many ${site === 'lichess' ? 'Lichess' : 'Chess.com'} account checks right now; try again in a minute`, {
+      reason: 'busy',
+    });
+  }
+}
+
+async function checkLichessUser(
+  upstream: Upstream,
+  key: string,
+  fail: (m: string) => never,
+  timeoutMs: number,
+  lookup: Lookup,
+): Promise<ResolvedSource> {
+  if (lookup.lookups.isMissing('lichess', key)) return fail(`No Lichess account "${key}"`);
+  takeLookup(lookup, 'lichess');
   let user: Record<string, unknown> | null;
   try {
     const res = await upstreamJsonWithin(upstream, `${UPSTREAM.lichess}/api/user/${encodeURIComponent(key)}`, {
@@ -212,7 +237,10 @@ async function checkLichessUser(upstream: Upstream, key: string, fail: (m: strin
       allowStatuses: [404],
       timeoutMs,
     });
-    if (res.status === 404) return fail(`No Lichess account "${key}"`);
+    if (res.status === 404) {
+      lookup.lookups.markMissing('lichess', key);
+      return fail(`No Lichess account "${key}"`);
+    }
     user = obj(res.body);
   } catch (e) {
     if (e instanceof HttpError) throw e;
@@ -237,12 +265,23 @@ async function checkLichessUser(upstream: Upstream, key: string, fail: (m: strin
   };
 }
 
-async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: string) => never, timeoutMs: number): Promise<ResolvedSource> {
+async function checkChesscomUser(
+  upstream: Upstream,
+  key: string,
+  fail: (m: string) => never,
+  timeoutMs: number,
+  lookup: Lookup,
+): Promise<ResolvedSource> {
   const base = `${UPSTREAM.chesscom}/pub/player/${encodeURIComponent(key)}`;
+  if (lookup.lookups.isMissing('chesscom', key)) return fail(`No Chess.com account "${key}"`);
+  takeLookup(lookup, 'chesscom');
   let player: Record<string, unknown> | null;
   try {
     const res = await upstreamJsonWithin(upstream, base, { allowStatuses: [404, 410], timeoutMs });
-    if (res.status === 404 || res.status === 410) return fail(`No Chess.com account "${key}"`);
+    if (res.status === 404 || res.status === 410) {
+      lookup.lookups.markMissing('chesscom', key);
+      return fail(`No Chess.com account "${key}"`);
+    }
     player = obj(res.body);
   } catch (e) {
     if (e instanceof HttpError) throw e;
@@ -283,6 +322,7 @@ async function checkFideId(
   fideId: string,
   fail: (m: string) => never,
   timeoutMs: number,
+  lookup: Lookup,
 ): Promise<ResolvedSource> {
   // The newest reference game with this FIDE id gives the name as the reference DB writes it.
   const local = db.get<{ name: string; title: string | null }>(
@@ -295,7 +335,11 @@ async function checkFideId(
   );
   // Lichess's copy of the FIDE rating list adds the official name, title, federation and ratings.
   let fide: Record<string, unknown> | null = null;
+  // Without local games the id can't be checked otherwise (503 when the budget is spent); with
+  // them the lookup only adds details and is skipped.
+  if (!local) takeLookup(lookup, 'lichess');
   try {
+    if (local && !lookup.lookups.take('lichess', lookup.client)) throw new Error('no lookup budget');
     const res = await upstreamJsonWithin(upstream, `${UPSTREAM.lichess}/api/fide/player/${fideId}`, {
       allowStatuses: [404],
       timeoutMs,
