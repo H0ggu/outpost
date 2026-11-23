@@ -85,6 +85,14 @@
   opacity: 0.6;
 }
 
+/*
+ * Wraps a kit Table: makes its scroll box the containing block of absolutely positioned bits
+ * (the `.visually-hidden` column headers), which would otherwise escape it and widen the page.
+ */
+.lib-tablehost > .table-wrap {
+  position: relative;
+}
+
 /* A box title with an inline rename button, and the rename form that replaces it. */
 .lib-dbtitle {
   display: inline-flex;
@@ -331,7 +339,14 @@
   border-inline-end: 2px solid var(--lib-source-color, var(--c-border-light));
 }
 
-.lib-source__name {
+.lib-source > * {
+  flex: none;
+}
+
+/* The name gives way first, so a chip fits any width (its box clips the rest). */
+.lib-source > .lib-source__name {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -461,8 +476,55 @@
   color: var(--c-link-hover);
 }
 
+/*
+ * Players / bookmarks table: fixed layout so a long name or many account chips can't push the
+ * star off the side; the player column takes what the others leave.
+ */
+.lib-ptable {
+  table-layout: fixed;
+}
+
 .lib-ptable td {
   vertical-align: middle;
+}
+
+.lib-ptable th[data-col='games'] {
+  width: 6rem;
+}
+
+.lib-ptable th[data-col='updated'] {
+  width: 9.5rem;
+}
+
+.lib-ptable th[data-col='owner'] {
+  width: 10rem;
+}
+
+.lib-ptable th[data-col='star'] {
+  width: 3.5rem;
+}
+
+.lib-ptable td[data-col='updated'],
+.lib-ptable td[data-col='owner'] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .lib-ptable td,
+  .lib-ptable th {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  .lib-ptable th[data-col='games'] {
+    width: 4.5rem;
+  }
+
+  .lib-ptable th[data-col='star'] {
+    width: 2.75rem;
+  }
 }
 
 /* ---------------------------------------------------------------------------

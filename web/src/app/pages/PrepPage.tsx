@@ -1,8 +1,9 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { Id, PrepSet, ProfileSummary } from '@outpost/shared/api';
 import { TIME_CLASSES, type TimeClass } from '@outpost/shared/chess';
-import { PERIODS, type Period, type ProfileFilters } from '@outpost/shared/filters';
+import { FILTER_KEYS, filtersToQuery, normalizeFilters, PERIODS, type Period, type ProfileFilters } from '@outpost/shared/filters';
 import { ApiError } from '../api/client.ts';
 import { browserTimeZone, useSession, useUrlFilters } from '../api/hooks.ts';
 import { Box, Button, ButtonLink, Card, EmptyState, ErrorBox, licon, Page, Spinner, TIME_CLASS_LABELS } from '../components/index.ts';
@@ -13,7 +14,7 @@ import { OpponentPicker } from './components/library/OpponentPicker.tsx';
 import { PrepReportCard } from './components/library/PrepReportCard.tsx';
 import { SourceBadges } from './components/library/ProfileList.tsx';
 import { isUnauthorized, QueryView, SignInPrompt } from './components/library/QueryView.tsx';
-import { useDeletePrep, usePrepReport, usePrepSet, useUpdatePrep } from './library-hooks.ts';
+import { libraryKeys, useDeletePrep, usePrepReport, usePrepSet, useUpdatePrep } from './library-hooks.ts';
 import './components/library/library.css';
 import './PrepPage.css';
 
@@ -29,6 +30,9 @@ const PERIOD_LABELS: Record<Period, string> = {
 /** Time classes offered in the prep filter (`unknown` is for PGN games and rarely useful here). */
 const PREP_TCS = TIME_CLASSES.filter(tc => tc !== 'unknown');
 
+/** Period select value standing for a from/to range taken from the address. */
+const CUSTOM = 'custom';
+
 /** Repertoire line lengths offered (plies; the server's default is 8, i.e. 4 moves each). */
 export const LINE_PLIES = [6, 8, 10, 12, 16] as const;
 const DEFAULT_PLIES = 8;
@@ -39,12 +43,36 @@ export function parsePlies(v: string | null): number | undefined {
   return (LINE_PLIES as readonly number[]).includes(n) && n !== DEFAULT_PLIES ? n : undefined;
 }
 
-/** "Last 12 months · Blitz, Rapid · rated" — the filters in words (print header). */
+/**
+ * The filters a prep report applies: dates, time controls, rated. The others (colour, outcome,
+ * sources, opponent, event, line) belong to one profile's pages, not to a set of opponents.
+ */
+export function prepFilters(f: ProfileFilters): ProfileFilters {
+  return normalizeFilters({ period: f.period, from: f.from, to: f.to, tc: f.tc, rated: f.rated });
+}
+
+/** The date filter in words: a preset, a custom range, or "All time". */
+export function describeDates(f: ProfileFilters): string {
+  if (f.period) return PERIOD_LABELS[f.period];
+  if (f.from && f.to) return f.from === f.to ? `On ${f.from}` : `${f.from} to ${f.to}`;
+  if (f.from) return `Since ${f.from}`;
+  if (f.to) return `Until ${f.to}`;
+  return 'All time';
+}
+
+/** "Last 12 months · Blitz, Rapid · rated only" — the report filters in words (print header). */
 export function describeFilters(f: ProfileFilters): string {
-  const parts: string[] = [f.period ? PERIOD_LABELS[f.period] : 'All time'];
-  if (f.tc?.length) parts.push(f.tc.map(tc => TIME_CLASS_LABELS[tc]).join(', '));
-  if (f.rated) parts.push(f.rated === 'rated' ? 'rated only' : 'casual only');
+  const p = prepFilters(f);
+  const parts: string[] = [describeDates(p)];
+  if (p.tc?.length) parts.push(p.tc.map(tc => TIME_CLASS_LABELS[tc]).join(', '));
+  if (p.rated) parts.push(p.rated === 'rated' ? 'rated only' : 'casual only');
   return parts.join(' · ');
+}
+
+/** True when the address bar holds filter keys or values other than `filters` (canonical). */
+function urlHasOtherFilters(params: URLSearchParams, filters: ProfileFilters): boolean {
+  const want = filtersToQuery(filters);
+  return FILTER_KEYS.some(k => params.get(k) !== want.get(k));
 }
 
 /**
@@ -90,12 +118,24 @@ export default function PrepPage() {
 
 function PrepView({ set }: { set: PrepSet }) {
   const location = useLocation();
+  const qc = useQueryClient();
   const justCreated = (location.state as { added?: boolean } | null)?.added === true;
   const [editing, setEditing] = useState(justCreated || set.opponents.length === 0);
+  /** The picker is adding someone (possibly creating a profile first): removals wait. */
+  const [picking, setPicking] = useState(false);
   const update = useUpdatePrep();
   const ids = set.opponents.map(o => o.id);
 
+  /**
+   * The opponent ids as last saved — read from the cache when a change is made, not from this
+   * render, so an add that finishes after other edits builds on them instead of undoing them.
+   */
+  const savedIds = (): Id[] => (qc.getQueryData<PrepSet>(libraryKeys.prep(set.id)) ?? set).opponents.map(o => o.id);
   const setOpponents = (profileIds: Id[]) => update.mutateAsync({ id: set.id, body: { profileIds } });
+  const addOpponent = async (pid: Id): Promise<unknown> => {
+    const cur = savedIds();
+    return cur.includes(pid) ? undefined : setOpponents([...cur, pid]);
+  };
 
   return (
     <>
@@ -115,13 +155,18 @@ function PrepView({ set }: { set: PrepSet }) {
         {set.opponents.length > 0 && (
           <ul className="lib-prep-opplist">
             {set.opponents.map(o => (
-              <OpponentChip key={o.id} profile={o} disabled={update.isPending} onRemove={() => void setOpponents(ids.filter(x => x !== o.id)).catch(() => undefined)} />
+              <OpponentChip
+                key={o.id}
+                profile={o}
+                disabled={update.isPending || picking}
+                onRemove={() => void setOpponents(savedIds().filter(x => x !== o.id)).catch(() => undefined)}
+              />
             ))}
           </ul>
         )}
         {update.isError && <ErrorBox error={update.error} title="Could not save the opponents" />}
         {(editing || set.opponents.length === 0) && (
-          <OpponentPicker existing={ids} busy={update.isPending} onAdd={pid => setOpponents(ids.includes(pid) ? ids : [...ids, pid])} />
+          <OpponentPicker existing={ids} busy={update.isPending} onAdd={addOpponent} onWorkingChange={setPicking} />
         )}
       </Card>
 
@@ -202,7 +247,7 @@ function PrepHeader({ set }: { set: PrepSet }) {
 function OpponentChip({ profile, onRemove, disabled }: { profile: ProfileSummary; onRemove: () => void; disabled: boolean }) {
   return (
     <li className="lib-prep-opp">
-      <a href={`#prep-opp-${profile.id}`} className="lib-prep-opp__name">
+      <a href={`#prep-opp-${profile.id}`} className="lib-prep-opp__name" title={profile.displayName}>
         {profile.displayName}
       </a>
       <SourceBadges sources={profile.sources} max={2} />
@@ -223,6 +268,8 @@ function PrepFilters({
   setPlies: (plies: number | undefined) => void;
 }) {
   const id = useId();
+  // From/to dates come only from a link (no date inputs here); the select shows them as one option.
+  const customDates = !filters.period && !!(filters.from || filters.to);
   const toggleTc = (tc: TimeClass) => {
     const cur = new Set(filters.tc ?? []);
     if (cur.has(tc)) cur.delete(tc);
@@ -235,15 +282,19 @@ function PrepFilters({
         <label htmlFor={`${id}-period`}>Period</label>
         <select
           id={`${id}-period`}
-          value={filters.period ?? ''}
-          onChange={e => setFilters({ ...filters, period: (e.target.value || undefined) as Period | undefined, from: undefined, to: undefined })}
+          value={filters.period ?? (customDates ? CUSTOM : '')}
+          onChange={e => {
+            if (e.target.value === CUSTOM) return;
+            setFilters({ ...filters, period: (e.target.value || undefined) as Period | undefined, from: undefined, to: undefined });
+          }}
         >
           <option value="">All time</option>
-          {PERIODS.filter(p => p !== '24h').map(p => (
+          {PERIODS.map(p => (
             <option key={p} value={p}>
               {PERIOD_LABELS[p]}
             </option>
           ))}
+          {customDates && <option value={CUSTOM}>{describeDates(filters)}</option>}
         </select>
       </div>
       <fieldset className="lib-tcs">
@@ -285,9 +336,25 @@ function Report({ set }: { set: PrepSet }) {
   const session = useSession();
   const utc = session.data?.user?.prefs.timezone === 'utc';
   const tz = utc ? 'UTC' : browserTimeZone();
-  const [filters, setFilters] = useUrlFilters();
+  const [urlFilters, setFilters] = useUrlFilters();
+  const filters = useMemo(() => prepFilters(urlFilters), [urlFilters]);
   const [params, setParams] = useSearchParams();
   const plies = parsePlies(params.get('plies'));
+  // Filters this page doesn't apply (a link from a profile page, say) leave the address, so the
+  // controls, the print header and the explorer links all say what the report shows.
+  const stray = urlHasOtherFilters(params, filters);
+  useEffect(() => {
+    if (!stray) return;
+    setParams(
+      prev => {
+        const next = new URLSearchParams(prev);
+        for (const k of FILTER_KEYS) next.delete(k);
+        for (const [k, v] of filtersToQuery(filters)) next.set(k, v);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [stray, filters, setParams]);
   const setPlies = (n: number | undefined) =>
     setParams(prev => {
       const next = new URLSearchParams(prev);

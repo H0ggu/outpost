@@ -254,8 +254,38 @@
   padding-bottom: var(--box-padding);
 }
 
+/*
+ * The games table never outgrows its box: fixed layout, the short columns get a width below, and
+ * Players / Event / Opening share what is left, ellipsizing their text. Wide columns are dropped on
+ * narrower screens (hideBelow in DatabasePage.tsx).
+ */
+.lib-gtable {
+  table-layout: fixed;
+}
+
 .lib-gtable td {
   vertical-align: middle;
+}
+
+.lib-gtable th[data-col='result'] {
+  width: 5.5rem;
+}
+
+.lib-gtable th[data-col='date'] {
+  width: 8rem;
+}
+
+.lib-gtable th[data-col='moves'] {
+  width: 5.25rem;
+}
+
+/* Two icons, or the armed "Delete" + cancel. */
+.lib-gtable th[data-col='actions'] {
+  width: 8rem;
+}
+
+.lib-gtable--readonly th[data-col='actions'] {
+  width: 4rem;
 }
 
 .lib-gplayers {
@@ -273,8 +303,11 @@
   white-space: nowrap;
 }
 
+.lib-gplayer > * {
+  flex: none;
+}
+
 .lib-gplayer__color {
-  flex: 0 0 auto;
   width: 0.7rem;
   height: 0.7rem;
   border-radius: 50%;
@@ -293,10 +326,11 @@
   margin: 0;
 }
 
-.lib-gplayer__name {
+.lib-gplayer > .lib-gplayer__name {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 16rem;
   color: var(--c-font-clear);
 }
 
@@ -316,13 +350,13 @@
   white-space: nowrap;
 }
 
+/* One line of text that ellipsizes at the width of its cell. */
 .lib-clip {
-  display: inline-block;
-  max-width: 18rem;
+  display: block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  vertical-align: middle;
 }
 
 .lib-rowactions {
@@ -336,6 +370,21 @@
   padding: 0.35em 0.55em;
 }
 
+@media (max-width: 760px) {
+  /* The armed delete is icon-only (its accessible name says what it does). */
+  .lib-rowactions__text {
+    display: none;
+  }
+
+  .lib-gtable th[data-col='actions'] {
+    width: 5.5rem;
+  }
+
+  .lib-gtable--readonly th[data-col='actions'] {
+    width: 3.5rem;
+  }
+}
+
 @media (max-width: 480px) {
   .lib-gtable td,
   .lib-gtable th {
@@ -343,8 +392,16 @@
     padding-right: 0.5rem;
   }
 
-  .lib-gplayer__name {
-    max-width: 9.5rem;
+  .lib-gtable th[data-col='result'] {
+    width: 4.25rem;
+  }
+
+  .lib-gtable th[data-col='actions'] {
+    width: 4.75rem;
+  }
+
+  .lib-gtable--readonly th[data-col='actions'] {
+    width: 2.75rem;
   }
 }
 

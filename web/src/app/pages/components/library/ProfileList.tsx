@@ -2,12 +2,13 @@
  * Profiles in lists: source chips, the bookmark star, a compact list (home cards) and a table
  * (players and bookmarks pages).
  */
-import { useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { ProfileSummary, SourceKind, Title } from '@outpost/shared/api';
 import { FlagEmoji, Icon, licon, Table, type Column } from '../../../components/index.ts';
 import { paths } from '../../../paths.ts';
 import { useToggleBookmark } from '../../library-hooks.ts';
+import { ActionErrorToast } from './controls.tsx';
 import { plural, SOURCE_KIND_LABELS, timeAgo } from './format.ts';
 
 /** A source as shown on a chip. */
@@ -45,26 +46,35 @@ export function SourceBadges({ sources, max }: { sources: readonly SourceChip[];
   );
 }
 
-/** Star toggle (`PUT` / `DELETE …/bookmark`), optimistic while the request runs. */
+/**
+ * Star toggle (`PUT` / `DELETE …/bookmark`), optimistic while the request runs; a failure flips it
+ * back and says why in a toast.
+ */
 export function BookmarkButton({ slug, bookmarked, name }: { slug: string; bookmarked: boolean; name: string }) {
   const toggle = useToggleBookmark();
   const [pending, setPending] = useState<boolean | null>(null);
+  const [failure, setFailure] = useState<unknown>(null);
+  const dismiss = useCallback(() => setFailure(null), []);
   const on = pending ?? bookmarked;
   const label = on ? `Remove ${name} from bookmarks` : `Bookmark ${name}`;
   return (
-    <button
-      type="button"
-      className={on ? 'lib-star lib-star--on' : 'lib-star'}
-      aria-pressed={on}
-      aria-label={label}
-      title={toggle.isError ? `Could not update the bookmark: ${toggle.error.message}` : label}
-      data-icon={on ? licon.Star : licon.StarOutline}
-      disabled={toggle.isPending}
-      onClick={() => {
-        setPending(!on);
-        toggle.mutate({ slug, bookmarked: !on }, { onSettled: () => setPending(null) });
-      }}
-    />
+    <>
+      <button
+        type="button"
+        className={on ? 'lib-star lib-star--on' : 'lib-star'}
+        aria-pressed={on}
+        aria-label={label}
+        title={label}
+        data-icon={on ? licon.Star : licon.StarOutline}
+        disabled={toggle.isPending}
+        onClick={() => {
+          setPending(!on);
+          setFailure(null);
+          toggle.mutate({ slug, bookmarked: !on }, { onError: setFailure, onSettled: () => setPending(null) });
+        }}
+      />
+      {failure !== null && <ActionErrorToast error={failure} what={on ? `bookmark ${name}` : `remove ${name} from bookmarks`} onClose={dismiss} />}
+    </>
   );
 }
 
@@ -156,10 +166,14 @@ export function ProfileTable({
       key: 'star',
       header: <span className="visually-hidden">Bookmark</span>,
       align: 'center',
-      width: '3rem',
       render: p => <BookmarkButton slug={p.slug} bookmarked={p.bookmarked} name={p.displayName} />,
     });
-  return <Table columns={columns} rows={profiles} rowKey={p => p.id} empty={empty} className="lib-ptable" />;
+  // Column widths: library.css (fixed layout; the player column takes the rest and ellipsizes).
+  return (
+    <div className="lib-tablehost">
+      <Table columns={columns} rows={profiles} rowKey={p => p.id} empty={empty} className="lib-ptable" />
+    </div>
+  );
 }
 
 /** Case-insensitive match on the name, the address and every account name. */

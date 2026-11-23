@@ -147,13 +147,7 @@ export default function SearchPage() {
                     ))}
                   </HitSection>
 
-                  <HitSection
-                    title="Reference database"
-                    count={r.reference.length}
-                    unavailable={down.has('reference')}
-                    onRetry={retry}
-                    empty="No over-the-board players match."
-                  >
+                  <HitSection title="Reference database" count={r.reference.length} empty="No over-the-board players match.">
                     {r.reference.map(p => {
                       const src = referenceSource(p);
                       return (
@@ -190,7 +184,9 @@ export default function SearchPage() {
       {picked.length > 0 && (
         <div className="lib-pickbar" role="region" aria-label="Picked accounts">
           <span className="lib-pickbar__text">
-            <strong>{picked.length}</strong> {picked.length === 1 ? 'account' : 'accounts'} picked
+            <span>
+              <strong>{picked.length}</strong> {picked.length === 1 ? 'account' : 'accounts'} picked
+            </span>
             <span className="lib-pickbar__names">{picked.map(p => p.label ?? p.key).join(', ')}</span>
           </span>
           <span className="lib-actions">

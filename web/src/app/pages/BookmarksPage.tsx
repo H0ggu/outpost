@@ -6,6 +6,9 @@ import { filterProfiles, ProfileTable } from './components/library/ProfileList.t
 import { QueryView } from './components/library/QueryView.tsx';
 import './components/library/library.css';
 
+/** The filter box appears from this many bookmarks. */
+const FILTER_FROM = 5;
+
 /**
  * PLAN §9 `/bookmarks`, §6 GET /api/bookmarks: the profiles I starred, most recent first (server
  * order), with a filter and the star to remove one.
@@ -31,7 +34,8 @@ export default function BookmarksPage() {
                 </EmptyState>
               ) : (
                 <>
-                  {count > 5 && (
+                  {/* Shown for longer lists, and kept while a filter is typed (unstarring can drop the count). */}
+                  {(count > FILTER_FROM || filter !== '') && (
                     <div className="lib-filterbar">
                       <input
                         type="search"

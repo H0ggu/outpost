@@ -22,9 +22,29 @@
   min-width: 0;
 }
 
+/* The chip keeps its line; the database name or FIDE id wraps under it when the row is narrow. */
+.lib-picked__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.6rem;
+}
+
 .lib-picked .lib-source {
   font-size: 0.95rem;
   min-width: 0;
+}
+
+.lib-picked__extra {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lib-picked .lib-icon-btn {
+  margin: 0;
+  flex: none;
 }
 
 

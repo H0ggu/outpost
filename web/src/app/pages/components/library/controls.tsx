@@ -3,10 +3,16 @@
  * query-string tabs and a job progress panel.
  */
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router';
 import type { JobInfo } from '@outpost/shared/api';
 import { Button, licon, type ButtonVariant, type LiconValue } from '../../../components/index.ts';
+import { paths } from '../../../paths.ts';
 import { fullNumber } from './format.ts';
+import { isUnauthorized, useHere } from './QueryView.tsx';
+
+/** Longest query the search endpoints accept (`/api/search`, database games `q`). */
+export const MAX_QUERY_LENGTH = 100;
 
 /** A search input with lila's magnifier; `onSubmit` fires on Enter. */
 export function SearchField({
@@ -18,6 +24,7 @@ export function SearchField({
   autoFocus,
   className,
   busy,
+  maxLength = MAX_QUERY_LENGTH,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -28,6 +35,8 @@ export function SearchField({
   className?: string;
   /** Shows a small spinner while results load. */
   busy?: boolean;
+  /** Longest accepted input (the server answers 400 beyond it). */
+  maxLength?: number;
 }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -41,6 +50,7 @@ export function SearchField({
         value={value}
         placeholder={placeholder}
         aria-label={label}
+        maxLength={maxLength}
         autoFocus={autoFocus}
         autoComplete="off"
         autoCapitalize="off"
@@ -274,5 +284,38 @@ export function JobProgress({ job, title }: { job: JobInfo; title?: ReactNode })
       )}
       {job.error && <div className="form-error">{job.error}</div>}
     </div>
+  );
+}
+
+/** How long an action toast stays up (ms). Read at call time, so tests can shorten it. */
+export const TOAST = { ms: 8000 };
+
+/**
+ * A one-click action that failed (a bookmark star, a visibility toggle), said where everyone sees
+ * it: a small toast at the bottom of the screen (tooltips never reach touch screens). A 401 means
+ * the session ended, so it links to sign-in. Closes itself after a while, or with ×.
+ */
+export function ActionErrorToast({ error, what, onClose }: { error: unknown; what: string; onClose: () => void }) {
+  const here = useHere();
+  useEffect(() => {
+    const t = setTimeout(onClose, TOAST.ms);
+    return () => clearTimeout(t);
+  }, [error, onClose]);
+  const message = error instanceof Error && error.message ? error.message : 'something went wrong';
+  return createPortal(
+    <div className="lib-toast" role="alert">
+      <i data-icon={licon.CautionTriangle} aria-hidden />
+      <span className="lib-toast__text">
+        {isUnauthorized(error) ? (
+          <>
+            Your session has ended. <Link to={paths.login(here)}>Sign in</Link> to {what}.
+          </>
+        ) : (
+          `Could not ${what}: ${message}`
+        )}
+      </span>
+      <button type="button" className="lib-icon-btn" data-icon={licon.X} aria-label="Dismiss" title="Dismiss" onClick={onClose} />
+    </div>,
+    document.body,
   );
 }

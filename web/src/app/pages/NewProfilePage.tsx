@@ -42,6 +42,7 @@ export default function NewProfilePage() {
 
 function NewProfileForm() {
   const id = useId();
+  const anonymous = !!useSession().data?.anonymousBrowsing;
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [initial] = useState(() => parseNewProfileQuery(params));
@@ -84,7 +85,7 @@ function NewProfileForm() {
       ...(slug.trim() ? { slug: slug.trim() } : {}),
     };
     create.mutate(body, {
-      onSuccess: header => navigate(paths.profile(header.slug), { replace: true, state: { created: true } }),
+      onSuccess: header => navigate(paths.profile(header.slug), { replace: true }),
     });
   };
 
@@ -104,9 +105,11 @@ function NewProfileForm() {
           <ul className="lib-picked">
             {sources.map(s => (
               <li key={sourceIdentity(s)}>
-                <SourceBadge source={{ kind: s.kind, displayName: s.label ?? s.key }} />
-                {s.kind === 'fide' && s.label && <span className="muted">FIDE {s.key}</span>}
-                {s.kind === 'pgn' && <span className="muted lib-picked__db">in {dbName(s.databaseId)}</span>}
+                <span className="lib-picked__main">
+                  <SourceBadge source={{ kind: s.kind, displayName: s.label ?? s.key }} />
+                  {s.kind === 'fide' && s.label && <span className="muted lib-picked__extra">FIDE {s.key}</span>}
+                  {s.kind === 'pgn' && <span className="muted lib-picked__extra">in {dbName(s.databaseId)}</span>}
+                </span>
                 <button
                   type="button"
                   className="lib-icon-btn lib-icon-btn--danger"
@@ -178,7 +181,11 @@ function NewProfileForm() {
               <input type="radio" name={`${id}-vis`} checked={visibility === 'public'} onChange={() => setVisibility('public')} />
               <span>
                 <i data-icon={licon.Globe} aria-hidden /> <strong>Public</strong>{' '}
-                <span className="muted">listed under Players for everyone signed in</span>
+                <span className="muted">
+                  {anonymous
+                    ? 'listed under Players; anyone who can reach this server can read it, signed in or not'
+                    : 'listed under Players for everyone signed in to this server'}
+                </span>
               </span>
             </label>
           </fieldset>

@@ -27,7 +27,10 @@ export function HitSection({
 }: {
   title: ReactNode;
   count: number;
-  /** The upstream lookup failed (SearchResults.unavailable). */
+  /**
+   * The upstream lookup failed (SearchResults.unavailable): a timeout, an error status (e.g. 403
+   * without a Chess.com contact), or a rate limit.
+   */
   unavailable?: boolean;
   onRetry?: () => void;
   empty?: ReactNode;
@@ -42,7 +45,7 @@ export function HitSection({
       {unavailable && (
         <div className="lib-hits__unavailable" role="note">
           <i data-icon={licon.CautionTriangle} aria-hidden />
-          <span>Didn't answer in time, so results here may be missing.</span>
+          <span>Couldn't reach {typeof title === 'string' ? title : 'this site'} this time, so results here may be missing.</span>
           {onRetry && (
             <Button variant="empty" size="sm" icon={licon.Reload} onClick={onRetry}>
               Retry
@@ -98,8 +101,11 @@ export function ReferenceHitRow({ player, actions }: { player: ReferencePlayer; 
   );
 }
 
+/** A site whose search can fail on its own (the local and reference lists can't). */
+export type SearchSite = NonNullable<SearchResults['unavailable']>[number];
+
 /** Which upstream lists failed. */
-export const unavailableSet = (r: SearchResults | undefined): Set<string> => new Set(r?.unavailable ?? []);
+export const unavailableSet = (r: SearchResults | undefined): ReadonlySet<SearchSite> => new Set(r?.unavailable ?? []);
 
 /** True when `q` could be a Lichess / Chess.com username (offer to add it by hand). */
 export const looksLikeUsername = (q: string): boolean => /^[A-Za-z0-9_-]{2,30}$/.test(q.trim());

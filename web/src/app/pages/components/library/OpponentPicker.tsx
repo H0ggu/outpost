@@ -19,12 +19,18 @@ export function OpponentPicker({
   existing,
   onAdd,
   busy,
+  onWorkingChange,
 }: {
   /** Profile ids already in the set. */
   existing: readonly Id[];
-  /** Adds a profile id to the set (resolves when saved). */
+  /**
+   * Adds a profile id to the set (resolves when saved). Called when the add is ready, which can be
+   * after a profile was created, so it must build on the set as saved then, not as first rendered.
+   */
   onAdd: (profileId: Id) => Promise<unknown>;
   busy: boolean;
+  /** True while an add runs (lookup, profile creation, save), so the caller can hold other edits. */
+  onWorkingChange?: (working: boolean) => void;
 }) {
   const qc = useQueryClient();
   const [q, setQ] = useState('');
@@ -46,6 +52,7 @@ export function OpponentPicker({
   /** Runs one add with a per-row busy marker and a shared error line. */
   const run = async (key: string, task: () => Promise<Id>) => {
     setWorking(key);
+    onWorkingChange?.(true);
     setError(null);
     try {
       await onAdd(await task());
@@ -53,6 +60,7 @@ export function OpponentPicker({
       setError(e);
     } finally {
       setWorking(null);
+      onWorkingChange?.(false);
     }
   };
 
@@ -148,8 +156,8 @@ export function OpponentPicker({
               <ExternalHitRow key={h.username} hit={h} actions={accountAction(h.profileSlug, externalSource(h), h.username)} />
             ))}
           </HitSection>
-          {(r.reference.length > 0 || down.has('reference')) && (
-            <HitSection title="Reference database" count={r.reference.length} unavailable={down.has('reference')}>
+          {r.reference.length > 0 && (
+            <HitSection title="Reference database" count={r.reference.length}>
               {r.reference.map(p => (
                 <ReferenceHitRow key={`${p.fideId ?? ''}:${p.name}`} player={p} actions={accountAction(p.profileSlug, referenceSource(p), p.name)} />
               ))}

@@ -67,8 +67,8 @@ export function AccountPicker({ picked, onAdd }: { picked: readonly PickedSource
               <ExternalHitRow key={h.username} hit={h} actions={addButton(externalSource(h), h.username)} />
             ))}
           </HitSection>
-          {(r.reference.length > 0 || down.has('reference')) && (
-            <HitSection title="Reference database" count={r.reference.length} unavailable={down.has('reference')}>
+          {r.reference.length > 0 && (
+            <HitSection title="Reference database" count={r.reference.length}>
               {r.reference.map(p => (
                 <ReferenceHitRow key={`${p.fideId ?? ''}:${p.name}`} player={p} actions={addButton(referenceSource(p), p.name)} />
               ))}

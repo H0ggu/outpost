@@ -25,6 +25,9 @@ import './DatabasesPage.css';
 /** Games per page of the database table. */
 export const DB_PAGE_SIZE = 50;
 
+/** Viewport widths (px) below which the wide text columns of the games table are hidden. */
+export const GAME_COLUMN_BREAKPOINTS = { opening: 820, event: 1100 } as const;
+
 /**
  * PLAN §9 `/databases/:id`, §6 database endpoints, §5 custom PGN databases: details, rename /
  * visibility / delete, PGN import (upload or paste, followed as a job to a final summary), export,
@@ -236,15 +239,35 @@ function GamesBox({ db }: { db: DatabaseInfo }) {
     topRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   };
 
+  const data = games.data;
+  const lastPage = data ? Math.max(1, Math.ceil(data.total / Math.max(1, data.pageSize))) : 1;
+  const pastEnd = !!data && !games.isPlaceholderData && data.games.length === 0 && data.total > 0 && page > lastPage;
+  useEffect(() => {
+    if (!pastEnd) return;
+    setParams(
+      prev => {
+        const next = new URLSearchParams(prev);
+        if (lastPage > 1) next.set('page', String(lastPage));
+        else next.delete('page');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [pastEnd, lastPage, setParams]);
+
   const columns = useMemo<Column<DbGameRow>[]>(() => {
     const player = (p: DbGameRow['white'], side: 'white' | 'black') => (
       <span className={`lib-gplayer lib-gplayer--${side}`}>
         <i className="lib-gplayer__color" aria-label={side} />
         {p.title && <span className="title-badge">{p.title}</span>}
-        <span className="lib-gplayer__name">{p.name}</span>
+        <span className="lib-gplayer__name" title={p.name}>
+          {p.name}
+        </span>
         {p.rating !== null && <span className="lib-gplayer__rating">{p.rating}</span>}
       </span>
     );
+    // Column widths live in DatabasesPage.css (`table-layout: fixed`): the fixed columns get theirs,
+    // Players / Event / Opening share the rest and ellipsize, so the table never outgrows its box.
     const cols: Column<DbGameRow>[] = [
       {
         key: 'players',
@@ -257,13 +280,13 @@ function GamesBox({ db }: { db: DatabaseInfo }) {
         ),
       },
       { key: 'result', header: 'Result', align: 'center', render: g => <span className="lib-result">{resultLabel(g.result)}</span> },
-      { key: 'date', header: 'Date', hideBelow: 480, render: g => <span className="muted lib-nowrap">{formatDate(g.endedAt, true)}</span> },
+      { key: 'date', header: 'Date', hideBelow: 480, render: g => <span className="muted lib-clip">{formatDate(g.endedAt, true)}</span> },
       {
         key: 'event',
         header: 'Event',
-        hideBelow: 980,
+        hideBelow: GAME_COLUMN_BREAKPOINTS.event,
         render: g => (
-          <span className="lib-clip">
+          <span className="lib-clip" title={[g.event, g.round && `round ${g.round}`].filter(Boolean).join(', ') || undefined}>
             {g.event ?? '—'}
             {g.round ? <span className="muted"> · R{g.round}</span> : null}
           </span>
@@ -272,7 +295,7 @@ function GamesBox({ db }: { db: DatabaseInfo }) {
       {
         key: 'opening',
         header: 'Opening',
-        hideBelow: 760,
+        hideBelow: GAME_COLUMN_BREAKPOINTS.opening,
         render: g => (
           <span className="lib-clip" title={g.openingName ?? undefined}>
             {g.eco && <span className="lib-eco">{g.eco}</span>} {g.openingName ?? ''}
@@ -284,20 +307,12 @@ function GamesBox({ db }: { db: DatabaseInfo }) {
         key: 'actions',
         header: <span className="visually-hidden">Actions</span>,
         align: 'right',
-        render: g => (
-          <span className="lib-rowactions">
-            <a className="button button-empty button-thin" href={paths.studio({ game: g.id })} data-icon={licon.Microscope} title="Open in the Studio" aria-label={`Analyse ${g.white.name} vs ${g.black.name}`} />
-            {db.canEdit && (
-              <ConfirmButton size="sm" variant="empty" confirmLabel="Delete" label={`Delete ${g.white.name} vs ${g.black.name}`} onConfirm={() => delGame.mutate(g.id)} />
-            )}
-          </span>
-        ),
+        render: g => <GameActions game={g} canDelete={db.canEdit} onDelete={() => delGame.mutate(g.id)} />,
       },
     ];
     return cols;
   }, [db.canEdit, delGame]);
 
-  const data = games.data;
   return (
     <Box title="Games" level={2} pad={false}>
       <div ref={topRef} className="lib-gamesbar">
@@ -314,13 +329,24 @@ function GamesBox({ db }: { db: DatabaseInfo }) {
         </div>
       )}
       {data ? (
-        data.games.length === 0 ? (
+        data.games.length === 0 && data.total > 0 ? (
+          // Past the last page (a stale ?page=, the last game of the page deleted, another tab):
+          // the effect above moves to the last page; until then, say so and offer the pages.
+          <div>
+            <EmptyState icon={licon.List} title={`Page ${fullNumber(page)} is empty`}>
+              <p>
+                This {urlQ ? 'search' : 'database'} has {fullNumber(lastPage)} {lastPage === 1 ? 'page' : 'pages'}.
+              </p>
+            </EmptyState>
+            <Pagination page={Math.min(page, lastPage)} pageSize={data.pageSize} total={data.total} onPage={goPage} />
+          </div>
+        ) : data.games.length === 0 ? (
           <EmptyState icon={licon.List} title={urlQ ? `No games match “${urlQ}”` : 'No games yet'}>
             {!urlQ && db.canEdit && db.kind === 'games' && <p>Import a PGN file above to fill this database.</p>}
           </EmptyState>
         ) : (
-          <div className={games.isPlaceholderData ? 'lib-results--stale' : undefined}>
-            <Table columns={columns} rows={data.games} rowKey={g => g.id} className="lib-gtable" />
+          <div className={['lib-tablehost', games.isPlaceholderData && 'lib-results--stale'].filter(Boolean).join(' ')}>
+            <Table columns={columns} rows={data.games} rowKey={g => g.id} className={db.canEdit ? 'lib-gtable' : 'lib-gtable lib-gtable--readonly'} />
             <Pagination page={data.page} pageSize={data.pageSize} total={data.total} onPage={goPage} />
           </div>
         )
@@ -332,6 +358,56 @@ function GamesBox({ db }: { db: DatabaseInfo }) {
         <Spinner center />
       )}
     </Box>
+  );
+}
+
+/**
+ * Row actions of the games table: open in the Studio, and delete in two steps. The armed state
+ * (red "Delete" + cancel) takes the place of both icons, so the column keeps one width; on narrow
+ * screens the confirm button is icon-only (DatabasesPage.css).
+ */
+export function GameActions({ game, canDelete, onDelete }: { game: DbGameRow; canDelete: boolean; onDelete: () => void }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  const vs = `${game.white.name} vs ${game.black.name}`;
+  if (armed)
+    return (
+      <span className="lib-rowactions">
+        <Button
+          variant="red"
+          size="sm"
+          icon={licon.Trash}
+          className="lib-rowactions__confirm"
+          aria-label={`Confirm: delete ${vs}`}
+          title="Delete this game for good"
+          autoFocus
+          onClick={() => {
+            setArmed(false);
+            onDelete();
+          }}
+        >
+          <span className="lib-rowactions__text">Delete</span>
+        </Button>
+        <Button variant="empty" size="sm" icon={licon.X} aria-label="Cancel" title="Keep the game" onClick={() => setArmed(false)} />
+      </span>
+    );
+  return (
+    <span className="lib-rowactions">
+      <a
+        className="button button-empty button-thin"
+        href={paths.studio({ game: game.id })}
+        data-icon={licon.Microscope}
+        title="Open in the Studio"
+        aria-label={`Analyse ${vs}`}
+      />
+      {canDelete && (
+        <Button variant="empty" size="sm" icon={licon.Trash} aria-label={`Delete ${vs}`} title="Delete this game" onClick={() => setArmed(true)} />
+      )}
+    </span>
   );
 }
 
