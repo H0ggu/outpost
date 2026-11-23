@@ -18,7 +18,9 @@
  *   - `virtual:studio-engines`: URLs of the stockfish-web and stockfish.js files, served from
  *     node_modules in dev and emitted under /assets/vendor/<pkg>-<version>/ in the build;
  *   - `/studio` → studio.html in the dev and preview servers (the production server does the same).
- * The pure parts live in src/studio/build/lilaGlue.ts (unit-tested).
+ * The pure parts live in src/studio/build/lilaGlue.ts (unit-tested). Outside the plugin: the
+ * `lila/<pkg>/<module>` alias, and `optimizeDeps.include` (LILA_NPM_DEPS) so the dev server
+ * pre-bundles lila's npm imports up front. Vendored code changes go through scripts/lila-patches.
  */
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
