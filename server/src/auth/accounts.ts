@@ -125,13 +125,21 @@ export function assertUsernameFree(db: Db, username: string): void {
 export function insertUser(db: Db, u: { username: string; passwordHash: string; role: UserRole; now?: number }): Id {
   assertUsernameFree(db, u.username);
   const now = u.now ?? Date.now();
-  return db.run('INSERT INTO users (username, password_hash, role, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?)', [
-    u.username,
-    u.passwordHash,
-    u.role,
-    now,
-    now,
-  ]).lastInsertRowid;
+  try {
+    return db.run('INSERT INTO users (username, password_hash, role, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?)', [
+      u.username,
+      u.passwordHash,
+      u.role,
+      now,
+      now,
+    ]).lastInsertRowid;
+  } catch (e) {
+    // Another connection won the race between the check and the insert.
+    if (e instanceof Error && e.message.includes('UNIQUE constraint failed: users.username')) {
+      throw conflict('That username is already taken', { field: 'username' });
+    }
+    throw e;
+  }
 }
 
 /** Replaces a user's password hash. */
