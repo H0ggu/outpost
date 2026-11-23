@@ -33,7 +33,7 @@ export default function OverviewPage() {
           <p>
             {header.queue.busy
               ? 'The first import is running: games appear here as they arrive.'
-              : header.canEdit
+              : (header.canUpdate ?? header.canEdit)
                 ? 'Press Update to import this player’s games.'
                 : 'This profile has no imported games yet.'}
           </p>

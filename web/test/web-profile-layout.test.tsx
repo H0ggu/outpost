@@ -46,6 +46,12 @@ describe('ProfileLayout header', () => {
     expect(screen.queryByRole('button', { name: /^Update/ })).toBeNull();
   });
 
+  it('offers Update to every viewer the server lets update (canUpdate), Settings to editors only', async () => {
+    renderProfile(SLUG, { header: { canEdit: false, canUpdate: true } });
+    expect(await screen.findByRole('button', { name: /^Update/ })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull();
+  });
+
   it('shows a not-found state for unknown or private profiles', async () => {
     renderProfile('/u/nobody');
     expect(await screen.findByText('No profile called “nobody”')).toBeTruthy();

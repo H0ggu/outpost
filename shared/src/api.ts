@@ -1263,7 +1263,10 @@ export interface ExplorerPlayerMove {
   black: number;
   game: ExplorerGameRef | null;
   opening: ExplorerOpening | null;
-  /** Outpost extension: when this move was last played (epoch ms). Lila ignores it. */
+  /**
+   * Outpost extension: when this move was last played (epoch ms). The Studio's player explorer
+   * shows it as a "Last" column (scripts/lila-patches/002).
+   */
   lastPlayed?: EpochMs;
 }
 
@@ -1281,8 +1284,9 @@ export interface ExplorerPlayerResponse {
   moves: ExplorerPlayerMove[];
   recentGames: ExplorerGameRef[];
   /**
-   * Outpost extension (lila ignores it): every game reaching the position, including those that
-   * ended there (which no move counts), so `GET /api/explorer/games` lists exactly this many.
+   * Outpost extension (the Studio's "All N games", scripts/lila-patches/002): every game reaching
+   * the position, including those that ended there (which no move counts), so
+   * `GET /api/explorer/games` lists exactly this many.
    */
   games?: number;
 }

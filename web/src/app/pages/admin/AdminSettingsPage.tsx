@@ -235,7 +235,7 @@ function SettingsForm({ settings, saved, onSaved }: { settings: AdminSettings; s
               value={draft.updateCooldownMinutes}
               onChange={e => set('updateCooldownMinutes', e.target.value)}
               error={field.updateCooldownMinutes}
-              help="Minimum time between two manual updates of the same profile. 0 = no limit."
+              help="Minimum time between two manual updates of the same profile. Admins are exempt. 0 = no limit."
             />
             <TextField
               id="adm-months"

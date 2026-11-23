@@ -346,9 +346,10 @@ Follow `docs/research/lila-ui-extraction.md`, option A.
    - "Position" side panel: the games at a position from the player explorer's "All N games" (`/api/explorer/games` with the explorer's filters segment, colour, speeds, modes and months), a page at a time; a row opens the game at that position.
    - Board tabs, holding multiple PGNs switched with `changePgn`.
    - Layout presets and settings (board theme, piece set, sound set, true-black).
-   - Query parameters: `?game=`, `?file=`, `?pgn=`, `?fen=`, `?explorer=player:<slug>&color=`, `?filters=`, `?embed=explorer` (minimal chrome, used in the profile Explorer tab iframe). The embed posts its board's line, position and the explorer's game count to the page (`web/src/app/explorerEmbed.ts`, same origin), so the tab's "N games at this position" and "Open in Studio" follow the board; its "All N games" opens the tab's Games tab at that line.
+   - Query parameters: `?game=`, `?file=`, `?pgn=`, `?fen=`, `?explorer=player:<slug>&color=`, `?filters=`, `?embed=explorer` (minimal chrome, used in the profile Explorer tab iframe: board, a short move list, lila's FEN and PGN boxes under the board, and the explorer). The embed posts its board's line, position and the explorer's game count to the page (`web/src/app/explorerEmbed.ts`, same origin), so the tab's "N games at this position" and "Open in Studio" follow the board; its "All N games" opens the tab's Games tab at that line.
    - The player explorer's picker suggests bookmarked, own and recent profiles, then the PGN databases the user may read (`db:<id>`, "my DBs"); search adds Lichess / Chess.com accounts and FIDE players (`ref:<fideId>`).
    - The material difference uses lila's `mono` piece set (vendored, GPLv2+; decision 13).
+   - The site header matches the SPA's (height, wordmark, nav, search pill) and folds its nav into the hamburger below 1180 px, as the SPA's does (decision 31; lila's `$topnav-visible`, patch 006).
 5. **Headers.** Every response sends `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`, so stockfish-web can use SharedArrayBuffer. Nothing cross-origin is embedded: we don't show avatars, and flags are emoji or local files.
 
 ## 9. Web app (React)

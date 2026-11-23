@@ -305,8 +305,9 @@ export function ProfileHead({ header, signedIn, filters, tabs }: ProfileHeadProp
           )}
         </div>
         <div className="profile-head__actions">
-          {header.canEdit && <UpdateControl slug={slug} header={header} sync={sync} />}
-          {!header.canEdit && sync.queue.busy && (
+          {/* Every signed-in viewer may update (`canUpdate`); a server without the flag: editors only. */}
+          {(header.canUpdate ?? header.canEdit) && <UpdateControl slug={slug} header={header} sync={sync} />}
+          {!(header.canUpdate ?? header.canEdit) && sync.queue.busy && (
             <div className="update-state" role="status">
               <Spinner size={16} label="Updating" />
               <span>Updating…</span>
