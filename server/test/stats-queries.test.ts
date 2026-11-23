@@ -93,6 +93,12 @@ describe('openings ranking', () => {
       ]) {
         insertGame(t2.db, testGame({ white: { name: 'me' }, black: { name: 'opp' }, moves }));
       }
+      // Two "Reversed Grünfeld" entries are 9 plies long (5.O-O after 4...Nf6 or after 4...e6): the position decides.
+      for (const tail of ['b6', 'a6', 'h6']) {
+        insertGame(t2.db, testGame({ white: { name: 'me' }, black: { name: 'opp' }, moves: ['d4', 'e6', 'Nf3', 'd5', 'g3', 'c5', 'Bg2', 'Nc6', 'O-O', tail] }));
+      }
+      const grunfeld = openingsStats(s2, { side: 'white', order: 'most' }).white.find(r => r.name === 'Zukertort Opening: Reversed Grünfeld')!;
+      expect(grunfeld).toMatchObject({ eco: 'A08', games: 3, line: 'g1f3,d7d5,g2g3,c7c5,f1g2,b8c6,d2d4,e7e6,e1g1' });
       const row = openingsStats(s2, { side: 'white', order: 'most' }).white.find(r => r.name === 'Caro-Kann Defense: Exchange Variation')!;
       expect(row).toMatchObject({ eco: 'B13', games: 3, line: 'e2e4,c7c6,d2d4,d7d5,e4d5,c6d5,c1f4' });
       // The line filter (by position) finds the games that reached it.

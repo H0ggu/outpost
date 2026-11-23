@@ -8,8 +8,9 @@
  * `line` (what the click-through opens in the explorer and the `line` filter selects) is the book
  * line of the named position most of the row's games reached: the entry of that name whose line is
  * as long as their classification ply (`games.opening_ply`, in the covering index, so no position
- * lookups), or the exact position when a `maxMoves` bound re-classified the game; the shortest
- * line of the name only when no entry fits.
+ * lookups); when the book has several such entries (68 name and length pairs), the position the
+ * games stood in at that ply (a second, narrow query); the exact position when a `maxMoves` bound
+ * re-classified the game; the shortest line of the name only when no entry fits.
  *
  * Move bounds (full moves, 1–5 in the UI):
  * - `maxMoves = M` classifies at most M moves deep: the deepest named position within the first
@@ -38,8 +39,11 @@ interface BookIndex {
   byKey: Map<number, OpeningEntry>;
   /** Shortest line per `eco \t name`. */
   canonical: Map<string, OpeningEntry>;
-  /** The entry per `eco \t name \t line length` (the first in book order when several). */
+  /** The entry per `eco \t name \t line length`, when the book has exactly one. */
   byNamePly: Map<string, OpeningEntry>;
+  /** `eco \t name \t line length` of several entries (the position decides), as a JSON array for `json_each`. */
+  ambiguous: Set<string>;
+  ambiguousJson: string;
   /** JSON array of every named `pos_key` (bound to `json_each`). */
   keysJson: string;
 }
@@ -55,15 +59,20 @@ export function bookIndex(book: OpeningBook): BookIndex {
   const byKey = new Map<number, OpeningEntry>();
   const canonical = new Map<string, OpeningEntry>();
   const byNamePly = new Map<string, OpeningEntry>();
+  const ambiguous = new Set<string>();
   for (const [epd, entry] of book.byEpd) {
     byKey.set(posKey(epd), entry);
     const k = nameKey(entry.eco, entry.name);
     const prev = canonical.get(k);
     if (!prev || entry.line.length < prev.line.length) canonical.set(k, entry);
     const kp = `${k}\t${entry.line.length}`;
-    if (!byNamePly.has(kp)) byNamePly.set(kp, entry);
+    if (!byNamePly.has(kp) && !ambiguous.has(kp)) byNamePly.set(kp, entry);
+    else if (byNamePly.get(kp) !== entry) {
+      byNamePly.delete(kp);
+      ambiguous.add(kp);
+    }
   }
-  idx = { byKey, canonical, byNamePly, keysJson: JSON.stringify([...byKey.keys()]) };
+  idx = { byKey, canonical, byNamePly, ambiguous, ambiguousJson: JSON.stringify([...ambiguous]), keysJson: JSON.stringify([...byKey.keys()]) };
   indexes.set(book, idx);
   return idx;
 }
@@ -142,6 +151,29 @@ export function openingsStats(scope: StatsScope, opts: OpeningsOptions, book: Op
     );
   }
 
+  // Games whose name and classification ply match several book entries: the position decides.
+  const plyKey = (eco: string, name: string, ply: number): string => `${nameKey(eco, name)}\t${ply}`;
+  const exact = new Map<string, Map<OpeningEntry, number>>();
+  if (rows.some(r => r.k === null && r.eco !== null && r.name !== null && r.ply !== null && idx.ambiguous.has(plyKey(r.eco, r.name, r.ply)))) {
+    const bound = maxPly !== null && maxPly < 40 ? ' AND g.opening_ply <= ?' : '';
+    for (const r of scope.db.all<{ color: ColorChar; eco: string; name: string; ply: number; k: number | null; games: number }>(
+      `SELECT pg.color AS color, g.eco AS eco, g.opening_name AS name, g.opening_ply AS ply,
+              (SELECT p.pos_key FROM positions p WHERE p.game_id = pg.game_id AND p.ply = g.opening_ply) AS k, COUNT(*) AS games
+         FROM ${PLAYER_GAMES_BY_PK} JOIN ${GAMES_STATS_INDEX} ON g.id = pg.game_id
+        WHERE ${where.sql}${sideSql} AND g.opening_ply IS NOT NULL${bound}
+          AND (g.eco || char(9) || g.opening_name || char(9) || g.opening_ply) IN (SELECT value FROM json_each(?))
+        GROUP BY 1, 2, 3, 4, 5`,
+      [...where.params, ...(bound ? [maxPly!] : []), idx.ambiguousJson],
+    )) {
+      const entry = r.k !== null ? idx.byKey.get(r.k) : undefined;
+      if (!entry) continue;
+      const key = `${r.color}\t${plyKey(r.eco, r.name, r.ply)}`;
+      let votes = exact.get(key);
+      if (!votes) exact.set(key, (votes = new Map()));
+      votes.set(entry, (votes.get(entry) ?? 0) + r.games);
+    }
+  }
+
   const groups = new Map<string, Acc>();
   for (const r of rows) {
     let eco = r.eco;
@@ -154,7 +186,6 @@ export function openingsStats(scope: StatsScope, opts: OpeningsOptions, book: Op
       name = entry.name;
     }
     if (eco === null || name === null) continue; // re-classified with nothing named in range
-    entry ??= (r.ply !== null ? idx.byNamePly.get(`${nameKey(eco, name)}\t${r.ply}`) : undefined) ?? idx.canonical.get(nameKey(eco, name));
     const color = colorFromChar(r.color);
     const key = `${color}\t${nameKey(eco, name)}`;
     let acc = groups.get(key);
@@ -162,7 +193,14 @@ export function openingsStats(scope: StatsScope, opts: OpeningsOptions, book: Op
       acc = { color, entries: new Map(), eco, name, games: 0, w: 0, d: 0, l: 0, plies: 0 };
       groups.set(key, acc);
     }
-    if (entry) acc.entries.set(entry, (acc.entries.get(entry) ?? 0) + r.games);
+    const votes = entry === undefined && r.ply !== null ? exact.get(`${r.color}\t${plyKey(eco, name, r.ply)}`) : undefined;
+    if (votes) {
+      for (const [e, n] of votes) acc.entries.set(e, (acc.entries.get(e) ?? 0) + n);
+      exact.delete(`${r.color}\t${plyKey(eco, name, r.ply!)}`); // counted once (rows may repeat a key)
+    } else {
+      entry ??= (r.ply !== null ? idx.byNamePly.get(plyKey(eco, name, r.ply)) : undefined) ?? idx.canonical.get(nameKey(eco, name));
+      if (entry) acc.entries.set(entry, (acc.entries.get(entry) ?? 0) + r.games);
+    }
     acc.games += r.games;
     acc.w += r.w;
     acc.d += r.d;
