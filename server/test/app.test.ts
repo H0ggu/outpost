@@ -75,7 +75,7 @@ describe('app (no web build)', () => {
       ['127.0.0.1:5173', 'http://127.0.0.1:5173'],
       ['[::1]:8080', 'http://[::1]:8080'],
     ] as const) {
-      expect((await post(host, origin)).statusCode, host).toBe(404); // past the CSRF check
+      expect((await post(host, origin)).statusCode, host).toBe(200); // past the CSRF check
     }
     for (const [host, origin] of [
       ['rebind.example:8080', 'http://rebind.example:8080'],
@@ -90,8 +90,8 @@ describe('app (no web build)', () => {
 
   it('lets a same-host POST with the header through the CSRF check (dev/test)', async () => {
     const res = await t.app.inject({ method: 'POST', url: '/api/logout', headers: mutationHeaders });
-    expect(res.statusCode).toBe(404); // not implemented yet, but past the CSRF check
-    expect(res.json().error.code).toBe('not_found');
+    expect(res.statusCode).toBe(200); // past the CSRF check (logout always succeeds)
+    expect(res.json()).toEqual({ ok: true });
   });
 
   it('GET /api/session reports setup required with no admin', async () => {
@@ -149,7 +149,8 @@ describe('app with PUBLIC_ORIGIN', () => {
       url: '/api/logout',
       headers: { 'x-outpost': '1', origin: 'https://chess.example.com', host: 'internal:8080' },
     });
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(200);
+    expect(res.cookies.find(c => c.name === 'outpost_session')?.secure).toBe(true);
   });
 
   it('marks cookies secure for an https origin', () => {
