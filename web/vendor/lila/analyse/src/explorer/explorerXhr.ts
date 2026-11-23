@@ -59,11 +59,7 @@ export async function opening(
     signal,
   });
 
-  if (!res.ok) {
-    const err = new Error(await errorMessage(res));
-    err.name = ''; // outpost: lila shows `error.toString()`; show just the server's sentence
-    throw err;
-  }
+  if (!res.ok) throw await responseError(res);
   await readNdJson<Partial<OpeningData>>(res, data => {
     data.isOpening = true;
     data.fen = opts.fen;
@@ -71,13 +67,19 @@ export async function opening(
   });
 }
 
-// outpost: show the server's reason (e.g. no Lichess token configured) instead of a bare status
-async function errorMessage(res: Response): Promise<string> {
+// outpost: show the server's reason (e.g. no Lichess token configured) instead of a bare status, and
+// flag a database the server can't serve at all (503 `no_token`), which the view explains plainly
+async function responseError(res: Response): Promise<Error & { unavailable: boolean }> {
+  let message = `Status ${res.status}`;
+  let unavailable = false;
   try {
     const body = await res.json();
-    if (body?.error?.message) return body.error.message;
+    if (body?.error?.message) message = body.error.message;
+    unavailable = body?.error?.details?.reason === 'no_token';
   } catch {}
-  return `Status ${res.status}`;
+  const err = Object.assign(new Error(message), { unavailable });
+  err.name = ''; // lila shows `error.toString()`: just the server's sentence
+  return err;
 }
 
 export async function tablebase(

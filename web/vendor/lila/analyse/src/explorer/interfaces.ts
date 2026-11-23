@@ -24,6 +24,7 @@ export interface ExplorerOutpost {
   openGame(db: ExplorerDb, id: string, orientation: Color, fen: FEN): void;
   requiresAuth(): boolean;
   loginUrl: string;
+  unavailable?(db: ExplorerDb): string | undefined; // why the server can't serve db (e.g. Lichess without a token)
 }
 
 export interface ExplorerPlayerChoice {

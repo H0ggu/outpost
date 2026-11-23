@@ -68,8 +68,21 @@
   color: var(--c-font-dimmer);
 }
 
-.lib-explorer-db--empty > i:first-child {
+.lib-explorer-db--empty > i:first-child,
+.lib-explorer-db--off > i:first-child {
   color: var(--c-font-dimmer);
+}
+
+/* A database this server can't serve (the Lichess one without a token): shown, not a link. */
+.lib-explorer-db--off,
+.lib-explorer-db--off:hover {
+  border-style: dashed;
+  border-color: var(--c-border);
+  background: transparent;
+}
+
+.lib-explorer-db--off strong {
+  color: var(--c-font-dim) !important;
 }
 
 .lib-explorer-fen input {

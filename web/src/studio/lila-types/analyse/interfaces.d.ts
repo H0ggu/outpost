@@ -144,6 +144,8 @@ export interface ExplorerOutpost {
   openGame(db: ExplorerDb, id: string, orientation: Color, fen: string): void;
   requiresAuth(): boolean;
   loginUrl: string;
+  /** Why the server can't serve `db` (the Lichess database without an API token), if it can't. */
+  unavailable?(db: ExplorerDb): string | undefined;
 }
 
 export interface ExplorerOpts {

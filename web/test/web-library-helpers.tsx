@@ -166,6 +166,7 @@ export const session = (user: SessionUser | null, over: Partial<SessionInfo> = {
   setupRequired: false,
   signupMode: 'open',
   anonymousBrowsing: false,
+  hasLichessToken: true,
   version: '0.1.0',
   ...over,
 });

@@ -125,6 +125,8 @@ describe('PlayersPage', () => {
     api().on('GET', '/api/session', session(null)).on('GET', '/api/profiles', apiError(401, 'unauthorized'));
     renderPage(<PlayersPage />, { route: '/players' });
     expect(await screen.findByText('Sign in to see these players')).toBeTruthy();
+    // the session already says so: no request that the browser would log as a failed 401
+    expect(api().find('GET', '/api/profiles')).toHaveLength(0);
   });
 
   it('offers to create a first profile on an empty "mine" tab', async () => {

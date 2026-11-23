@@ -135,6 +135,7 @@ describe('SearchPage', () => {
     renderPage(<SearchPage />, { route: '/search', path: '/search?q=hikaru' });
     expect(await screen.findByText('Sign in to see search results')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Sign in' }).getAttribute('href')).toBe('/login?next=%2Fsearch%3Fq%3Dhikaru');
+    expect(api().find('GET', '/api/search')).toHaveLength(0);
   });
 
   it('shows results without create actions to anonymous visitors', async () => {

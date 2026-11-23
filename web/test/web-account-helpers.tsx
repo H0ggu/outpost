@@ -156,6 +156,7 @@ export const session = (u: SessionUser | null, o: Partial<SessionInfo> = {}): Se
   setupRequired: false,
   signupMode: 'invite',
   anonymousBrowsing: false,
+  hasLichessToken: true,
   version: '0.1.0',
   ...o,
 });

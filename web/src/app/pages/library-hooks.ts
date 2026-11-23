@@ -34,7 +34,7 @@ import {
 } from '@outpost/shared/api';
 import { filtersKey, statsQuery, type ProfileFilters } from '@outpost/shared/filters';
 import { api, ApiError } from '../api/client.ts';
-import { queryKeys } from '../api/hooks.ts';
+import { precheck, queryKeys } from '../api/hooks.ts';
 import { indexRoundPgn, type RoundPgnEntry } from './components/library/broadcastPgn.ts';
 
 /** Query keys of the library pages (top-level prefixes: databases, prep, broadcasts, reference). */
@@ -151,7 +151,10 @@ export function useAddProfileSource() {
 export function useReferenceInfo(enabled = true) {
   return useQuery({
     queryKey: libraryKeys.reference,
-    queryFn: ({ signal }) => api.get<ReferenceInfo>(API_ROUTES.reference, undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'viewer' });
+      return api.get<ReferenceInfo>(API_ROUTES.reference, undefined, signal);
+    },
     enabled,
     staleTime: 5 * 60_000,
   });
@@ -162,7 +165,10 @@ export function useReferencePlayers(q: string) {
   const term = q.trim();
   return useQuery({
     queryKey: libraryKeys.referencePlayers(term),
-    queryFn: ({ signal }) => api.get<ReferencePlayersResponse>(API_ROUTES.referencePlayers, { q: term }, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'viewer' });
+      return api.get<ReferencePlayersResponse>(API_ROUTES.referencePlayers, { q: term }, signal);
+    },
     enabled: term.length >= 2,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
@@ -177,7 +183,10 @@ export function useReferencePlayers(q: string) {
 export function useDatabases(enabled = true) {
   return useQuery({
     queryKey: libraryKeys.databases,
-    queryFn: ({ signal }) => api.get<DatabasesResponse>(API_ROUTES.databases, undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'user' });
+      return api.get<DatabasesResponse>(API_ROUTES.databases, undefined, signal);
+    },
     enabled,
   });
 }
@@ -186,7 +195,10 @@ export function useDatabases(enabled = true) {
 export function useDatabase(id: Id | undefined) {
   return useQuery({
     queryKey: libraryKeys.database(id ?? 0),
-    queryFn: ({ signal }) => api.get<DatabaseInfo>(API_ROUTES.database(id!), undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'user' });
+      return api.get<DatabaseInfo>(API_ROUTES.database(id!), undefined, signal);
+    },
     enabled: id !== undefined,
     refetchInterval: q => (isActiveJob(q.state.data?.importJob) ? POLL.importMs : false),
   });
@@ -197,8 +209,10 @@ export function useDatabaseGames(id: Id | undefined, page: number, pageSize: num
   const term = q.trim();
   return useQuery({
     queryKey: libraryKeys.databaseGames(id ?? 0, page, pageSize, term),
-    queryFn: ({ signal }) =>
-      api.get<DbGamesPage>(API_ROUTES.databaseGames(id!), { page, pageSize, q: term || undefined }, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'user' });
+      return api.get<DbGamesPage>(API_ROUTES.databaseGames(id!), { page, pageSize, q: term || undefined }, signal);
+    },
     enabled: id !== undefined,
     placeholderData: keepPreviousData,
   });
@@ -280,7 +294,10 @@ export function useImportPgn(id: Id) {
 export function usePrepList(enabled = true) {
   return useQuery({
     queryKey: libraryKeys.prepList,
-    queryFn: ({ signal }) => api.get<PrepListResponse>(API_ROUTES.prep, undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'user' });
+      return api.get<PrepListResponse>(API_ROUTES.prep, undefined, signal);
+    },
     enabled,
   });
 }
@@ -289,7 +306,10 @@ export function usePrepList(enabled = true) {
 export function usePrepSet(id: Id | undefined) {
   return useQuery({
     queryKey: libraryKeys.prep(id ?? 0),
-    queryFn: ({ signal }) => api.get<PrepSet>(API_ROUTES.prepSet(id!), undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'user' });
+      return api.get<PrepSet>(API_ROUTES.prepSet(id!), undefined, signal);
+    },
     enabled: id !== undefined,
   });
 }
@@ -309,7 +329,10 @@ export function usePrepReport(
   const { plies, minGames } = opts;
   return useQuery({
     queryKey: libraryKeys.prepReport(id ?? 0, filters, tz, plies, minGames),
-    queryFn: ({ signal }) => api.get<PrepReport>(API_ROUTES.prepReport(id!), statsQuery(filters, { tz, plies, minGames }), signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'user' });
+      return api.get<PrepReport>(API_ROUTES.prepReport(id!), statsQuery(filters, { tz, plies, minGames }), signal);
+    },
     enabled: id !== undefined && enabled,
     placeholderData: keepPreviousData,
   });
@@ -362,7 +385,10 @@ export function useDeletePrep() {
 export function useBroadcasts() {
   return useQuery({
     queryKey: libraryKeys.broadcasts,
-    queryFn: ({ signal }) => api.get<BroadcastsResponse>(API_ROUTES.broadcasts, undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'viewer', lichessToken: true });
+      return api.get<BroadcastsResponse>(API_ROUTES.broadcasts, undefined, signal);
+    },
     staleTime: 60_000,
     retry: broadcastRetry,
   });
@@ -372,7 +398,10 @@ export function useBroadcasts() {
 export function useBroadcastTour(tourId: string | undefined) {
   return useQuery({
     queryKey: libraryKeys.broadcastTour(tourId ?? ''),
-    queryFn: ({ signal }) => api.get<BroadcastTour>(API_ROUTES.broadcastTour(tourId!), undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'viewer', lichessToken: true });
+      return api.get<BroadcastTour>(API_ROUTES.broadcastTour(tourId!), undefined, signal);
+    },
     enabled: !!tourId,
     staleTime: 60_000,
     retry: broadcastRetry,
@@ -383,7 +412,10 @@ export function useBroadcastTour(tourId: string | undefined) {
 export function useBroadcastRound(roundId: string | undefined) {
   return useQuery({
     queryKey: libraryKeys.broadcastRound(roundId ?? ''),
-    queryFn: ({ signal }) => api.get<BroadcastRound>(API_ROUTES.broadcastRound(roundId!), undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'viewer', lichessToken: true });
+      return api.get<BroadcastRound>(API_ROUTES.broadcastRound(roundId!), undefined, signal);
+    },
     enabled: !!roundId,
     staleTime: 5_000,
     retry: broadcastRetry,

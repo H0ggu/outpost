@@ -165,6 +165,7 @@ const authRoutes: FastifyPluginAsync = async app => {
       setupRequired: !hasAdmin(db),
       signupMode: settings.signupMode,
       anonymousBrowsing: settings.anonymousBrowsing,
+      hasLichessToken: settings.lichessToken !== null,
       version: config.version,
       sourceUrl: config.sourceUrl,
     };

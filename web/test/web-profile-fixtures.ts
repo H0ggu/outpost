@@ -240,12 +240,13 @@ export function profileStatus(h: ProfileHeader = profileHeader()): ProfileStatus
   return { sources: h.sources.map(s => ({ sourceId: s.id, sync: s.sync, gameCount: s.gameCount })), queue: h.queue, lastUpdated: h.lastUpdated };
 }
 
-export function sessionInfo(signedIn = true): SessionInfo {
+export function sessionInfo(signedIn = true, anonymousBrowsing = true): SessionInfo {
   return {
     user: signedIn ? { id: 1, username: 'owner', role: 'admin', totpEnabled: false, prefs: { ...DEFAULT_PREFS, timezone: 'utc' } } : null,
     setupRequired: false,
     signupMode: 'closed',
-    anonymousBrowsing: true,
+    anonymousBrowsing,
+    hasLichessToken: true,
     version: '0.1.0',
   };
 }
@@ -529,6 +530,8 @@ export interface MockOptions {
   /** Header overrides; a function is called on every request (for state that changes). */
   header?: Partial<ProfileHeader> | (() => Partial<ProfileHeader>);
   signedIn?: boolean;
+  /** `SessionInfo.anonymousBrowsing` (default on). */
+  anonymousBrowsing?: boolean;
   /** Paths (regex) that should fail with this response. */
   fail?: Array<{ match: RegExp; status: number; code: string; message: string; details?: unknown }>;
   /** Called with every request. */
@@ -567,7 +570,7 @@ export function mockApi(method: string, rawUrl: string, body: unknown, opts: Moc
   const f = parseFilters(url.searchParams, 'lenient');
   const header = profileHeader(typeof opts.header === 'function' ? opts.header() : opts.header);
 
-  if (path === '/api/session') return json(sessionInfo(opts.signedIn ?? true));
+  if (path === '/api/session') return json(sessionInfo(opts.signedIn ?? true, opts.anonymousBrowsing ?? true));
   if (path === '/api/me/prefs' && method === 'PUT') return json({ ...DEFAULT_PREFS, ...(body as object) });
   if (path === '/api/search') return json(searchResults(url.searchParams.get('q') ?? ''));
   if (path === '/api/databases') return json(databases());

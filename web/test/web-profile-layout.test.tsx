@@ -125,6 +125,12 @@ describe('ProfileLayout header', () => {
     expect(screen.queryByRole('button', { name: 'Bookmark this profile' })).toBeNull();
   });
 
+  it('asks anonymous visitors to sign in, without asking the server, when anonymous browsing is off', async () => {
+    const { requests } = renderProfile(SLUG, { signedIn: false, anonymousBrowsing: false });
+    expect(await screen.findByText('Sign in to see this profile')).toBeTruthy();
+    expect(requests(api())).toHaveLength(0);
+  });
+
   it('queues an update and shows the queue position', async () => {
     // The fake server keeps the job queued once asked.
     let queued = false;

@@ -74,6 +74,7 @@ describe('PrepListPage', () => {
     api().on('GET', '/api/session', session(null)).on('GET', '/api/prep', apiError(401, 'unauthorized'));
     renderPage(<PrepListPage />, { route: '/prep' });
     expect(await screen.findByText('Sign in to see your prep sets')).toBeTruthy();
+    expect(api().find('GET', '/api/prep')).toHaveLength(0);
   });
 });
 

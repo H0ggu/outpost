@@ -121,10 +121,26 @@ describe('BroadcastsPage', () => {
       .on('GET', '/api/broadcasts', noTokenError('No Lichess token is configured'));
     renderPage(<BroadcastsPage />, { route: '/broadcasts' });
     expect(await screen.findByText("Live broadcasts aren't available on this server")).toBeTruthy();
-    expect(screen.getByText('No Lichess token is configured')).toBeTruthy();
+    // said once, in the page's own words (not the server's sentence too), and with no retry button
+    expect(screen.queryByText('No Lichess token is configured')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     expect((await screen.findByRole('link', { name: 'Admin → Settings' })).getAttribute('href')).toBe('/admin/settings');
     // a missing token is not retried
     expect(api().find('GET', '/api/broadcasts')).toHaveLength(1);
+  });
+
+  it('does not ask the server when the session says there is no Lichess token', async () => {
+    api().on('GET', '/api/session', session(USER, { hasLichessToken: false }));
+    renderPage(<BroadcastsPage />, { route: '/broadcasts' });
+    expect(await screen.findByText("Live broadcasts aren't available on this server")).toBeTruthy();
+    expect(api().find('GET', '/api/broadcasts')).toHaveLength(0);
+  });
+
+  it('shows anonymous visitors the sign-in prompt without asking the server', async () => {
+    api().on('GET', '/api/session', session(null));
+    renderPage(<BroadcastsPage />, { route: '/broadcasts' });
+    expect(await screen.findByText('Sign in to see live broadcasts')).toBeTruthy();
+    expect(api().find('GET', '/api/broadcasts')).toHaveLength(0);
   });
 
   it('tells a transient Lichess outage apart from a missing token', async () => {
@@ -348,7 +364,7 @@ describe('BroadcastRoundPage', () => {
       .on('GET', '/api/session', session(USER))
       .on('GET', '/api/broadcasts/round/rnd00002', noTokenError('Lichess token missing'));
     renderPage(<BroadcastRoundPage />, ROUTE);
-    expect(await screen.findByText('Lichess token missing')).toBeTruthy();
+    expect(await screen.findByText("Live broadcasts aren't available on this server")).toBeTruthy();
     expect(screen.getByRole('link', { name: 'All broadcasts' }).getAttribute('href')).toBe('/broadcasts');
   });
 

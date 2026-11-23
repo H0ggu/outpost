@@ -1,7 +1,8 @@
 /**
  * lila's opening explorer wired to Outpost (PLAN §8.3, scripts/lila-patches/002):
  *   - masters / lichess / reference → `${origin}/api/explorer/<db>` (`explorerEndpoint`, absolute
- *     because lila resolves `new URL('./<db>', endpoint)`);
+ *     because lila resolves `new URL('./<db>', endpoint)`); Lichess is explained, not asked for,
+ *     when the server has no Lichess token;
  *   - player → `/api/explorer/player` with `player=<profile slug | lichess:… | chesscom:… | db:… | ref:…>`,
  *     or `/api/explorer/f/<filters>/player` for the profile the Studio was opened with (?filters=);
  *   - tablebase → `/api/tablebase/<variant>`;
@@ -47,6 +48,7 @@ export interface ExplorerOpts {
     openGame(db: ExplorerDb, id: string, orientation: Color, fen: string): void;
     requiresAuth(): boolean;
     readonly loginUrl: string;
+    unavailable(db: ExplorerDb): string | undefined;
   };
 }
 
@@ -57,6 +59,9 @@ export interface ExplorerDeps {
   filtered?: { player: string; segment: string };
   signedIn: () => boolean;
   anonymousBrowsing: () => boolean;
+  /** `SessionInfo.hasLichessToken` (undefined while unknown: the server then decides). */
+  hasLichessToken: () => boolean | undefined;
+  isAdmin: () => boolean;
   loginUrl: () => string;
   redraw: () => void;
   openGame: (db: ExplorerDb, id: string, orientation: Color, fen: string) => void;
@@ -189,6 +194,15 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
       get loginUrl() {
         return deps.loginUrl();
       },
+      // The Lichess database is relayed with the server's token (PLAN §3): without one, say so
+      // instead of asking the server for a 503.
+      unavailable: db =>
+        db === 'lichess' && deps.hasLichessToken() === false
+          ? "The Lichess database is relayed with this server's Lichess API token, and none is set. " +
+            (deps.isAdmin()
+              ? 'Add a personal token in Admin → Settings, or set LICHESS_TOKEN.'
+              : 'Ask the admin of this Outpost to add one.')
+          : undefined,
     },
   };
 }

@@ -21,7 +21,10 @@ const retryAtOf = (e: unknown): number | null => {
   return typeof d?.retryAt === 'number' ? d.retryAt : null;
 };
 
-/** Error panel of the broadcast pages: explains the Lichess token when that is the cause. */
+/**
+ * Error panel of the broadcast pages: explains the Lichess token when that is the cause (known
+ * from the session before any request, see `precheck`), once and without a retry that can't help.
+ */
 export function BroadcastError({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const session = useSession();
   const isAdmin = session.data?.user?.role === 'admin';
@@ -54,7 +57,6 @@ export function BroadcastError({ error, onRetry }: { error: unknown; onRetry?: (
       <i data-icon={licon.RadioTower} aria-hidden />
       <div>
         <strong>Live broadcasts aren't available on this server</strong>
-        <p className="muted">{(error as ApiError).message}</p>
         <p>
           Outpost reads Lichess broadcasts with the server's own Lichess API token (Lichess asks apps to authenticate
           broadcast requests), and none is set.{' '}
@@ -67,7 +69,6 @@ export function BroadcastError({ error, onRetry }: { error: unknown; onRetry?: (
             'Ask the admin of this Outpost to add one.'
           )}
         </p>
-        {retryButton}
       </div>
     </div>
   );

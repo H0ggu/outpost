@@ -135,7 +135,7 @@ index 2079cd4..54c66bb 100644
                name && ctrl.data.playerName.previous().includes(name)
                  ? h('button.remove', {
 diff --git a/analyse/src/explorer/explorerCtrl.ts b/analyse/src/explorer/explorerCtrl.ts
-index 01454da..2371800 100644
+index 01454da..5b6d3d7 100644
 --- a/analyse/src/explorer/explorerCtrl.ts
 +++ b/analyse/src/explorer/explorerCtrl.ts
 @@ -71,7 +71,8 @@ export default class ExplorerCtrl {
@@ -148,17 +148,20 @@ index 01454da..2371800 100644
        else if (parts[1]?.match(/[A-Za-z0-9_-]{2,30}/)) {
          this.config.selectPlayer(parts[1]);
          this.config.data.color(parts[2] === 'black' ? 'black' : 'white');
-@@ -82,7 +83,8 @@ export default class ExplorerCtrl {
+@@ -82,7 +83,11 @@ export default class ExplorerCtrl {
  
    isAuth = () => defined(myUserId());
  
 -  requiresAuth = () => this.config.data.db() !== 'masters' && !this.isAuth();
 +  requiresAuth = () =>
 +    this.opts.outpost ? this.opts.outpost.requiresAuth() : this.config.data.db() !== 'masters' && !this.isAuth();
++
++  // outpost: why the server can't serve the current database (e.g. Lichess without an API token)
++  unavailable = (): string | undefined => this.opts.outpost?.unavailable?.(this.config.data.db());
  
    reload = () => {
      this.directInteraction = true;
-@@ -93,6 +95,7 @@ export default class ExplorerCtrl {
+@@ -93,6 +98,7 @@ export default class ExplorerCtrl {
  
    private readonly baseXhrOpening = () => ({
      endpoint: this.opts.endpoint,
@@ -166,8 +169,17 @@ index 01454da..2371800 100644
      config: this.config.data,
    });
  
+@@ -178,7 +184,7 @@ export default class ExplorerCtrl {
+     this.gameMenu(null);
+     const node = this.root.node;
+     if (
+-      (this.requiresAuth() || node.ply >= MAX_ANALYSE_DEPTH) &&
++      (this.requiresAuth() || !!this.unavailable() || node.ply >= MAX_ANALYSE_DEPTH) &&
+       !this.tablebaseRelevant(this.effectiveVariant, node.fen)
+     )
+       this.cache[node.fen] = this.empty;
 diff --git a/analyse/src/explorer/explorerView.ts b/analyse/src/explorer/explorerView.ts
-index 5a4b85f..32efb67 100644
+index 5a4b85f..3baf044 100644
 --- a/analyse/src/explorer/explorerView.ts
 +++ b/analyse/src/explorer/explorerView.ts
 @@ -108,7 +108,7 @@ const showResult = (winner?: Color): VNode =>
@@ -276,7 +288,30 @@ index 5a4b85f..32efb67 100644
        : hl(
            'button.button-link.player',
            {
-@@ -413,8 +428,8 @@ const showAnon = (ctrl: AnalyseCtrl) =>
+@@ -406,6 +421,22 @@ const showFailing = (ctrl: AnalyseCtrl) =>
+     ]),
+   ]);
+ 
++// outpost: a database this server can't serve (the Lichess one without an API token) says why, at
++// full size, instead of lila's collapsed "Oops, sorry!"
++const unavailableMessage = (ctrl: AnalyseCtrl): string | undefined => {
++  const { explorer } = ctrl;
++  const failing = explorer.failing() as (Error & { unavailable?: boolean }) | null;
++  if (failing?.unavailable) return failing.message;
++  const data = explorer.current();
++  return data && isOpening(data) ? explorer.unavailable() : undefined;
++};
++
++const showUnavailable = (ctrl: AnalyseCtrl, message: string) =>
++  hl('div.data.empty', [
++    explorerTitle(ctrl),
++    hl('div.message', [hl('h3', 'Not available on this server'), hl('p.explanation', message), closeButton(ctrl)]),
++  ]);
++
+ const showAnon = (ctrl: AnalyseCtrl) =>
+   hl('div.data.empty', [
+     explorerTitle(ctrl),
+@@ -413,8 +444,8 @@ const showAnon = (ctrl: AnalyseCtrl) =>
        hl('p.explanation', i18n.site.youNeedAnAccountToDoThat),
        hl(
          'a.button.button-empty.text',
@@ -287,8 +322,39 @@ index 5a4b85f..32efb67 100644
        ),
        closeButton(ctrl),
      ]),
+@@ -429,19 +460,25 @@ export default function (ctrl: AnalyseCtrl): MaybeVNode {
+ 
+   const data = explorer.current();
+   const configOpened = explorer.config.data.open();
+-  const loading = !configOpened && (explorer.loading() || (!data && !explorer.failing()));
++  const unavailable = configOpened || explorer.requiresAuth() ? undefined : unavailableMessage(ctrl);
++  const loading = !configOpened && !unavailable && (explorer.loading() || (!data && !explorer.failing()));
+   const content = explorer.requiresAuth()
+     ? showAnon(ctrl)
+     : configOpened
+       ? showConfig(ctrl)
+-      : explorer.failing()
+-        ? showFailing(ctrl)
+-        : show(ctrl);
++      : unavailable
++        ? showUnavailable(ctrl, unavailable)
++        : explorer.failing()
++          ? showFailing(ctrl)
++          : show(ctrl);
+ 
+   return hl(
+     `section.explorer-box.sub-box${configOpened ? '.explorer__config' : ''}`,
+     {
+-      class: { loading, reduced: !configOpened && (!!explorer.failing() || explorer.movesAway() > 2) },
++      class: {
++        loading,
++        reduced: !configOpened && !unavailable && (!!explorer.failing() || explorer.movesAway() > 2),
++      },
+       hook: {
+         ...onInsert(elem => {
+           elem.scrollTop = 0;
 diff --git a/analyse/src/explorer/explorerXhr.ts b/analyse/src/explorer/explorerXhr.ts
-index 60bb1e4..cc5fa57 100644
+index 60bb1e4..aad8c3d 100644
 --- a/analyse/src/explorer/explorerXhr.ts
 +++ b/analyse/src/explorer/explorerXhr.ts
 @@ -6,6 +6,7 @@ import type { ExplorerDb, OpeningData, TablebaseData } from './interfaces';
@@ -314,36 +380,38 @@ index 60bb1e4..cc5fa57 100644
      if (confByDb.since()) params.set('since', confByDb.since().split('-')[0]);
      if (confByDb.until()) params.set('until', confByDb.until().split('-')[0]);
    } else {
-@@ -58,6 +59,11 @@ export async function opening(
+@@ -58,6 +59,7 @@ export async function opening(
      signal,
    });
  
-+  if (!res.ok) {
-+    const err = new Error(await errorMessage(res));
-+    err.name = ''; // outpost: lila shows `error.toString()`; show just the server's sentence
-+    throw err;
-+  }
++  if (!res.ok) throw await responseError(res);
    await readNdJson<Partial<OpeningData>>(res, data => {
      data.isOpening = true;
      data.fen = opts.fen;
-@@ -65,6 +71,15 @@ export async function opening(
+@@ -65,6 +67,21 @@ export async function opening(
    });
  }
  
-+// outpost: show the server's reason (e.g. no Lichess token configured) instead of a bare status
-+async function errorMessage(res: Response): Promise<string> {
++// outpost: show the server's reason (e.g. no Lichess token configured) instead of a bare status, and
++// flag a database the server can't serve at all (503 `no_token`), which the view explains plainly
++async function responseError(res: Response): Promise<Error & { unavailable: boolean }> {
++  let message = `Status ${res.status}`;
++  let unavailable = false;
 +  try {
 +    const body = await res.json();
-+    if (body?.error?.message) return body.error.message;
++    if (body?.error?.message) message = body.error.message;
++    unavailable = body?.error?.details?.reason === 'no_token';
 +  } catch {}
-+  return `Status ${res.status}`;
++  const err = Object.assign(new Error(message), { unavailable });
++  err.name = ''; // lila shows `error.toString()`: just the server's sentence
++  return err;
 +}
 +
  export async function tablebase(
    endpoint: string,
    variant: VariantKey,
 diff --git a/analyse/src/explorer/interfaces.ts b/analyse/src/explorer/interfaces.ts
-index 8777441..00c78c4 100644
+index 8777441..b26e016 100644
 --- a/analyse/src/explorer/interfaces.ts
 +++ b/analyse/src/explorer/interfaces.ts
 @@ -3,7 +3,7 @@ export interface Hovering {
@@ -355,7 +423,7 @@ index 8777441..00c78c4 100644
  export type ExplorerMode = 'casual' | 'rated';
  export type ExplorerSpeed = Speed;
  
-@@ -11,6 +11,25 @@ export interface ExplorerOpts {
+@@ -11,6 +11,26 @@ export interface ExplorerOpts {
    endpoint: string;
    tablebaseEndpoint: string;
    showRatings: boolean;
@@ -372,6 +440,7 @@ index 8777441..00c78c4 100644
 +  openGame(db: ExplorerDb, id: string, orientation: Color, fen: FEN): void;
 +  requiresAuth(): boolean;
 +  loginUrl: string;
++  unavailable?(db: ExplorerDb): string | undefined; // why the server can't serve db (e.g. Lichess without a token)
 +}
 +
 +export interface ExplorerPlayerChoice {

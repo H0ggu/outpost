@@ -1,6 +1,6 @@
 import { parseFen } from 'chessops/fen';
 import { useEffect, useId, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { withQuery } from '@outpost/shared/filters';
 import { useSession } from '../api/hooks.ts';
 import { Box, licon, Page, Spinner, type LiconValue } from '../components/index.ts';
@@ -73,6 +73,9 @@ export default function GlobalExplorerPage() {
   const session = useSession();
   const reference = useReferenceInfo(!!session.data?.user || !!session.data?.anonymousBrowsing);
   const refGames = reference.data?.totalGames;
+  // The Lichess database is relayed with the server's token: without one it can't open.
+  const noToken = session.data?.hasLichessToken === false;
+  const isAdmin = session.data?.user?.role === 'admin';
 
   useEffect(() => {
     if (directDb) explorerNavigation.replace(studioExplorerHref(directDb, normalizeFen(params.get('fen') ?? '') ?? undefined));
@@ -94,6 +97,28 @@ export default function GlobalExplorerPage() {
         <ul className="lib-explorer-dbs">
           {DBS.map(d => {
             const empty = d.db === 'reference' && refGames === 0;
+            if (d.db === 'lichess' && noToken)
+              return (
+                <li key={d.db}>
+                  <div className="lib-explorer-db lib-explorer-db--off" aria-disabled="true">
+                    <i data-icon={d.icon} aria-hidden />
+                    <span className="lib-explorer-db__text">
+                      <strong>{d.title}</strong>
+                      <span>{d.text}</span>
+                      <span className="lib-explorer-db__count">
+                        Not available on this server: it has no Lichess API token.{' '}
+                        {isAdmin ? (
+                          <>
+                            Add one in <Link to={paths.admin.settings}>Admin → Settings</Link>.
+                          </>
+                        ) : (
+                          'Ask the admin to add one.'
+                        )}
+                      </span>
+                    </span>
+                  </div>
+                </li>
+              );
             return (
               <li key={d.db}>
                 <a className={empty ? 'lib-explorer-db lib-explorer-db--empty' : 'lib-explorer-db'} href={studioExplorerHref(d.db, fen ?? undefined)}>

@@ -73,6 +73,8 @@ export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<vo
         : undefined,
     signedIn: () => ctrl.signedIn,
     anonymousBrowsing: () => !!ctrl.session?.anonymousBrowsing,
+    hasLichessToken: () => ctrl.session?.hasLichessToken,
+    isAdmin: () => ctrl.session?.user?.role === 'admin',
     loginUrl: ctrl.loginUrl,
     redraw: () => ctrl.analyse?.redraw(),
     openGame: ctrl.openExplorerGame,

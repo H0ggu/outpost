@@ -421,6 +421,22 @@ const showFailing = (ctrl: AnalyseCtrl) =>
     ]),
   ]);
 
+// outpost: a database this server can't serve (the Lichess one without an API token) says why, at
+// full size, instead of lila's collapsed "Oops, sorry!"
+const unavailableMessage = (ctrl: AnalyseCtrl): string | undefined => {
+  const { explorer } = ctrl;
+  const failing = explorer.failing() as (Error & { unavailable?: boolean }) | null;
+  if (failing?.unavailable) return failing.message;
+  const data = explorer.current();
+  return data && isOpening(data) ? explorer.unavailable() : undefined;
+};
+
+const showUnavailable = (ctrl: AnalyseCtrl, message: string) =>
+  hl('div.data.empty', [
+    explorerTitle(ctrl),
+    hl('div.message', [hl('h3', 'Not available on this server'), hl('p.explanation', message), closeButton(ctrl)]),
+  ]);
+
 const showAnon = (ctrl: AnalyseCtrl) =>
   hl('div.data.empty', [
     explorerTitle(ctrl),
@@ -444,19 +460,25 @@ export default function (ctrl: AnalyseCtrl): MaybeVNode {
 
   const data = explorer.current();
   const configOpened = explorer.config.data.open();
-  const loading = !configOpened && (explorer.loading() || (!data && !explorer.failing()));
+  const unavailable = configOpened || explorer.requiresAuth() ? undefined : unavailableMessage(ctrl);
+  const loading = !configOpened && !unavailable && (explorer.loading() || (!data && !explorer.failing()));
   const content = explorer.requiresAuth()
     ? showAnon(ctrl)
     : configOpened
       ? showConfig(ctrl)
-      : explorer.failing()
-        ? showFailing(ctrl)
-        : show(ctrl);
+      : unavailable
+        ? showUnavailable(ctrl, unavailable)
+        : explorer.failing()
+          ? showFailing(ctrl)
+          : show(ctrl);
 
   return hl(
     `section.explorer-box.sub-box${configOpened ? '.explorer__config' : ''}`,
     {
-      class: { loading, reduced: !configOpened && (!!explorer.failing() || explorer.movesAway() > 2) },
+      class: {
+        loading,
+        reduced: !configOpened && !unavailable && (!!explorer.failing() || explorer.movesAway() > 2),
+      },
       hook: {
         ...onInsert(elem => {
           elem.scrollTop = 0;

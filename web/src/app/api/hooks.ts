@@ -3,7 +3,7 @@
  * their own hooks next to their pages for endpoints only they use, following the same pattern:
  * a key from `queryKeys`, `api.get` with the abort signal, contract types.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import {
@@ -38,7 +38,7 @@ import {
   type ProfileFilters,
   type QueryValue,
 } from '@outpost/shared/filters';
-import { api } from './client.ts';
+import { api, ApiError } from './client.ts';
 
 /** Stats endpoint names (keys of API_ROUTES.stats that return JSON). */
 export type StatsKind = Exclude<keyof typeof API_ROUTES.stats, 'gamesPgn'>;
@@ -60,13 +60,50 @@ export const queryKeys = {
 // Session
 // ---------------------------------------------------------------------------
 
+const sessionQuery = {
+  queryKey: queryKeys.session,
+  queryFn: ({ signal }: { signal: AbortSignal }) => api.get<SessionInfo>(API_ROUTES.session, undefined, signal),
+  staleTime: 5 * 60_000,
+};
+
 /** `GET /api/session` — who am I, is setup needed, signup mode. */
 export function useSession() {
-  return useQuery({
-    queryKey: queryKeys.session,
-    queryFn: ({ signal }) => api.get<SessionInfo>(API_ROUTES.session, undefined, signal),
-    staleTime: 5 * 60_000,
-  });
+  return useQuery(sessionQuery);
+}
+
+/**
+ * What an endpoint needs (PLAN §10): a signed-in `user`, or a `viewer` (signed in, or anonymous
+ * while anonymousBrowsing is on); `lichessToken` when it relays Lichess with the server's token.
+ */
+export interface EndpointNeeds {
+  audience?: 'user' | 'viewer';
+  lichessToken?: boolean;
+}
+
+/**
+ * Checks the session (waiting for it on a first load) before a query asks the server, and throws
+ * the error the server would answer, without the request: 401 when the visitor can't read the
+ * endpoint, 503 `no_token` when it needs the Lichess token the server lacks. Pages already show
+ * their sign-in or no-token notice for those errors; this way the browser logs no failed request.
+ * When the session can't be read, the server decides.
+ *
+ *   queryFn: async ({ client, signal }) => { await precheck(client, { audience: 'user' }); return api.get(…); }
+ */
+export async function precheck(client: QueryClient, needs: EndpointNeeds): Promise<void> {
+  let s: SessionInfo;
+  try {
+    s = await client.ensureQueryData(sessionQuery);
+  } catch {
+    return;
+  }
+  if (needs.audience && !s.user && !(needs.audience === 'viewer' && s.anonymousBrowsing)) {
+    throw new ApiError(401, 'unauthorized', 'Sign in required');
+  }
+  if (needs.lichessToken && s.hasLichessToken === false) {
+    throw new ApiError(503, 'upstream_unavailable', 'A Lichess API token is required: set LICHESS_TOKEN or add one in the admin settings', {
+      reason: 'no_token',
+    });
+  }
 }
 
 /** `POST /api/logout`, then refetch the session and drop cached data. */
@@ -99,7 +136,10 @@ export function useUpdatePrefs() {
 export function useProfileHeader(slug: string | undefined) {
   return useQuery({
     queryKey: queryKeys.profile(slug ?? ''),
-    queryFn: ({ signal }) => api.get<ProfileHeader>(API_ROUTES.profile(slug!), undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'viewer' });
+      return api.get<ProfileHeader>(API_ROUTES.profile(slug!), undefined, signal);
+    },
     enabled: !!slug,
   });
 }
@@ -118,7 +158,10 @@ export function useProfileStatus(slug: string | undefined, poll: boolean) {
 export function useProfiles(scope: ProfileListQuery['scope']) {
   return useQuery({
     queryKey: queryKeys.profiles(scope),
-    queryFn: ({ signal }) => api.get<ProfileListResponse>(API_ROUTES.profiles, { scope }, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: scope === 'public' ? 'viewer' : 'user' });
+      return api.get<ProfileListResponse>(API_ROUTES.profiles, { scope }, signal);
+    },
   });
 }
 
@@ -126,7 +169,10 @@ export function useProfiles(scope: ProfileListQuery['scope']) {
 export function useBookmarks() {
   return useQuery({
     queryKey: queryKeys.bookmarks,
-    queryFn: ({ signal }) => api.get<ProfileListResponse>(API_ROUTES.bookmarks, undefined, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'user' });
+      return api.get<ProfileListResponse>(API_ROUTES.bookmarks, undefined, signal);
+    },
   });
 }
 
@@ -135,7 +181,10 @@ export function useSearch(q: string) {
   const term = q.trim();
   return useQuery({
     queryKey: queryKeys.search(term),
-    queryFn: ({ signal }) => api.get<SearchResults>(API_ROUTES.search, { q: term }, signal),
+    queryFn: async ({ client, signal }) => {
+      await precheck(client, { audience: 'viewer' });
+      return api.get<SearchResults>(API_ROUTES.search, { q: term }, signal);
+    },
     enabled: term.length >= SEARCH_QUERY_MIN_LENGTH,
     placeholderData: keepPreviousData,
     staleTime: 60_000,

@@ -213,6 +213,12 @@ export interface SessionInfo {
   signupMode: SignupMode;
   /** Whether anonymous visitors may read public profiles and their stats. */
   anonymousBrowsing: boolean;
+  /**
+   * Whether the server has a Lichess API token (env `LICHESS_TOKEN` or the admin settings). The
+   * Lichess opening explorer and live broadcasts need one (otherwise 503 `upstream_unavailable`,
+   * `details.reason: 'no_token'`), so without it the UI explains that instead of asking.
+   */
+  hasLichessToken: boolean;
   version: string;
   /**
    * Where this instance's source code is published (env `SOURCE_URL`, AGPL-3.0 §13), or null when

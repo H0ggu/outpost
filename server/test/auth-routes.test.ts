@@ -126,6 +126,22 @@ describe('session info', () => {
       await t.close();
     }
   });
+
+  it('says whether a Lichess token is configured, never the token', async () => {
+    const none = await makeTestApp();
+    const env = await makeTestApp({ env: { LICHESS_TOKEN: 'lip_envtoken1234' } });
+    try {
+      expect((await sessionOf(none, null)).hasLichessToken).toBe(false);
+      writeSettings(none.db, { lichessToken: 'lip_dbtoken5678' });
+      expect((await sessionOf(none, null)).hasLichessToken).toBe(true);
+      const body = (await get(env, API_ROUTES.session, null)).body;
+      expect(JSON.parse(body)).toMatchObject({ hasLichessToken: true });
+      expect(body).not.toContain('lip_envtoken1234');
+    } finally {
+      await none.close();
+      await env.close();
+    }
+  });
 });
 
 describe('setup (SETUP_TOKEN from env)', () => {

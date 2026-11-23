@@ -78,6 +78,8 @@ describe('explorer options', () => {
     origin: 'https://chess.example.com',
     signedIn: () => true,
     anonymousBrowsing: () => false,
+    hasLichessToken: () => true,
+    isAdmin: () => false,
     loginUrl: () => '/login?next=%2Fstudio',
     redraw: vi.fn(),
     openGame: vi.fn(),
@@ -106,6 +108,20 @@ describe('explorer options', () => {
     anon = false;
     signedIn = true;
     expect(o.outpost.requiresAuth()).toBe(false);
+  });
+
+  it('explains the Lichess database instead of asking for it when the server has no token', () => {
+    let token: boolean | undefined = undefined;
+    let admin = false;
+    const o = makeExplorerOpts(deps({ hasLichessToken: () => token, isAdmin: () => admin }));
+    expect(o.outpost.unavailable('lichess')).toBeUndefined(); // unknown: the server decides
+    token = true;
+    expect(o.outpost.unavailable('lichess')).toBeUndefined();
+    token = false;
+    expect(o.outpost.unavailable('lichess')).toMatch(/Lichess API token, and none is set\. Ask the admin/);
+    admin = true;
+    expect(o.outpost.unavailable('lichess')).toMatch(/Add a personal token in Admin → Settings/);
+    for (const db of ['masters', 'reference', 'player'] as const) expect(o.outpost.unavailable(db)).toBeUndefined();
   });
 
   it('labels player specs, learning profile names from the server', async () => {

@@ -4,7 +4,7 @@ import type { ReferenceInfo } from '@outpost/shared/api';
 import { compactNumber, formatClock, percent, plural, resultLabel, sideScore, timeAgo } from '../src/app/pages/components/library/format.ts';
 import { pageWindow } from '../src/app/pages/components/library/controls.tsx';
 import GlobalExplorerPage, { explorerNavigation, normalizeFen, studioExplorerHref } from '../src/app/pages/GlobalExplorerPage.tsx';
-import { renderPage, session, USER, withFakeServer } from './web-library-helpers.tsx';
+import { ADMIN, renderPage, session, USER, withFakeServer } from './web-library-helpers.tsx';
 
 const api = withFakeServer();
 
@@ -38,6 +38,15 @@ describe('GlobalExplorerPage', () => {
     fireEvent.change(screen.getByLabelText(/Start from a position/), { target: { value: 'garbage' } });
     expect(screen.getByText(/That isn't a valid FEN/)).toBeTruthy();
     expect(masters.getAttribute('href')).toBe('/studio?explorer=masters');
+  });
+
+  it('shows the Lichess database as unavailable when the server has no token', async () => {
+    api().on('GET', '/api/session', session(ADMIN, { hasLichessToken: false })).on('GET', '/api/reference', reference(5));
+    renderPage(<GlobalExplorerPage />, { route: '/explorer' });
+    expect(await screen.findByText(/Not available on this server: it has no Lichess API token/)).toBeTruthy();
+    expect(screen.getByText('Lichess').closest('a')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Admin → Settings' }).getAttribute('href')).toBe('/admin/settings');
+    expect(screen.getByText('Masters').closest('a')!.getAttribute('href')).toBe('/studio?explorer=masters');
   });
 
   it('says when the reference database is empty', async () => {

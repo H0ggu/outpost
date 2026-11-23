@@ -86,6 +86,9 @@ export default class ExplorerCtrl {
   requiresAuth = () =>
     this.opts.outpost ? this.opts.outpost.requiresAuth() : this.config.data.db() !== 'masters' && !this.isAuth();
 
+  // outpost: why the server can't serve the current database (e.g. Lichess without an API token)
+  unavailable = (): string | undefined => this.opts.outpost?.unavailable?.(this.config.data.db());
+
   reload = () => {
     this.directInteraction = true;
     this.cache = {};
@@ -181,7 +184,7 @@ export default class ExplorerCtrl {
     this.gameMenu(null);
     const node = this.root.node;
     if (
-      (this.requiresAuth() || node.ply >= MAX_ANALYSE_DEPTH) &&
+      (this.requiresAuth() || !!this.unavailable() || node.ply >= MAX_ANALYSE_DEPTH) &&
       !this.tablebaseRelevant(this.effectiveVariant, node.fen)
     )
       this.cache[node.fen] = this.empty;
