@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { Id, PrepSet, ProfileSummary } from '@outpost/shared/api';
 import { TIME_CLASSES, type TimeClass } from '@outpost/shared/chess';
 import { PERIODS, type Period, type ProfileFilters } from '@outpost/shared/filters';
@@ -28,6 +28,16 @@ const PERIOD_LABELS: Record<Period, string> = {
 
 /** Time classes offered in the prep filter (`unknown` is for PGN games and rarely useful here). */
 const PREP_TCS = TIME_CLASSES.filter(tc => tc !== 'unknown');
+
+/** Repertoire line lengths offered (plies; the server's default is 8, i.e. 4 moves each). */
+export const LINE_PLIES = [6, 8, 10, 12, 16] as const;
+const DEFAULT_PLIES = 8;
+
+/** `?plies=` when it is one of LINE_PLIES, else undefined (the server default). */
+export function parsePlies(v: string | null): number | undefined {
+  const n = Number(v);
+  return (LINE_PLIES as readonly number[]).includes(n) && n !== DEFAULT_PLIES ? n : undefined;
+}
 
 /** "Last 12 months · Blitz, Rapid · rated" — the filters in words (print header). */
 export function describeFilters(f: ProfileFilters): string {
@@ -201,7 +211,17 @@ function OpponentChip({ profile, onRemove, disabled }: { profile: ProfileSummary
   );
 }
 
-function PrepFilters({ filters, setFilters }: { filters: ProfileFilters; setFilters: (f: ProfileFilters) => void }) {
+function PrepFilters({
+  filters,
+  setFilters,
+  plies,
+  setPlies,
+}: {
+  filters: ProfileFilters;
+  setFilters: (f: ProfileFilters) => void;
+  plies: number | undefined;
+  setPlies: (plies: number | undefined) => void;
+}) {
   const id = useId();
   const toggleTc = (tc: TimeClass) => {
     const cur = new Set(filters.tc ?? []);
@@ -247,6 +267,16 @@ function PrepFilters({ filters, setFilters }: { filters: ProfileFilters; setFilt
           <option value="unrated">Casual only</option>
         </select>
       </div>
+      <div className="form-group">
+        <label htmlFor={`${id}-plies`}>Line length</label>
+        <select id={`${id}-plies`} value={plies ?? DEFAULT_PLIES} onChange={e => setPlies(parsePlies(e.target.value))}>
+          {LINE_PLIES.map(n => (
+            <option key={n} value={n}>
+              {n / 2} moves
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }
@@ -256,16 +286,26 @@ function Report({ set }: { set: PrepSet }) {
   const utc = session.data?.user?.prefs.timezone === 'utc';
   const tz = utc ? 'UTC' : browserTimeZone();
   const [filters, setFilters] = useUrlFilters();
-  const report = usePrepReport(set.id, filters, tz);
+  const [params, setParams] = useSearchParams();
+  const plies = parsePlies(params.get('plies'));
+  const setPlies = (n: number | undefined) =>
+    setParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (n === undefined) next.delete('plies');
+      else next.set('plies', String(n));
+      return next;
+    });
+  const report = usePrepReport(set.id, filters, tz, plies);
 
   return (
     <section className="lib-prep-report" aria-label="Report cards">
-      <PrepFilters filters={filters} setFilters={f => setFilters(f)} />
+      <PrepFilters filters={filters} setFilters={f => setFilters(f)} plies={plies} setPlies={setPlies} />
       <QueryView query={report} what="this report" errorTitle="Could not build the report">
         {r => (
           <div className={report.isPlaceholderData ? 'lib-prep-cards lib-results--stale' : 'lib-prep-cards'} aria-busy={report.isFetching}>
             <p className="lib-prep-printhead">
-              <strong>{r.prep.name}</strong> · {describeFilters(filters)} · generated {formatDateTime(r.generatedAt, utc)}
+              <strong>{r.prep.name}</strong> · {describeFilters(filters)} · lines of {(plies ?? DEFAULT_PLIES) / 2} moves · generated{' '}
+              {formatDateTime(r.generatedAt, utc)}
             </p>
             {r.opponents.length === 0 ? (
               <EmptyState icon={licon.Target} title="No report yet">

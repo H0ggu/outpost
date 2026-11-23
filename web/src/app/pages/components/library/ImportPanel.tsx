@@ -10,7 +10,7 @@ import type { DatabaseInfo, Id, JobInfo } from '@outpost/shared/api';
 import { Button, ErrorBox, licon } from '../../../components/index.ts';
 import { isActiveJob, libraryKeys, useImportPgn } from '../../library-hooks.ts';
 import { JobProgress } from './controls.tsx';
-import { fullNumber, plural } from './format.ts';
+import { fullNumber, plural, timeAgo } from './format.ts';
 
 /** Upload limit (PLAN §10: PGN 50 MB). */
 export const MAX_PGN_BYTES = 50 * 1024 * 1024;
@@ -33,15 +33,54 @@ interface Tracked {
   last: JobInfo;
 }
 
-/** Turns the last seen state of a finished job into the summary. */
+/**
+ * Turns the end of a followed import into the summary. `finished` is its final state when the
+ * database still reports it (failed or cancelled); otherwise the server's `lastImport` when it is
+ * this job (its counters are final); otherwise the last progress seen while polling, which may lag
+ * behind, so the change in game count is the better measure of what was added.
+ */
 export function importOutcome(tracked: Tracked, finished: JobInfo | null, db: DatabaseInfo): ImportOutcome {
-  // No final state seen: the server dropped the job from `importJob`, which it does when it is done
-  // (unless the last state we saw already was the end).
-  const job = finished ?? tracked.last;
+  const final = finished ?? (db.lastImport && db.lastImport.id === tracked.jobId ? db.lastImport : null);
+  const job = final ?? tracked.last;
   const counts = { ...(job.progress?.counts ?? {}) };
+  // Gone from `importJob` without a final state: the server only keeps queued, running and failed ones.
   const status = isActiveJob(job) ? 'done' : job.status;
-  const added = counts.imported ?? Math.max(0, db.gameCount - tracked.before);
-  return { status, added: status === 'done' ? added : (counts.imported ?? 0), counts, error: job.error ?? null, totalNow: db.gameCount };
+  const delta = Math.max(0, db.gameCount - tracked.before);
+  let added = counts.imported ?? 0;
+  if (status === 'done') added = final ? (counts.imported ?? delta) : Math.max(counts.imported ?? 0, delta);
+  if (status === 'done' && !final && counts.imported !== undefined) counts.imported = added;
+  return { status, added, counts, error: job.error ?? null, totalNow: db.gameCount };
+}
+
+/** How the server names the reasons a game was skipped (`skip:<reason>` counters). */
+const SKIP_REASONS: Record<string, string> = {
+  variant: 'variant',
+  fromPosition: 'from a set-up position',
+  noResult: 'unfinished',
+  noMoves: 'no moves',
+  illegalMove: 'illegal move',
+};
+
+/** The counters of an import (other than `imported`) as list items: count and label. */
+export function importCountItems(counts: Record<string, number>): Array<{ key: string; n: number; label: string }> {
+  const items: Array<{ key: string; n: number; label: string }> = [];
+  const reasons = Object.entries(counts)
+    .filter(([k, n]) => k.startsWith('skip:') && n > 0)
+    .map(([k, n]) => `${fullNumber(n)} ${SKIP_REASONS[k.slice(5)] ?? k.slice(5)}`);
+  for (const [key, n] of Object.entries(counts)) {
+    if (key === 'imported' || key.startsWith('skip:')) continue;
+    if (key === 'duplicates') items.push({ key, n, label: 'duplicates skipped' });
+    else if (key === 'skipped')
+      items.push({ key, n, label: reasons.length ? `skipped (${reasons.join(', ')})` : 'skipped (variants, empty or unreadable)' });
+    else if (key === 'errors') items.push({ key, n, label: 'errors' });
+    else items.push({ key, n, label: key });
+  }
+  return items;
+}
+
+/** One-line summary of a finished import: "380 imported, 36 duplicates skipped, 4 skipped (…)". */
+export function importSummaryText(counts: Record<string, number>): string {
+  return [`${fullNumber(counts.imported ?? 0)} imported`, ...importCountItems(counts).filter(i => i.n > 0).map(i => `${fullNumber(i.n)} ${i.label}`)].join(', ');
 }
 
 export function ImportPanel({ db }: { db: DatabaseInfo }) {
@@ -75,7 +114,7 @@ export function ImportPanel({ db }: { db: DatabaseInfo }) {
       if (isActiveJob(current)) {
         if (current !== tracked.last) setTracked({ ...tracked, last: current });
       } else finish(current);
-    } else finish(null); // the server only reports queued/running/failed imports: gone means done
+    } else finish(null); // the server only reports queued/running/failed imports: gone means done (see lastImport)
   }, [current, db, tracked, qc]);
 
   const pickFile = (f: File | null | undefined) => {
@@ -122,6 +161,12 @@ export function ImportPanel({ db }: { db: DatabaseInfo }) {
         <JobProgress job={current} title="The last import failed" />
       )}
       {outcome && <ImportSummary outcome={outcome} onDismiss={() => setOutcome(null)} />}
+      {!running && !outcome && !tracked && current?.status !== 'error' && db.lastImport?.status === 'done' && (
+        <p className="lib-hint lib-lastimport">
+          <i data-icon={licon.Checkmark} aria-hidden /> Last import {timeAgo(db.lastImport.finishedAt)}:{' '}
+          {importSummaryText(db.lastImport.progress?.counts ?? {})}.
+        </p>
+      )}
 
       <form onSubmit={submit} aria-label="Import PGN">
         <div className="lib-seg" role="tablist" aria-label="Import from">
@@ -195,17 +240,10 @@ export function ImportPanel({ db }: { db: DatabaseInfo }) {
   );
 }
 
-const COUNT_LABELS: Record<string, string> = {
-  imported: 'imported',
-  duplicates: 'duplicates skipped',
-  skipped: 'skipped (variants, empty or unreadable)',
-  errors: 'errors',
-};
-
 /** The final summary of an import. */
 export function ImportSummary({ outcome, onDismiss }: { outcome: ImportOutcome; onDismiss: () => void }) {
   const ok = outcome.status === 'done';
-  const extra = Object.entries(outcome.counts).filter(([k]) => k !== 'imported');
+  const extra = importCountItems(outcome.counts);
   return (
     <div className={ok ? 'lib-summary lib-summary--ok' : 'lib-summary lib-summary--bad'} role="status">
       <i data-icon={ok ? licon.Checkmark : licon.CautionTriangle} aria-hidden />
@@ -220,9 +258,9 @@ export function ImportSummary({ outcome, onDismiss }: { outcome: ImportOutcome; 
               <strong>{fullNumber(outcome.counts.imported)}</strong> imported before it stopped
             </li>
           )}
-          {extra.map(([k, v]) => (
-            <li key={k}>
-              <strong>{fullNumber(v)}</strong> {COUNT_LABELS[k] ?? k}
+          {extra.map(i => (
+            <li key={i.key}>
+              <strong>{fullNumber(i.n)}</strong> {i.label}
             </li>
           ))}
           <li>

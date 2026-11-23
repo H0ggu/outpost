@@ -44,7 +44,8 @@ export const libraryKeys = {
     ['databases', id, 'games', { page, pageSize, q }] as const,
   prepList: ['prep'] as const,
   prep: (id: Id) => ['prep', id] as const,
-  prepReport: (id: Id, filters: ProfileFilters, tz: string) => ['prep', id, 'report', filtersKey(filters), tz] as const,
+  prepReport: (id: Id, filters: ProfileFilters, tz: string, plies?: number) =>
+    ['prep', id, 'report', filtersKey(filters), tz, plies ?? null] as const,
   broadcasts: ['broadcasts'] as const,
   broadcastTour: (tourId: string) => ['broadcasts', 'tour', tourId] as const,
   broadcastRound: (roundId: string) => ['broadcasts', 'round', roundId] as const,
@@ -275,11 +276,14 @@ export function usePrepSet(id: Id | undefined) {
   });
 }
 
-/** `GET /api/prep/:id/report` with the filters (applied to every opponent) and the activity zone. */
-export function usePrepReport(id: Id | undefined, filters: ProfileFilters, tz: string, enabled = true) {
+/**
+ * `GET /api/prep/:id/report` with the filters (applied to every opponent), the activity zone and
+ * the length of the repertoire lines (`plies`; the server's default when omitted).
+ */
+export function usePrepReport(id: Id | undefined, filters: ProfileFilters, tz: string, plies?: number, enabled = true) {
   return useQuery({
-    queryKey: libraryKeys.prepReport(id ?? 0, filters, tz),
-    queryFn: ({ signal }) => api.get<PrepReport>(API_ROUTES.prepReport(id!), statsQuery(filters, { tz }), signal),
+    queryKey: libraryKeys.prepReport(id ?? 0, filters, tz, plies),
+    queryFn: ({ signal }) => api.get<PrepReport>(API_ROUTES.prepReport(id!), statsQuery(filters, { tz, plies }), signal),
     enabled: id !== undefined && enabled,
     placeholderData: keepPreviousData,
   });

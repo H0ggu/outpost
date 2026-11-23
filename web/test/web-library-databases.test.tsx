@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseInfo, DbGameRow, JobInfo } from '@outpost/shared/api';
-import { importOutcome } from '../src/app/pages/components/library/ImportPanel.tsx';
+import { importCountItems, importOutcome, importSummaryText } from '../src/app/pages/components/library/ImportPanel.tsx';
 import DatabasePage from '../src/app/pages/DatabasePage.tsx';
 import DatabasesPage from '../src/app/pages/DatabasesPage.tsx';
 import { POLL } from '../src/app/pages/library-hooks.ts';
@@ -181,6 +181,36 @@ describe('DatabasePage', () => {
     expect(screen.queryByText('Import finished: 2 games added')).toBeNull();
   });
 
+  it('summarises from the final counters (lastImport) and shows the last import when idle', async () => {
+    const final = job({
+      id: 90,
+      status: 'done',
+      finishedAt: Date.now() - 5000,
+      progress: { done: 12, total: null, message: null, counts: { imported: 9, duplicates: 1, skipped: 2, 'skip:variant': 1, 'skip:noResult': 1 } },
+    });
+    const states: DatabaseInfo[] = [];
+    let current = database({ gameCount: 2 });
+    base(() => (current = states.shift() ?? current));
+    api().on('POST', '/api/databases/5/import', () => {
+      // The last progress seen while polling lags behind the end of the job.
+      states.push(
+        database({ gameCount: 3, importJob: job({ id: 90, status: 'running', queuePosition: 0, progress: { done: 2, total: null, message: null, counts: { imported: 1 } } }) }),
+        database({ gameCount: 11, importJob: null, lastImport: final }),
+      );
+      return { job: job({ id: 90 }) };
+    });
+    renderPage(<DatabasePage />, ROUTE);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Paste PGN' }));
+    fireEvent.change(screen.getByLabelText('PGN'), { target: { value: '1. e4 e5 1-0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    const summary = await screen.findByText('Import finished: 9 games added', undefined, { timeout: 3000 });
+    const box = summary.closest('[role=status]') as HTMLElement;
+    expect(within(box).getByText('skipped (1 variant, 1 unfinished)')).toBeTruthy();
+    expect(within(box).getByText('duplicates skipped')).toBeTruthy();
+    fireEvent.click(within(box).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.getByText(/Last import .*: 9 imported, 1 duplicates skipped, 2 skipped \(1 variant, 1 unfinished\)\./)).toBeTruthy();
+  });
+
   it('uploads a .pgn file as multipart and refuses oversized files', async () => {
     base(() => database());
     api().on('POST', '/api/databases/5/import', { job: job({ id: 78, status: 'error', error: 'Not a PGN file' }) });
@@ -280,5 +310,24 @@ describe('importOutcome', () => {
       error: 'boom',
       added: 0,
     });
+  });
+
+  it('trusts the final counters, else the larger of a lagging snapshot and the game count change', () => {
+    const lagging = job({ id: 7, status: 'running', progress: { done: 3, total: null, message: null, counts: { imported: 2 } } });
+    // gone, no lastImport: the snapshot says 2, the database grew by 6
+    expect(importOutcome(tracked(lagging), null, database({ gameCount: 16 }))).toMatchObject({ status: 'done', added: 6, counts: { imported: 6 } });
+    // gone, lastImport is this job: its counters win
+    const final = job({ id: 7, status: 'done', progress: { done: 9, total: null, message: null, counts: { imported: 5, duplicates: 4 } } });
+    expect(importOutcome(tracked(lagging), null, database({ gameCount: 16, lastImport: final }))).toMatchObject({ added: 5, counts: { duplicates: 4 } });
+    // lastImport of another (older) job is ignored
+    expect(importOutcome(tracked(lagging), null, database({ gameCount: 13, lastImport: { ...final, id: 3 } })).added).toBe(3);
+  });
+
+  it('labels the counters', () => {
+    expect(importCountItems({ imported: 3, duplicates: 2, skipped: 1, 'skip:illegalMove': 1 }).map(i => i.label)).toEqual([
+      'duplicates skipped',
+      'skipped (1 illegal move)',
+    ]);
+    expect(importSummaryText({ imported: 1200, duplicates: 0, skipped: 0 })).toBe('1,200 imported');
   });
 });

@@ -175,6 +175,14 @@
   width: 100%;
 }
 
+.lib-lastimport {
+  margin: 0;
+}
+
+.lib-lastimport i {
+  color: var(--c-good);
+}
+
 .lib-summary {
   display: flex;
   align-items: flex-start;

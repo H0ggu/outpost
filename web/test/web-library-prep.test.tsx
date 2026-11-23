@@ -133,6 +133,22 @@ describe('PrepPage', () => {
     expect(screen.getByRole('link', { name: 'Explorer as White' }).getAttribute('href')).toContain('filters=');
   });
 
+  it('asks for longer or shorter repertoire lines', async () => {
+    base();
+    const { location } = renderPage(<PrepPage />, { route: '/prep/:id', path: '/prep/3?period=3m' });
+    await screen.findByRole('heading', { name: 'Olga Opponent' });
+    // the server default (8 plies) is not sent
+    expect(api().find('GET', '/api/prep/3/report')[0]!.query.get('plies')).toBeNull();
+    expect((screen.getByLabelText('Line length') as HTMLSelectElement).value).toBe('8');
+    fireEvent.change(screen.getByLabelText('Line length'), { target: { value: '12' } });
+    await waitFor(() => expect(location()).toBe('/prep/3?period=3m&plies=12'));
+    await waitFor(() => expect(api().find('GET', '/api/prep/3/report').at(-1)!.query.get('plies')).toBe('12'));
+    expect(api().find('GET', '/api/prep/3/report').at(-1)!.query.get('period')).toBe('3m');
+    expect(screen.getByText(/lines of 6 moves/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Line length'), { target: { value: '8' } });
+    await waitFor(() => expect(location()).toBe('/prep/3?period=3m'));
+  });
+
   it('adds and removes opponents', async () => {
     let current = set();
     base(() => current);
