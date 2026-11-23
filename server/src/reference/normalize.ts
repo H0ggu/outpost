@@ -108,7 +108,9 @@ export function toReferenceGame(
     });
     game.timeClass = tc.timeClass;
     game.timeControl = tc.timeControl;
-    if (game.endedAt === null && ctx.round?.startsAt) {
+    // Round imports: the Date tag is unreliable within a round (research §4), so without a UTC
+    // date the round's start time is used.
+    if (ctx.round?.startsAt && (game.endedAt === null || !tag(h, 'UTCDate'))) {
       game.startedAt = ctx.round.startsAt;
       game.endedAt = ctx.round.startsAt;
     }
