@@ -906,7 +906,9 @@ export class StudioCtrl {
     if (!a) return;
     const path = a.path;
     for (const c of a.node.comments ?? []) if (!c.comp && c.id !== pgnCommentId) a.tree.deleteCommentAt(c.id, path);
-    a.tree.setCommentAt({ id: pgnCommentId, by: '', text: text.trim() }, path);
+    const clean = text.trim();
+    if (clean) a.tree.setCommentAt({ id: pgnCommentId, by: '', text: clean }, path);
+    else a.tree.deleteCommentAt(pgnCommentId, path);
     a.redraw();
     this.checkDirty();
   }

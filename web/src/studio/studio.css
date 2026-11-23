@@ -86,6 +86,25 @@ body #main-wrap {
   color: var(--c-bad);
 }
 
+/* Header: lila's #top, not sticky here (lila's scroll handler that hides it isn't loaded, and the
+   Studio bar below it scrolls away with the page). */
+body #top {
+  position: relative;
+}
+
+/* lila's "indexing" loader sprite isn't vendored: three dots instead. */
+.ddloader {
+  background: radial-gradient(circle, currentColor 1.5px, transparent 2.5px) 0 50% / 8px 8px repeat-x !important;
+  color: var(--c-font-dim);
+  animation: studio-dots 0.8s linear infinite !important;
+}
+
+@keyframes studio-dots {
+  to {
+    background-position: 8px 50%;
+  }
+}
+
 /* Header: Outpost wordmark in lila's .site-title */
 #top .site-title {
   gap: 0.5rem;
@@ -911,6 +930,33 @@ body #main-wrap {
 .studio-picker--sounds .button.active {
   border-color: var(--c-secondary);
   color: var(--c-secondary);
+}
+
+/* -------------------------------------------------------------------------
+ * lila explorer with Outpost's four databases (masters, reference, lichess, player): the title row
+ * keeps the settings gear clear and shortens a long player name instead of overflowing.
+ * ---------------------------------------------------------------------- */
+
+.explorer-box .explorer-title {
+  padding-inline-end: 2.2em;
+  overflow: hidden;
+}
+
+.explorer-box .explorer-title > * {
+  flex: 0 0 auto;
+}
+
+.explorer-box .explorer-title > .active {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.explorer-box .explorer-title > .active strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* -------------------------------------------------------------------------

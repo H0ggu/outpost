@@ -21,17 +21,19 @@ export type SocketReceive = (type: string, data: unknown) => void;
 const MAX_MULTI_PV = 5;
 
 /**
- * Makes the socket shim. `receive` may be set after the board is mounted (messages wait for it);
- * `fetchImpl` is for tests.
+ * Makes the socket shim. `getReceive` may return undefined until the board is mounted (answers are
+ * then dropped); `canGet` says whether this viewer may call `/api/cloud-eval` (signed in, or
+ * anonymous browsing on), so anonymous visitors never trigger 401s; `fetchImpl` is for tests.
  */
 export function makeSocketSend(
   getReceive: () => SocketReceive | undefined,
+  canGet: () => boolean = () => true,
   fetchImpl: typeof fetch = (...args) => fetch(...args),
 ): (type: string, data?: unknown) => void {
   const pending = new Map<string, Promise<void>>();
 
   const evalGet = (d: EvalGetData): void => {
-    if (!d || typeof d.fen !== 'string' || typeof d.path !== 'string') return;
+    if (!d || typeof d.fen !== 'string' || typeof d.path !== 'string' || !canGet()) return;
     if (d.variant && d.variant !== 'standard' && d.variant !== 'fromPosition') return;
     const multiPv = Math.max(1, Math.min(MAX_MULTI_PV, Math.round(d.mpv ?? 1)));
     const key = `${d.fen}|${multiPv}|${d.path}`;

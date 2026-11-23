@@ -28,6 +28,14 @@ import { parseStudioQuery } from './query.ts';
 
 const params = parseStudioQuery(location.search);
 const prefs = localPrefs();
+// lila's board resize handle saves the zoom under body[data-zoom-storage] (scripts/lila-patches/001).
+try {
+  const zoom = Number(localStorage.getItem(document.body.dataset.zoomStorage ?? ''));
+  if (zoom >= 0 && zoom <= 100 && localStorage.getItem(document.body.dataset.zoomStorage ?? '') !== null)
+    document.body.style.setProperty('---zoom', String(Math.round(zoom)));
+} catch {
+  // storage unavailable: lila's default zoom
+}
 document.body.classList.toggle('studio-embed', params.embed);
 applyStudioPrefs(prefs);
 

@@ -167,7 +167,7 @@ index 01454da..2371800 100644
    });
  
 diff --git a/analyse/src/explorer/explorerView.ts b/analyse/src/explorer/explorerView.ts
-index 5a4b85f..f35a86d 100644
+index 5a4b85f..d0d52ad 100644
 --- a/analyse/src/explorer/explorerView.ts
 +++ b/analyse/src/explorer/explorerView.ts
 @@ -108,7 +108,7 @@ const showResult = (winner?: Color): VNode =>
@@ -208,28 +208,34 @@ index 5a4b85f..f35a86d 100644
      );
    }
    return hl('div.title', showTitle(ctrl.data.game.variant));
-@@ -303,6 +307,9 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+@@ -303,6 +307,11 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
    const db = explorer.db();
    const data = explorer.current();
    const queuePosition = data && isOpening(data) && data.queuePosition;
 +  const outpost = explorer.opts.outpost;
 +  const playerLabel = playerName && outpost ? outpost.playerLabel(playerName) : playerName;
 +  const referenceExplanation = 'Over-the-board games in this Outpost\'s reference database';
++  // outpost: four databases share the title row, so the active one drops " database"; no lichess logo
++  const dbWord = outpost ? '' : ' database';
  
    const otherLink = (name: string, title: string) =>
      hl(
-@@ -337,6 +344,10 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+@@ -335,16 +344,20 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+ 
+   return hl('div.explorer-title', [
      db === 'masters'
-       ? active([hl('strong', 'Masters'), ' database'], masterDbExplanation, licon.Book)
+-      ? active([hl('strong', 'Masters'), ' database'], masterDbExplanation, licon.Book)
++      ? active([hl('strong', 'Masters'), dbWord], masterDbExplanation, licon.Book)
        : explorer.config.allDbs.includes('masters') && otherLink('Masters', masterDbExplanation),
 +    explorer.config.allDbs.includes('reference') &&
 +      (db === 'reference'
-+        ? active([hl('strong', 'Reference'), ' database'], referenceExplanation, licon.Trophy)
++        ? active([hl('strong', 'Reference'), dbWord], referenceExplanation, licon.Trophy)
 +        : otherLink('Reference', referenceExplanation)),
      db === 'lichess'
-       ? active([hl('strong', 'Lichess'), ' database'], i18n.site.lichessDbExplanation, licon.Logo)
+-      ? active([hl('strong', 'Lichess'), ' database'], i18n.site.lichessDbExplanation, licon.Logo)
++      ? active([hl('strong', 'Lichess'), dbWord], i18n.site.lichessDbExplanation, outpost ? licon.Globe : licon.Logo)
        : otherLink('Lichess', i18n.site.lichessDbExplanation),
-@@ -344,7 +355,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+     db === 'player'
        ? playerName
          ? active(
              [
@@ -238,7 +244,16 @@ index 5a4b85f..f35a86d 100644
                ` ${i18n.site[`as${capitalize(config.data.color())}`]}`,
                explorer.isIndexing() &&
                  !configOpened &&
-@@ -413,8 +424,8 @@ const showAnon = (ctrl: AnalyseCtrl) =>
+@@ -359,7 +372,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+             i18n.site.switchSides,
+             licon.User,
+           )
+-        : active([hl('strong', 'Player'), ' database'], '', licon.User)
++        : active([hl('strong', 'Player'), dbWord], '', licon.User)
+       : hl(
+           'button.button-link.player',
+           {
+@@ -413,8 +426,8 @@ const showAnon = (ctrl: AnalyseCtrl) =>
        hl('p.explanation', i18n.site.youNeedAnAccountToDoThat),
        hl(
          'a.button.button-empty.text',

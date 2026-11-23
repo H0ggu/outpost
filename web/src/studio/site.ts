@@ -15,6 +15,7 @@ import * as asset from 'lila/site/asset';
 import Mousetrap from 'lila/site/mousetrap';
 import { redirect, reload, unload } from 'lila/site/reload';
 import sound from 'lila/site/sound';
+import { alert } from 'lila/lib/view';
 import engines from 'virtual:studio-engines';
 import { lilaAssetUrl, SHIPPED_SOUNDS } from './assetUrl.ts';
 
@@ -35,10 +36,8 @@ async function loadEsm<T>(name: string, opts: Init = {}): Promise<T> {
   const loader = ESM[name];
   if (!loader) {
     const reason = UNAVAILABLE[name];
-    if (reason) {
-      const { alert } = await import('lila/lib/view');
-      await alert(reason);
-    } else console.info(`Outpost: lila module ${name} is not available`);
+    if (reason) await alert(reason);
+    else console.info(`Outpost: lila module ${name} is not available`);
     // Never settles: callers that await a missing module simply do nothing.
     return new Promise<T>(() => undefined);
   }

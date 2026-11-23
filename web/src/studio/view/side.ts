@@ -222,30 +222,6 @@ function annotateView(ctrl: StudioCtrl): VNode {
         ? h('span.studio-annotate__hint', 'Annotations are saved with the board.')
         : null,
     ]),
-    isMove
-      ? h(
-          'div.study__glyphs',
-          GLYPH_GROUPS.map(group =>
-            h(
-              `div.${group.name}`,
-              group.ids.map(id => {
-                const glyph = glyphOfNag(id);
-                if (!glyph) return null;
-                return h(
-                  'button',
-                  {
-                    key: `g${id}`,
-                    class: { active: ctrl.hasGlyph(id) },
-                    attrs: { type: 'button', 'data-symbol': glyph.symbol, title: glyph.name },
-                    on: { click: () => ctrl.toggleGlyph(id) },
-                  },
-                  glyph.name,
-                );
-              }),
-            ),
-          ),
-        )
-      : h('p.studio-empty', 'Glyphs go on moves; a comment here describes the starting position.'),
     h('div.study__comments', [
       h('form.form3', { on: { submit: (e: Event) => e.preventDefault() } }, [
         h('label.form-label', { attrs: { for: 'studio-comment' } }, isMove ? 'Comment on this move' : 'Comment on the position'),
@@ -279,6 +255,30 @@ function annotateView(ctrl: StudioCtrl): VNode {
         }),
       ]),
     ]),
+    isMove
+      ? h(
+          'div.study__glyphs',
+          GLYPH_GROUPS.map(group =>
+            h(
+              `div.${group.name}`,
+              group.ids.map(id => {
+                const glyph = glyphOfNag(id);
+                if (!glyph) return null;
+                return h(
+                  'button',
+                  {
+                    key: `g${id}`,
+                    class: { active: ctrl.hasGlyph(id) },
+                    attrs: { type: 'button', 'data-symbol': glyph.symbol, title: glyph.name },
+                    on: { click: () => ctrl.toggleGlyph(id) },
+                  },
+                  glyph.name.charAt(0).toUpperCase() + glyph.name.slice(1),
+                );
+              }),
+            ),
+          ),
+        )
+      : h('p.studio-empty', 'Play or select a move to add glyphs (!, ?, ±, …) to it.'),
   ]);
 }
 

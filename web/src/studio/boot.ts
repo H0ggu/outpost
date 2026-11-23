@@ -67,7 +67,10 @@ export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<vo
   const first = ctrl.activeTab!;
 
   let lila: AnalyseApi | undefined;
-  const socketSend = makeSocketSend(() => lila?.socketReceive);
+  const socketSend = makeSocketSend(
+    () => lila?.socketReceive,
+    () => ctrl.signedIn || !!ctrl.session?.anonymousBrowsing,
+  );
   const side = document.createElement('aside');
   side.className = 'analyse__side studio-side';
 

@@ -310,6 +310,8 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
   const outpost = explorer.opts.outpost;
   const playerLabel = playerName && outpost ? outpost.playerLabel(playerName) : playerName;
   const referenceExplanation = 'Over-the-board games in this Outpost\'s reference database';
+  // outpost: four databases share the title row, so the active one drops " database"; no lichess logo
+  const dbWord = outpost ? '' : ' database';
 
   const otherLink = (name: string, title: string) =>
     hl(
@@ -342,14 +344,14 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
 
   return hl('div.explorer-title', [
     db === 'masters'
-      ? active([hl('strong', 'Masters'), ' database'], masterDbExplanation, licon.Book)
+      ? active([hl('strong', 'Masters'), dbWord], masterDbExplanation, licon.Book)
       : explorer.config.allDbs.includes('masters') && otherLink('Masters', masterDbExplanation),
     explorer.config.allDbs.includes('reference') &&
       (db === 'reference'
-        ? active([hl('strong', 'Reference'), ' database'], referenceExplanation, licon.Trophy)
+        ? active([hl('strong', 'Reference'), dbWord], referenceExplanation, licon.Trophy)
         : otherLink('Reference', referenceExplanation)),
     db === 'lichess'
-      ? active([hl('strong', 'Lichess'), ' database'], i18n.site.lichessDbExplanation, licon.Logo)
+      ? active([hl('strong', 'Lichess'), dbWord], i18n.site.lichessDbExplanation, outpost ? licon.Globe : licon.Logo)
       : otherLink('Lichess', i18n.site.lichessDbExplanation),
     db === 'player'
       ? playerName
@@ -370,7 +372,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
             i18n.site.switchSides,
             licon.User,
           )
-        : active([hl('strong', 'Player'), ' database'], '', licon.User)
+        : active([hl('strong', 'Player'), dbWord], '', licon.User)
       : hl(
           'button.button-link.player',
           {

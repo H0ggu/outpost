@@ -16,7 +16,7 @@ import {
   type UserPrefs,
 } from '@outpost/shared/api';
 import { api } from '../app/api/client.ts';
-import { applyBoardTheme, applyPieceSet, applyTheme, storedTheme } from '../lichess/assets.ts';
+import { applyBoardTheme, applyTheme, PIECE_ROLES, pieceUrl, storedTheme } from '../lichess/assets.ts';
 
 /** The prefs the Studio uses. */
 export type StudioPrefs = Pick<UserPrefs, 'theme' | 'boardTheme' | 'pieceSet' | 'soundSet' | 'studioLayout'>;
@@ -58,6 +58,15 @@ function storeLocal(p: StudioPrefs): void {
   }
 }
 
+/**
+ * Selects a piece set the way lila's dasher does: `---white-pawn: url(/lichess/piece/…)` on <body>,
+ * unquoted, because lila's `site.asset.loadPieces` strips `url(` and `)` to preload the images.
+ */
+export function applyPieces(set: StudioPrefs['pieceSet'], el: HTMLElement = document.body): void {
+  for (const color of ['white', 'black'] as const)
+    for (const role of PIECE_ROLES) el.style.setProperty(`---${color}-${role}`, `url(${pieceUrl(set, color, role)})`);
+}
+
 /** Applies theme, board, pieces and sound set to the document (before and after lila loads). */
 export function applyStudioPrefs(p: StudioPrefs): void {
   applyTheme(p.theme);
@@ -65,10 +74,11 @@ export function applyStudioPrefs(p: StudioPrefs): void {
   document.documentElement.classList.toggle('light', p.theme === 'light');
   document.documentElement.classList.toggle('dark', p.theme !== 'light');
   applyBoardTheme(p.boardTheme);
-  applyPieceSet(p.pieceSet);
+  applyPieces(p.pieceSet);
   document.body.dataset.soundSet = p.soundSet;
   document.body.dataset.studioLayout = p.studioLayout;
-  window.site?.sound?.changeSet?.(p.soundSet);
+  // lila's sound player, once the site shim installed it (structural: this module is also unit-tested)
+  (window as { site?: { sound?: { changeSet?(set: string): void } } }).site?.sound?.changeSet?.(p.soundSet);
 }
 
 /** Saves a change: to the account when signed in (also mirrored locally), else to this browser. */
