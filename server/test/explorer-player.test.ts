@@ -313,6 +313,33 @@ describe('player explorer (/api/explorer/player)', () => {
     expect((await explore('player=ref:12345&color=white')).moves).toEqual([]);
   });
 
+  it('counts a game held by two reference databases once under ref:<fideId>, like a FIDE profile', async () => {
+    const second = createDatabase(t.db, { name: 'Licensed OTB copy', kind: 'reference' });
+    // The same game as r1 (same hash part of origin_id) in another reference database.
+    const copy = insertGame(
+      t.db,
+      testGame({
+        startedAt: month(1) - 600_000,
+        endedAt: month(1),
+        origin: 'reference',
+        originId: `${second}:r1`,
+        databaseId: second,
+        moves: sans('e4 e5'),
+        result: '1-0',
+        timeClass: 'classical',
+        white: { name: 'Ref Player', rating: 2700, fideId: '99999901' },
+        black: { name: 'Other GM', rating: 2650 },
+      }),
+    );
+    try {
+      const w = await explore('player=ref:99999901&color=white');
+      expect(w.moves.find(m => m.uci === 'e2e4')).toMatchObject({ white: 1, draws: 0, black: 0 });
+    } finally {
+      t.db.run('DELETE FROM games WHERE id = ?', [copy.gameId]);
+      t.db.run('DELETE FROM databases WHERE id = ?', [second]);
+    }
+  });
+
   it('enforces profile visibility and the viewer rules', async () => {
     expect((await get('player=secret&color=white')).statusCode).toBe(404);
     expect((await get('player=secret&color=white', owner)).statusCode).toBe(200);

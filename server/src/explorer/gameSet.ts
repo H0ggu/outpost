@@ -9,7 +9,9 @@
  *   see it (attached, not hidden, to a profile the viewer may read; admins see all);
  * - `db:<id>` → every game of a database the viewer may read (`loadDatabaseForViewer`), seen from
  *   one side (the explorer's colour) so the player-perspective filters still mean something;
- * - `ref:<fideId>` → that FIDE player's games in the reference databases (instance-wide data);
+ * - `ref:<fideId>` → that FIDE player's games in the reference databases (instance-wide data),
+ *   one copy per game when several reference databases hold it (the first stored), the same rule
+ *   as a FIDE profile's `player_games` (migration 601, decision 1);
  * - the reference explorer and a reference-backed masters explorer → every game of the reference
  *   databases (or of one), from White's side, with only the neutral filters applied.
  *
@@ -252,7 +254,7 @@ export function resolveGameSet(db: Db, spec: PlayerSpec, viewer: AuthUser | null
     case 'ref':
       return derivedSet(
         spec,
-        side => ({ sql: `g.origin = 'reference' AND g.${side}_fide_id = ?`, params: [spec.fideId] }),
+        side => ({ sql: `g.origin = 'reference' AND g.${side}_fide_id = ? AND ${NOT_A_LATER_REFERENCE_COPY}`, params: [spec.fideId] }),
         { perspective: 'neutral', cacheKey: `ref:${spec.fideId}`, bothSidesWhenUncoloured: true, stats: fideStats(spec.fideId), byDatabase: false },
       );
   }
@@ -281,7 +283,20 @@ export function referenceGameSet(db: Db, databaseId: Id | null): GameSet {
   );
 }
 
-/** Stats of a FIDE player's reference games (small sets; versioned with every reference database). */
+/**
+ * `games g` is the first stored copy of its reference game: no other reference database holds the
+ * same game (same `origin_id` hash, `<databaseId>:<hash>`) under a lower id. Lookups use the
+ * UNIQUE (origin, origin_id) index, one per other reference database.
+ */
+const NOT_A_LATER_REFERENCE_COPY = `NOT EXISTS (
+    SELECT 1 FROM databases d
+      JOIN games o ON o.origin = 'reference' AND o.origin_id = d.id || substr(g.origin_id, instr(g.origin_id, ':')) AND o.id < g.id
+     WHERE d.kind = 'reference' AND d.id IS NOT g.database_id)`;
+
+/**
+ * Stats of a FIDE player's reference games (small sets; versioned with every reference database).
+ * `size` counts every copy: an upper bound, which is all the query plan needs.
+ */
 const fideStats = (fideId: string): DerivedStats => ({
   size: db =>
     db.value<number>(
