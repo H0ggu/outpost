@@ -236,7 +236,7 @@ function RecentGames({ games, utc }: { games: readonly GameRow[]; utc: boolean }
                 {g.eco && <span className="lib-eco">{g.eco}</span>} {g.openingName ?? ''}
               </span>
               <TimeClassIcon tc={g.timeClass} />
-              <a className="lib-prep-recent__date" href={paths.studio({ game: g.id })} title="Open in the Studio">
+              <a className="lib-prep-recent__date" href={paths.studio({ game: g.id, color: g.color })} title="Open in the Studio">
                 {formatDate(g.endedAt, utc)}
               </a>
             </li>

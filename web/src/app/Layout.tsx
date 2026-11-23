@@ -15,7 +15,7 @@ import { licon } from '../lichess/licon.ts';
 import { useLogout, useSession } from './api/hooks.ts';
 import { Button } from './components/index.ts';
 import { JobsIndicator } from './pages/components/account/JobsIndicator.tsx';
-import { paths } from './paths.ts';
+import { MAIN_NAV, paths } from './paths.ts';
 import { usePrefs } from './prefs.ts';
 import './Layout.css';
 
@@ -31,15 +31,6 @@ export const sourceCodeUrl = (info: SessionInfo | undefined): string | null => {
   return url && /^https?:\/\//i.test(url) ? url : null;
 };
 
-/** Main navigation (SPA routes; the Studio is added as a full-page link). */
-const NAV = [
-  { to: paths.home, label: 'Home', end: true },
-  { to: paths.players, label: 'Players' },
-  { to: paths.databases, label: 'Databases' },
-  { to: paths.prepList, label: 'Prep' },
-  { to: paths.broadcasts, label: 'Broadcasts' },
-  { to: paths.explorer, label: 'Explorer' },
-] as const;
 
 export default function Layout() {
   const session = useSession();
@@ -95,8 +86,9 @@ export default function Layout() {
         </Link>
         <nav id="topnav" className={menuOpen ? 'topnav open' : 'topnav'} aria-label="Main">
           <SearchBox variant="menu" />
-          {NAV.map(item => (
-            <NavLink key={item.to} to={item.to} end={'end' in item ? item.end : false}>
+          {/* MAIN_NAV: SPA routes, the same list as the Studio's header; the Studio follows. */}
+          {MAIN_NAV.map(item => (
+            <NavLink key={item.href} to={item.href} end={item.end ?? false}>
               {item.label}
             </NavLink>
           ))}

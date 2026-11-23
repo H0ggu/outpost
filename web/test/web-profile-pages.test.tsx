@@ -63,7 +63,8 @@ describe('Overview tab', () => {
     const latest = screen.getByRole('heading', { name: 'Latest games' }).closest('section')!;
     const links = within(latest).getAllByRole('link').filter(a => a.getAttribute('href')?.startsWith('/studio'));
     expect(links.length).toBe(5);
-    expect(links[0]!.getAttribute('href')).toBe(`/studio?game=op${ALL_GAMES[0]!.id}`);
+    // The Studio opens the game from the player's side.
+    expect(links[0]!.getAttribute('href')).toBe(`/studio?game=op${ALL_GAMES[0]!.id}&color=${ALL_GAMES[0]!.color}`);
   });
 
   it('opens the games of a time class and of a colour', async () => {
@@ -170,7 +171,7 @@ describe('Games tab', () => {
     expect(first.getAttribute('aria-expanded')).toBe('true');
     const game = ALL_GAMES[0]!;
     const analyse = await screen.findByRole('link', { name: 'Analyse' });
-    expect(analyse.getAttribute('href')).toBe(`/studio?game=op${game.id}`);
+    expect(analyse.getAttribute('href')).toBe(`/studio?game=op${game.id}&color=${game.color}`);
     await waitFor(() => expect(requests(`/api/games/${game.id}`).length).toBe(1));
     // The replay is oriented to the player and starts at the final position.
     const viewer = await screen.findByTestId('pgn-viewer');

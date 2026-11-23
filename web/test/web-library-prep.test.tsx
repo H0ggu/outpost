@@ -107,7 +107,7 @@ describe('PrepPage', () => {
     expect(within(card).getByText('1. e4 e6')).toBeTruthy();
     expect(within(card).getAllByText('No repeated lines yet.')).toHaveLength(1);
     // Recent games open in the Studio.
-    expect(within(card).getByText('Zed').closest('li')!.querySelector('a')!.getAttribute('href')).toBe('/studio?game=900');
+    expect(within(card).getByText('Zed').closest('li')!.querySelector('a')!.getAttribute('href')).toMatch(/^\/studio\?game=900&color=(white|black)$/);
     // When they play.
     expect(within(card).getByText('19:00–23:00')).toBeTruthy();
     expect(within(card).getByText('Wednesday')).toBeTruthy();

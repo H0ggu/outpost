@@ -94,3 +94,16 @@ export const studioPlayerExplorer = (slug: string, color: Color, filters: Profil
     filters: encodeFiltersSegment(filters),
     ...(embed ? { embed: 'explorer' as const } : {}),
   });
+
+/**
+ * The site's main navigation, in order: the SPA header and the Studio's header (a separate page,
+ * which links back with full page loads) both draw it, then add the Studio itself.
+ */
+export const MAIN_NAV: ReadonlyArray<{ readonly href: string; readonly label: string; readonly end?: boolean }> = [
+  { href: paths.home, label: 'Home', end: true },
+  { href: paths.players, label: 'Players' },
+  { href: paths.databases, label: 'Databases' },
+  { href: paths.prepList, label: 'Prep' },
+  { href: paths.broadcasts, label: 'Broadcasts' },
+  { href: paths.explorer, label: 'Explorer' },
+];

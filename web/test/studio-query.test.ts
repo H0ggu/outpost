@@ -29,6 +29,12 @@ describe('parseStudioQuery', () => {
     expect(parseStudioQuery('?file=x').file).toBeUndefined();
   });
 
+  it('keeps an unreadable FEN aside so the Studio can say so', () => {
+    expect(parseStudioQuery('?fen=notafen')).toEqual({ embed: false, badFen: 'notafen' });
+    expect(parseStudioQuery(`?fen=${encodeURIComponent(START)}`)).toEqual({ embed: false, fen: START });
+    expect(parseStudioQuery('?fen=%20').badFen).toBeUndefined();
+  });
+
   it('reads the explorer databases and ignores unknown ones', () => {
     expect(parseStudioQuery('?explorer=masters').explorer).toEqual({ db: 'masters' });
     expect(parseStudioQuery('?explorer=lichess').explorer).toEqual({ db: 'lichess' });

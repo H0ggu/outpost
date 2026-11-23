@@ -64,7 +64,7 @@ export default function GamePreview({ slug, game, timeZone }: { slug: string; ga
           )}
         </dl>
         <div className="game-preview__actions">
-          <a className="button button-thin" href={studioGameLink(game.id)} data-icon={licon.Microscope}>
+          <a className="button button-thin" href={studioGameLink(game.id, game.color)} data-icon={licon.Microscope}>
             Analyse
           </a>
           {game.url && site && (

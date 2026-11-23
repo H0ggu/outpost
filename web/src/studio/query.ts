@@ -8,7 +8,8 @@
  *   ?color=white|black player explorer side (and board orientation for ?game)
  *   ?filters=<segment> Outpost filters (encodeFiltersSegment) for the player explorer
  *   ?embed=explorer    minimal chrome, for the profile Explorer tab iframe
- * Invalid values are ignored, never fatal.
+ * Invalid values are ignored, never fatal; an invalid `?fen=` is reported (`badFen`), like a game
+ * or file that can't be opened.
  */
 import { parseFen } from 'chessops/fen';
 import { fromExplorerGameId, type Color, type Id } from '@outpost/shared/api';
@@ -23,6 +24,8 @@ export interface StudioParams {
   file?: Id;
   pgn?: string;
   fen?: string;
+  /** A `?fen=` that isn't a position (shown to the user once the Studio is up). */
+  badFen?: string;
   explorer?: StudioExplorer;
   color?: Color;
   /** A decodable filters segment (never `_`, which means no filters). */
@@ -58,8 +61,10 @@ export function parseStudioQuery(search: string | URLSearchParams): StudioParams
 
   const pgn = q.get('pgn');
   if (pgn && pgn.trim() && pgn.length <= MAX_PGN) out.pgn = pgn;
-  const fen = cleanFen(q.get('fen'));
+  const rawFen = q.get('fen');
+  const fen = cleanFen(rawFen);
   if (fen) out.fen = fen;
+  else if (rawFen?.trim()) out.badFen = rawFen.trim().slice(0, 120);
 
   const color = q.get('color');
   if (color === 'white' || color === 'black') out.color = color;

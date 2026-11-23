@@ -517,6 +517,9 @@ export class StudioCtrl {
       this.openPgnText(p.pgn);
       if (p.fen) this.jumpToFen(p.fen);
     } else if (p.fen) this.newTab(p.fen);
+    // not awaited, like the other boot-time notices: the board comes up behind it
+    if (p.badFen !== undefined)
+      void alert(`“${p.badFen}” is not a position Outpost can read (a FEN), so the board starts from the initial position.`);
   }
 
   /** `?explorer=masters|lichess|reference|player:<spec>` (+ `&color=`): opens lila's explorer there. */

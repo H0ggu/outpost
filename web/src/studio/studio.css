@@ -139,6 +139,30 @@ body #top {
   margin-inline-end: 1rem;
 }
 
+/* Player search (the SPA header's search box): opens /search?q= */
+.studio-search {
+  display: flex;
+  align-items: center;
+  margin-inline-end: 0.75rem;
+}
+
+.studio-search input {
+  width: 13rem;
+  height: 2.1rem;
+  padding: 0 0.9rem;
+  border-radius: 99px;
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-input, var(--c-bg-box));
+  color: var(--c-font);
+  font-size: 0.95em;
+}
+
+@media (max-width: 799.98px) {
+  .studio-search {
+    display: none;
+  }
+}
+
 /* -------------------------------------------------------------------------
  * Studio bar: board tabs + actions
  * ---------------------------------------------------------------------- */
@@ -1091,4 +1115,9 @@ body.studio-embed .analyse__underboard {
     max-height: 75vh;
     overflow-y: auto;
   }
+}
+
+/* The player explorer's picker (patch 002): its search box fits "Search profiles and accounts". */
+.explorer__config__player__choice .input-wrapper input {
+  width: min(22rem, 70vw);
 }

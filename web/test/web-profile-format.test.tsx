@@ -86,6 +86,8 @@ describe('lines', () => {
 describe('links', () => {
   it('links games and the explorer into the Studio', () => {
     expect(studioGameLink(123)).toBe('/studio?game=op123');
+    // The board turns to the profile player's side.
+    expect(studioGameLink(123, 'black')).toBe('/studio?game=op123&color=black');
     const href = studioExplorerLink('magnus', 'black', { tc: ['blitz'], line: ['e2e4', 'c7c5'] }, true);
     const url = new URL(href, 'http://x');
     expect(url.pathname).toBe('/studio');

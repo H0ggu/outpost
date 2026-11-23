@@ -312,7 +312,7 @@ function LatestGamesCard({ slug, games, header }: { slug: string; games: readonl
           const src = header.sources.find(s => s.id === g.sourceId);
           return (
             <li key={g.id}>
-              <a href={studioGameLink(g.id)} className="latest-games__row" title="Analyse in the Studio">
+              <a href={studioGameLink(g.id, g.color)} className="latest-games__row" title="Analyse in the Studio">
                 <OutcomeMark outcome={g.outcome} />
                 <ColorDot color={g.color} />
                 <span className="latest-games__opp">

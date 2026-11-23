@@ -1,19 +1,16 @@
 /**
  * Site header in lila's own `#top` markup (lib/css/header/*, compiled into site.css): Outpost's
- * wordmark (our icon, never the lichess logo), the SPA's main navigation as full-page links back to
- * the SPA, and the user. On narrow screens lila's hamburger opens the same navigation.
+ * wordmark (our icon, never the lichess logo), the SPA's main navigation (`MAIN_NAV`, the same
+ * list and order) as full-page links back to the SPA, a player search that opens the SPA's
+ * `/search`, and the user. On narrow screens lila's hamburger opens the same navigation.
  */
 import { licon } from '../../lichess/licon.ts';
-import { paths } from '../../app/paths.ts';
+import { MAIN_NAV, paths } from '../../app/paths.ts';
 import type { StudioCtrl } from '../ctrl.ts';
 import { h, type VNode } from './util.ts';
 
 const NAV: ReadonlyArray<readonly [href: string, label: string]> = [
-  [paths.players, 'Players'],
-  [paths.prepList, 'Prep'],
-  [paths.broadcasts, 'Broadcasts'],
-  [paths.databases, 'Databases'],
-  [paths.explorer, 'Explorer'],
+  ...MAIN_NAV.map(n => [n.href, n.label] as const),
   [paths.studio(), 'Studio'],
 ];
 
@@ -31,15 +28,26 @@ export function renderHeader(ctrl: StudioCtrl): VNode {
       h(
         'nav#topnav',
         { attrs: { 'aria-label': 'Main' } },
-        [
-          h('section', [h('a.home', { attrs: { href: paths.home } }, 'Outpost')]),
-          ...NAV.map(([href, label]) =>
-            h('section', [h(`a${label === 'Studio' ? '.studio-current' : ''}`, { attrs: { href } }, label)]),
-          ),
-        ],
+        NAV.map(([href, label]) =>
+          h('section', [h(`a${label === 'Studio' ? '.studio-current' : ''}`, { attrs: { href } }, label)]),
+        ),
       ),
     ]),
     h('div.site-buttons', [
+      // A plain GET form: /search?q= is the SPA's search page.
+      h('form.studio-search', { attrs: { action: paths.search(), method: 'get', role: 'search' } }, [
+        h('input', {
+          attrs: {
+            type: 'search',
+            name: 'q',
+            placeholder: 'Search players',
+            'aria-label': 'Search players',
+            autocomplete: 'off',
+            spellcheck: 'false',
+            enterkeyhint: 'search',
+          },
+        }),
+      ]),
       user
         ? h(
             'a.link.studio-user',

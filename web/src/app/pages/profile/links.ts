@@ -7,8 +7,12 @@ import { encodeFiltersSegment, withQuery, type ProfileFilters } from '@outpost/s
 import { paths } from '../../paths.ts';
 import { lineToSanMoves, numberedSan } from './format.ts';
 
-/** Studio analysis of an Outpost game: `/studio?game=op<id>` (the explorer's game id form). */
-export const studioGameLink = (id: number): string => withQuery(paths.studio(), { game: toExplorerGameId(id) });
+/**
+ * Studio analysis of an Outpost game: `/studio?game=op<id>` (the explorer's game id form), with the
+ * board turned to the profile player's side (`color`) when known.
+ */
+export const studioGameLink = (id: number, color?: Color): string =>
+  withQuery(paths.studio(), { game: toExplorerGameId(id), color });
 
 /**
  * Studio URL for the profile's player explorer with the other filters. A `line` filter becomes
