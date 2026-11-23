@@ -9,12 +9,15 @@
  * - `insertSource` writes a resolved row (race-safe with ON CONFLICT).
  * - `sourceSummaries` builds `SourceSummary` rows (sync status, game counts, current ratings).
  *
- * `profile_json` holds the latest upstream snapshot. This module writes it when a source is
- * created; the sync engine (jobs module) refreshes it. The readers here accept these shapes:
+ * `profile_json` holds the latest upstream snapshot. For Lichess and Chess.com accounts it is the
+ * sync engine's versioned `SourceProfileSnapshot` (src/sync/profile.ts, read with
+ * `parseSourceProfile`), which this module also writes when a source is created and every sync
+ * refreshes. The readers here also accept the raw shapes older rows may still hold until their
+ * next sync:
  * - lichess: the `GET /api/user/{u}` object (`perfs`, `profile.flag`, `profile.fideRating`),
  *   optionally wrapped as `{user: …}`;
  * - chesscom: `{player, stats}` (the `/pub/player/{u}` and `/stats` objects), or the stats object itself;
- * - fide: Lichess's `GET /api/fide/player/{id}` object (`standard`, `rapid`, `blitz`, `federation`).
+ * - fide (always raw): Lichess's `GET /api/fide/player/{id}` object (`standard`, `rapid`, `blitz`, `federation`).
  */
 import type {
   CurrentRating,
@@ -34,6 +37,9 @@ import { HttpError, validationError } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import { UPSTREAM, upstreamHttpError, type Upstream } from '../http/upstream.ts';
 import { sourceSyncStatus } from '../jobs/index.ts';
+import { chesscomSnapshot, type ChesscomProfile, type ChesscomStats } from '../sync/chesscom.ts';
+import { lichessSnapshot, type LichessUser } from '../sync/lichess.ts';
+import { parseSourceProfile } from '../sync/profile.ts';
 import { loadDatabaseForViewer } from './access.ts';
 import { upstreamJsonWithin } from './upstreamJson.ts';
 
@@ -223,7 +229,10 @@ async function checkLichessUser(upstream: Upstream, key: string, fail: (m: strin
     title: titleOf(user.title),
     country: isoCountry(profile?.flag),
     databaseId: null,
-    profileJson: JSON.stringify(user),
+    // The sync's own snapshot format from the start (one format for the header to read).
+    profileJson: JSON.stringify(
+      lichessSnapshot({ ...user, username: typeof user.username === 'string' ? user.username : key } as unknown as LichessUser, Date.now()),
+    ),
     existingId: null,
   };
 }
@@ -257,7 +266,7 @@ async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: stri
     title: titleOf(player.title),
     country: isoCountry(countryCode),
     databaseId: null,
-    profileJson: JSON.stringify({ player, stats }),
+    profileJson: JSON.stringify(chesscomSnapshot(player as unknown as ChesscomProfile, stats as ChesscomStats | null, Date.now())),
     existingId: null,
   };
 }
@@ -397,6 +406,11 @@ const chesscomStatsOf = (snap: Record<string, unknown>): Record<string, unknown>
 /** Current site ratings per time class from a source's snapshot (lichess and chesscom only). */
 export function snapshotRatings(kind: SourceKind, profileJson: string | null): Map<TimeClass, SnapshotRating> {
   const out = new Map<TimeClass, SnapshotRating>();
+  const v1 = parseSourceProfile(profileJson);
+  if (v1) {
+    if (v1.site === kind) for (const r of v1.ratings) out.set(r.timeClass, { rating: r.rating, rd: r.rd, provisional: r.provisional });
+    return out;
+  }
   const snap = parseJson(profileJson);
   if (!snap) return out;
   if (kind === 'lichess') {
@@ -421,6 +435,11 @@ export function snapshotRatings(kind: SourceKind, profileJson: string | null): M
 
 /** FIDE ratings known for a source (FIDE directory, Lichess profile field, Chess.com stats). */
 export function fideRatings(kind: SourceKind, profileJson: string | null): SourceSummary['fide'] {
+  const v1 = kind === 'fide' ? null : parseSourceProfile(profileJson);
+  if (v1) {
+    const f = v1.fide;
+    return f && (f.standard !== null || f.rapid !== null || f.blitz !== null) ? { standard: f.standard, rapid: f.rapid, blitz: f.blitz } : null;
+  }
   const snap = parseJson(profileJson);
   if (!snap) return null;
   const positive = (v: unknown): number | null => {

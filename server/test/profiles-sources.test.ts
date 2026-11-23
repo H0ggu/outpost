@@ -5,6 +5,7 @@ import { HttpError } from '../src/http/errors.ts';
 import type { AuthUser } from '../src/http/types.ts';
 import { collectOrphanGames } from '../src/profiles/service.ts';
 import { chesscomDisplayName, fideRatings, resolveSource, snapshotRatings, sourceUrl } from '../src/profiles/sources.ts';
+import { chesscomSnapshot, lichessSnapshot } from '../src/sync/index.ts';
 import { createUserSession, makeTestApp, mutationHeaders, testGame, type TestApp } from './helpers.ts';
 import { fakeUpstream, json, networkDown, stalledJson } from './fixtures/profiles/upstream.ts';
 
@@ -180,6 +181,57 @@ describe('FIDE sources and source helpers', () => {
     expect(chesscomDisplayName('https://www.chess.com/member/%E0%A4%A', 'hikaru')).toBe('hikaru');
     expect(chesscomDisplayName('https://www.chess.com/member/Someone', 'hikaru')).toBe('hikaru');
     expect(chesscomDisplayName(undefined, 'hikaru')).toBe('hikaru');
+  });
+
+  it("reads the sync's versioned snapshot: rd, provisional, FIDE and classes without stored games", async () => {
+    const now = Date.now();
+    const lichess = lichessSnapshot(
+      {
+        id: 'snapper',
+        username: 'Snapper',
+        perfs: { blitz: { games: 40, rating: 3194, rd: 154, prov: true }, bullet: { games: 900, rating: 3263, rd: 50 }, ultraBullet: { games: 92, rating: 2406, rd: 90 } },
+        profile: { fideRating: 2830 },
+      },
+      now,
+    );
+    expect([...snapshotRatings('lichess', JSON.stringify(lichess))]).toEqual([
+      ['bullet', { rating: 3263, rd: 50, provisional: false }],
+      ['blitz', { rating: 3194, rd: 154, provisional: true }],
+    ]);
+    expect(fideRatings('lichess', JSON.stringify(lichess))).toEqual({ standard: 2830, rapid: null, blitz: null });
+    const chesscom = chesscomSnapshot(
+      { username: 'snapcc', url: 'https://www.chess.com/member/SnapCC', player_id: 1 },
+      {
+        chess_bullet: { last: { rating: 3394, rd: 26, date: 0 } },
+        chess_rapid: { last: { rating: 2838, rd: 44, date: 0 } },
+        chess_daily: { last: { rating: 2239, rd: 103, date: 0 } },
+        fide: 2814,
+      },
+      now,
+    );
+    expect([...snapshotRatings('chesscom', JSON.stringify(chesscom))]).toEqual([
+      ['bullet', { rating: 3394, rd: 26, provisional: false }],
+      ['rapid', { rating: 2838, rd: 44, provisional: false }],
+      ['correspondence', { rating: 2239, rd: 103, provisional: false }],
+    ]);
+    expect(fideRatings('chesscom', JSON.stringify(chesscom))).toEqual({ standard: 2814, rapid: null, blitz: null });
+    // Through the header: a synced source with one stored bullet game shows every snapshot class.
+    const src = t.db.run("INSERT INTO sources (kind, key, display_name, profile_json, created_at) VALUES ('chesscom', 'snapcc', 'SnapCC', ?, 0)", [
+      JSON.stringify(chesscom),
+    ]).lastInsertRowid;
+    insertGame(t.db, testGame({ origin: 'chesscom', white: { name: 'snapcc', rating: 3300, ratingAfter: 3310 }, timeClass: 'bullet' }));
+    const p = t.db.run(
+      "INSERT INTO profiles (slug, display_name, owner_user_id, visibility, created_at, updated_at) VALUES ('snapcc', 'SnapCC', ?, 'private', 0, 0)",
+      [me.userId],
+    ).lastInsertRowid;
+    t.db.run('INSERT INTO profile_sources (profile_id, source_id) VALUES (?, ?)', [p, src]);
+    const header = (await t.app.inject({ url: '/api/profiles/snapcc', headers: { cookie: me.cookie } })).json<ProfileHeader>();
+    expect(header.sources[0]!.ratings).toEqual([
+      { timeClass: 'bullet', rating: 3394, games: 1, rd: 26, provisional: false },
+      { timeClass: 'rapid', rating: 2838, games: 0, rd: 44, provisional: false },
+      { timeClass: 'correspondence', rating: 2239, games: 0, rd: 103, provisional: false },
+    ]);
+    expect(header.sources[0]!.fide).toEqual({ standard: 2814, rapid: null, blitz: null });
   });
 
   it('collects orphaned games in batches, keeping referenced and database games', async () => {
