@@ -176,7 +176,7 @@ function ColorCard({ slug, o }: { slug: string; o: OverviewStats }) {
                 <ColorDot color={c} /> {c === 'white' ? 'White' : 'Black'}
               </span>
               <span className="ov-bars__count">{fmtInt(x.games)}</span>
-              <WdlBar w={x.w} d={x.d} l={x.l} />
+              <WdlBar w={x.w} d={x.d} l={x.l} side={c} />
               <ScoreText score={scoreOfWdl(x)} />
             </button>
           </li>
@@ -244,7 +244,7 @@ function OpeningsCard({ slug, color, rows }: { slug: string; color: Color; rows:
                   {fmtInt(r.games)}
                   <span className="muted"> · {fmtMoves(r.avgPly)} mv</span>
                 </span>
-                <WdlBar w={r.w} d={r.d} l={r.l} />
+                <WdlBar w={r.w} d={r.d} l={r.l} side={color} />
               </button>
             </li>
           ))}

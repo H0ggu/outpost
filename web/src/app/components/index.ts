@@ -17,4 +17,4 @@ export { scrollEdgesOf, scrollFadeClass, useScrollEdges, type ScrollEdges } from
 export { Table, type Column, type TableProps } from './Table.tsx';
 export { Tabs, type TabItem } from './Tabs.tsx';
 export { TIME_CLASS_ICONS, TIME_CLASS_LABELS, TimeClassIcon } from './TimeClassIcon.tsx';
-export { WdlBar, wdlSegments, type WdlBarProps, type WdlSegment } from './WdlBar.tsx';
+export { WdlBar, WdlPerspectiveContext, wdlSegments, type WdlBarProps, type WdlSegment } from './WdlBar.tsx';

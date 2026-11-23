@@ -6,6 +6,7 @@
  */
 import {
   API_ROUTES,
+  DEFAULT_PREFS,
   type Color,
   type EpochMs,
   type ExplorerGamesPage,
@@ -185,6 +186,11 @@ export class StudioCtrl {
       this.prefs = { ...this.prefs, ...pickStudioPrefs(user.prefs) };
       applyStudioPrefs(this.prefs);
     } else delete document.body.dataset.user;
+  }
+
+  /** How W/D/L is coloured for this viewer (`UserPrefs.winratePerspective`; anonymous: the default). */
+  get winratePerspective(): 'player' | 'white' {
+    return this.session?.user?.prefs.winratePerspective ?? DEFAULT_PREFS.winratePerspective;
   }
 
   async setPref<K extends keyof StudioPrefs>(key: K, value: StudioPrefs[K]): Promise<void> {

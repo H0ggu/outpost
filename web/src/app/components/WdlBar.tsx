@@ -4,7 +4,18 @@
  * with its `%` sign (lila drops the sign under 20%, which reads like a game count next to W/D/L
  * numbers); a label shows only where its segment has room for it (a container query in
  * components.css), so narrow table bars stay clean and wide ones label every share.
+ *
+ * The viewer's `winratePerspective` (`UserPrefs`, provided by the site layout through
+ * `WdlPerspectiveContext`) picks the colours: `player` shows the player's wins / draws / losses
+ * (green / grey / red); `white` shows White wins / draws / Black wins in lila's explorer colours,
+ * which needs the player's colour in those games (`side`), so a bar over both colours keeps the
+ * player's results.
  */
+import { createContext, useContext } from 'react';
+import type { Color, UserPrefs } from '@outpost/shared/api';
+
+/** The viewer's W/D/L perspective (`UserPrefs.winratePerspective`); the player's by default. */
+export const WdlPerspectiveContext = createContext<UserPrefs['winratePerspective']>('player');
 
 /** One segment of the bar. */
 export interface WdlSegment {
@@ -43,10 +54,16 @@ export interface WdlBarProps {
   d: number;
   l: number;
   /**
-   * `player` (default): W/D/L from the profile player's side, coloured good/neutral/bad.
-   * `color`: White wins / draws / Black wins in lila's explorer colours.
+   * Forces the colours: `player` = W/D/L from the profile player's side, coloured good/neutral/bad;
+   * `color` = White wins / draws / Black wins in lila's explorer colours (`w` = White's wins).
+   * Without it the viewer's `WdlPerspectiveContext` decides (with `side`).
    */
   mode?: 'player' | 'color';
+  /**
+   * The player's colour in every game of the bar (`w`/`l` are theirs), when it is one colour: with
+   * the `white` perspective the bar then shows White / Black results.
+   */
+  side?: Color | null;
   className?: string;
 }
 
@@ -61,7 +78,11 @@ const NAMES = {
 } as const;
 
 /** A horizontal W/D/L bar. */
-export function WdlBar({ w, d, l, mode = 'player', className }: WdlBarProps) {
+export function WdlBar({ w: wins, d, l: losses, mode: forced, side, className }: WdlBarProps) {
+  const perspective = useContext(WdlPerspectiveContext);
+  const mode = forced ?? (perspective === 'white' && side ? 'color' : 'player');
+  // As White / Black results: the player's wins are White's when they had White.
+  const [w, l] = !forced && mode === 'color' && side === 'black' ? [losses, wins] : [wins, losses];
   const segments = wdlSegments(w, d, l);
   const total = w + d + l;
   const title =

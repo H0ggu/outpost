@@ -125,12 +125,12 @@ function OpponentsTable({
               <td className="opp-name">
                 <SiteIcon kind={r.kind} />
                 <OpponentName opponent={{ name: r.name, title: r.title, country: r.country, rating: null }} profileSlug={r.profileSlug} showRating={false} />
-                <WdlBar w={r.w} d={r.d} l={r.l} className="cell-bar" />
+                <WdlBar w={r.w} d={r.d} l={r.l} side={filters.color} className="cell-bar" />
               </td>
               <td className="num">{fmtInt(r.games)}</td>
               <td className="num opp-rating">{fmtRating(r.lastRating)}</td>
               <td className="opp-wdl col-wdl">
-                <WdlBar w={r.w} d={r.d} l={r.l} />
+                <WdlBar w={r.w} d={r.d} l={r.l} side={filters.color} />
               </td>
               <td className="num">
                 <ScoreText score={scoreOfWdl(r)} />

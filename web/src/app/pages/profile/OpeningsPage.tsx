@@ -185,12 +185,12 @@ function OpeningsTable({
                     </Link>
                     <span className="op-name__line san">{fmtLine(r.line)}</span>
                     {/* Phones show the bar under the name instead of in its own column. */}
-                    <WdlBar w={r.w} d={r.d} l={r.l} className="cell-bar" />
+                    <WdlBar w={r.w} d={r.d} l={r.l} side={r.color} className="cell-bar" />
                   </td>
                   <td className="num">{fmtInt(r.games)}</td>
                   <td className="num op-moves">{fmtMoves(r.avgPly)}</td>
                   <td className="op-wdl col-wdl">
-                    <WdlBar w={r.w} d={r.d} l={r.l} />
+                    <WdlBar w={r.w} d={r.d} l={r.l} side={r.color} />
                   </td>
                   <td className="num">
                     <ScoreText score={scoreOfWdl(r)} />

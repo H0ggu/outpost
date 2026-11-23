@@ -84,6 +84,7 @@ describe('explorer options', () => {
     redraw: vi.fn(),
     openGame: vi.fn(),
     showGames: vi.fn(),
+    playerPerspective: () => true,
     ...over,
   });
 
@@ -109,6 +110,18 @@ describe('explorer options', () => {
     anon = false;
     signedIn = true;
     expect(o.outpost.requiresAuth()).toBe(false);
+  });
+
+  it("hands lila the games list and the viewer's W/D/L perspective, read when asked", () => {
+    let player = true;
+    const showGames = vi.fn();
+    const o = makeExplorerOpts(deps({ showGames, playerPerspective: () => player }));
+    expect(o.outpost.playerPerspective()).toBe(true);
+    player = false;
+    expect(o.outpost.playerPerspective()).toBe(false);
+    const req = { player: 'hikaru', color: 'white' as const, rootFen: 'x', play: [], fen: 'x', speeds: [], modes: [], since: '', until: '', total: 3 };
+    o.outpost.showGames(req);
+    expect(showGames).toHaveBeenCalledWith(req);
   });
 
   it('explains the Lichess database instead of asking for it when the server has no token', () => {

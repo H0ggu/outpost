@@ -79,6 +79,7 @@ export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<vo
     redraw: () => ctrl.analyse?.redraw(),
     openGame: ctrl.openExplorerGame,
     showGames: ctrl.showPositionGames,
+    playerPerspective: () => ctrl.winratePerspective === 'player',
   });
   ctrl.playerLabel = explorer.outpost.playerLabel;
 

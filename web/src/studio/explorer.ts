@@ -8,7 +8,7 @@
  *   - tablebase → `/api/tablebase/<variant>`;
  *   - game links open in Outpost (stored games, masters PGN) or on lichess.org (Lichess database games);
  *   - "All N games" under the player database's recent games lists every game at the position
- *     (positionGames.ts).
+ *     (positionGames.ts), and its W/D/L bars follow the viewer's `winratePerspective`.
  */
 import {
   API_ROUTES,
@@ -53,6 +53,7 @@ export interface ExplorerOpts {
     readonly loginUrl: string;
     unavailable(db: ExplorerDb): string | undefined;
     showGames(req: PositionGamesRequest): void;
+    playerPerspective(): boolean;
   };
 }
 
@@ -71,6 +72,8 @@ export interface ExplorerDeps {
   openGame: (db: ExplorerDb, id: string, orientation: Color, fen: string) => void;
   /** "All N games" under the player explorer's recent games (the games at the position). */
   showGames: (req: PositionGamesRequest) => void;
+  /** The viewer's `winratePerspective` is `player`: the player database's bars show wins / draws / losses. */
+  playerPerspective: () => boolean;
 }
 
 const SITE_LABELS: Readonly<Record<string, string>> = { lichess: 'Lichess', chesscom: 'Chess.com' };
@@ -197,6 +200,7 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
       },
       openGame: deps.openGame,
       showGames: req => deps.showGames(req),
+      playerPerspective: () => deps.playerPerspective(),
       requiresAuth: () => !deps.signedIn() && !deps.anonymousBrowsing(),
       get loginUrl() {
         return deps.loginUrl();

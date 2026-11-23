@@ -148,6 +148,8 @@ export interface ExplorerOutpost {
   unavailable?(db: ExplorerDb): string | undefined;
   /** "All N games" under the player database's recent games: list every game at the position. */
   showGames?(req: ExplorerGamesRequest): void;
+  /** True: the player database's bars show the player's wins / draws / losses (green / grey / red). */
+  playerPerspective?(): boolean;
 }
 
 /** scripts/lila-patches/002: what "All N games" asks for (as lila asked the player explorer). */

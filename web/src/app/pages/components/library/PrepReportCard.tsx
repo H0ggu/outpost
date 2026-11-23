@@ -146,7 +146,7 @@ function SideReport({
           {plural(data.games, 'game')} · {percent(score)}
         </span>
       </h3>
-      {total > 0 && <WdlBar w={data.wdl.w} d={data.wdl.d} l={data.wdl.l} />}
+      {total > 0 && <WdlBar w={data.wdl.w} d={data.wdl.d} l={data.wdl.l} side={side} />}
       <h4>Main lines</h4>
       <LineTable lines={data.topLines} side={side} slug={slug} filters={filters} empty="No repeated lines yet." />
       <h4>
@@ -199,7 +199,7 @@ function LineTable({
               {fullNumber(l.games)}
             </td>
             <td className="lib-prep-lines__bar">
-              <WdlBar w={l.w} d={l.d} l={l.l} />
+              <WdlBar w={l.w} d={l.d} l={l.l} side={side} />
             </td>
             <td className="num lib-prep-lines__score">
               <strong>{percent(l.score)}</strong>

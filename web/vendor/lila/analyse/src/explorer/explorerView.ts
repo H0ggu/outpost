@@ -19,18 +19,28 @@ import {
 } from './interfaces';
 import { showTablebase } from './tablebaseView';
 
-function resultBar(move: OpeningMoveStats): VNode {
+// outpost: `side` shows the bar from that player's side: wins, draws, losses (Outpost's player perspective)
+function resultBar(move: OpeningMoveStats, side?: Color): VNode {
   const sum = move.white + move.draws + move.black;
   const section = (key: 'white' | 'black' | 'draws') => {
     const percent = (move[key] * 100) / sum;
+    const cls = !side || key === 'draws' ? key : key === side ? 'win' : 'loss';
     return hl(
-      'span.' + key,
+      'span.' + cls,
       { attrs: { style: 'width: ' + Math.round((move[key] * 1000) / sum) / 10 + '%' } },
       percent > 12 ? Math.round(percent) + (percent > 20 ? '%' : '') : '',
     );
   };
-  return hl('div.bar', ['white', 'draws', 'black'].map(section));
+  const keys: Array<'white' | 'black' | 'draws'> =
+    side === 'black' ? ['black', 'draws', 'white'] : ['white', 'draws', 'black'];
+  return hl('div.bar', keys.map(section));
 }
+
+// outpost: the player database's bars from the explored player's side, when the user prefers it
+const barSide = (ctrl: AnalyseCtrl): Color | undefined =>
+  ctrl.explorer.db() === 'player' && ctrl.explorer.opts.outpost?.playerPerspective?.()
+    ? ctrl.explorer.config.data.color()
+    : undefined;
 
 function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
   if (!data.moves.length) return null;
@@ -49,12 +59,13 @@ function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
         ]
       : data.moves;
 
+  const side = barSide(ctrl);
   return hl('table.moves', [
     hl('thead', [
       hl('tr', [
         hl('th', i18n.site.move),
         hl('th', { attrs: { colspan: 2 } }, i18n.site.games),
-        hl('th', i18n.site.whiteDrawBlack),
+        hl('th', side ? 'Win / Draw / Loss' : i18n.site.whiteDrawBlack),
       ]),
     ]),
     hl(
@@ -70,7 +81,7 @@ function showMoveTable(ctrl: AnalyseCtrl, data: OpeningData): MaybeVNode {
           ),
           hl('td', ((total / sumTotal) * 100).toFixed(0) + '%'),
           hl('td', bigNumberFormatter ? bigNumberFormatter.format(total) : numberFormat(total)),
-          hl('td', { attrs: { title: moveStatsTooltip(ctrl, move) } }, resultBar(move)),
+          hl('td', { attrs: { title: moveStatsTooltip(ctrl, move) } }, resultBar(move, side)),
         ]);
       }),
     ),

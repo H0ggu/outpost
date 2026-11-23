@@ -26,6 +26,7 @@ export interface ExplorerOutpost {
   loginUrl: string;
   unavailable?(db: ExplorerDb): string | undefined; // why the server can't serve db (e.g. Lichess without a token)
   showGames?(req: ExplorerGamesRequest): void; // "All N games" under the player db's recent games
+  playerPerspective?(): boolean; // player db bars as the player's wins / draws / losses
 }
 
 // outpost: the games of the player database at a position, as the explorer asked for them

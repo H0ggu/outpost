@@ -13,7 +13,7 @@ import type { SessionInfo, ThemeName } from '@outpost/shared/api';
 import { applyTheme, storedTheme } from '../lichess/assets.ts';
 import { licon } from '../lichess/licon.ts';
 import { useLogout, useSession } from './api/hooks.ts';
-import { Button } from './components/index.ts';
+import { Button, WdlPerspectiveContext } from './components/index.ts';
 import { JobsIndicator } from './pages/components/account/JobsIndicator.tsx';
 import { MAIN_NAV, paths } from './paths.ts';
 import { usePrefs } from './prefs.ts';
@@ -34,7 +34,7 @@ export const sourceCodeUrl = (info: SessionInfo | undefined): string | null => {
 
 export default function Layout() {
   const session = useSession();
-  usePrefs(session.data);
+  const prefs = usePrefs(session.data);
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
@@ -120,7 +120,9 @@ export default function Layout() {
             </span>
           </div>
         )}
-        <Outlet />
+        <WdlPerspectiveContext value={prefs.winratePerspective}>
+          <Outlet />
+        </WdlPerspectiveContext>
       </main>
 
       <footer className="site-footer">
