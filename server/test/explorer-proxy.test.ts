@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
 import { openDb } from '../src/db/index.ts';
 import { migrate } from '../src/db/migrate.ts';
-import { createExplorerProxy } from '../src/explorer/proxy.ts';
+import { createExplorerProxy, TABLEBASE_PER_CLIENT_PER_MIN } from '../src/explorer/proxy.ts';
 import { HttpError } from '../src/http/errors.ts';
 import { createUpstream } from '../src/http/upstream.ts';
 import { writeSettings } from '../src/settings.ts';
@@ -266,6 +266,33 @@ describe('explorer proxies', () => {
       const again = await get(`/api/tablebase/standard?fen=${encodeURIComponent('4k3/6KP/8/8/8/8/7p/8 w - - 0 1')}`, null);
       expect(again.headers['x-outpost-cache']).toBe('hit');
       expect(up.calls).toHaveLength(1);
+    });
+
+    it('gives one address at most its share of new lookups (429 client_limit), cache hits aside', async () => {
+      up.on(() => new Response('{"category":"draw","moves":[]}'));
+      // White king on the first four ranks, black king on e8: distinct, legal, never adjacent.
+      const fens = [...Array(TABLEBASE_PER_CLIENT_PER_MIN + 1).keys()].map(i => {
+        const rank = 1 + Math.floor(i / 8);
+        const rows = ['4k3', '8', '8', '8', '8', '8', '8', '8'];
+        rows[8 - rank] = `${'1'.repeat(i % 8)}K${'1'.repeat(7 - (i % 8))}`.replace(/1+/g, m => String(m.length));
+        return `${rows.join('/')}_w_-_-_0_1`;
+      });
+      expect(new Set(fens).size).toBe(fens.length);
+      // Earlier tests may have spent part of this address's share already.
+      let refused = -1;
+      for (const [i, fen] of fens.entries()) {
+        const res = await get(`/api/tablebase/standard?fen=${fen}`, null);
+        if (res.statusCode === 429) {
+          expect(res.json().error).toMatchObject({ code: 'rate_limited', details: { reason: 'client_limit' } });
+          refused = i;
+          break;
+        }
+        expect(res.statusCode, res.body).toBe(200);
+      }
+      expect(refused).toBeGreaterThan(TABLEBASE_PER_CLIENT_PER_MIN - 5);
+      expect(up.calls).toHaveLength(refused);
+      // Answers already cached are still served.
+      expect((await get(`/api/tablebase/standard?fen=${fens[0]}`, null)).headers['x-outpost-cache']).toBe('hit');
     });
 
     it('validates the variant and the position', async () => {

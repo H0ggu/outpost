@@ -229,7 +229,7 @@ describe(`local explorer performance (50k-game profile, ${OTHER_GAMES.toLocaleSt
     expect((await choosePlan(t.db, q)).plan).toBe('set');
     const h = hitsSql(q, 'set', 1, 1_000_000);
     const plan = t.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${h.sql}`, h.params).map(r => r.detail);
-    expect(plan[0]).toMatch(/^SEARCH pg USING (PRIMARY KEY|INDEX)/);
+    expect(plan[0]).toMatch(/^SEARCH pg USING PRIMARY KEY \(source_id=\? AND game_id>\? AND game_id<\?\)/);
     expect(plan[1]).toMatch(/^SEARCH p USING COVERING INDEX positions_key \(pos_key=\? AND game_id=\?\)/);
   });
 
@@ -337,7 +337,7 @@ describe(`local explorer performance (50k-game profile, ${OTHER_GAMES.toLocaleSt
       for (const plan of ['set', 'position'] as const) {
         const h = hitsSql({ set, where, key: start, color: null }, plan, 1, 1_000_000);
         const steps = t.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${h.sql}`, h.params).map(r => r.detail).join('\n');
-        expect(steps).toMatch(/SEARCH g USING COVERING INDEX games_explorer_db/);
+        expect(steps).toMatch(plan === 'set' ? /SEARCH g USING COVERING INDEX games_explorer_db \(database_id=\? AND id>\? AND id<\?\)/ : /SEARCH g USING COVERING INDEX games_explorer_db \(database_id=\? AND id=\?\)/);
         expect(steps).toMatch(/COVERING INDEX positions_key/);
       }
     });

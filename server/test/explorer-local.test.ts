@@ -437,7 +437,10 @@ describe('local explorers', () => {
         const h = hitsSql({ set, where, key: 1, color: null }, plan, 1, 1000);
         const steps = t.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${h.sql}`, h.params).map(r => r.detail);
         expect(steps.join('\n'), plan).toMatch(/positions_key/);
-        expect(steps.join('\n'), plan).toMatch(/COVERING INDEX games_explorer_db/);
+        // Each slice reads only its id range, also without ANALYZE statistics (a fresh database).
+        expect(steps.join('\n'), plan).toMatch(
+          plan === 'set' ? /COVERING INDEX games_explorer_db \(database_id=\? AND id>\? AND id<\?\)/ : /positions_key \(pos_key=\? AND game_id>\? AND game_id<\?\)/,
+        );
         expect(steps.some(s => /^SCAN (p|positions|g)\b/.test(s)), steps.join('\n')).toBe(false);
       }
     });

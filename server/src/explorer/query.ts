@@ -26,9 +26,10 @@ import type { GameSet } from './gameSet.ts';
 /**
  * The position-driven plan is used while the position has fewer `positions` rows than this many
  * per row of the set. Measured on a million-game reference DB, a row costs about the same in both
- * plans (a sequential index step plus one seek in the other index), so the smaller side drives.
+ * plans (a sequential index step plus one seek in the other index), the position plan a little
+ * less (its seeks land in the set's small covering index), so it may drive up to 1.5× the rows.
  */
-export const POSITION_PLAN_FACTOR = 1;
+export const POSITION_PLAN_FACTOR = 1.5;
 /** Index entries counted per step while choosing a plan (a yield between steps). */
 const COUNT_STEP = 200_000;
 /** Aim for slices of about this long (ms) between two yields to the event loop. */
@@ -136,17 +137,19 @@ export function hitsSql(q: PositionQuery, plan: Plan, lo: Id, hi: Id, dedupe = f
     return {
       sql: `SELECT ${cols}, h.next_uci AS next_uci
               FROM (SELECT game_id, min(ply) AS ply, next_uci FROM positions
-                     WHERE pos_key = ? AND game_id BETWEEN ? AND ? GROUP BY game_id) h
+                     WHERE pos_key = ? AND game_id >= ? AND game_id <= ? GROUP BY game_id) h
               CROSS JOIN ${from.sql}
              WHERE pg.game_id = h.game_id AND ${q.where.sql}${dedupe ? ' GROUP BY pg.game_id' : ''}`,
       params: [q.key, lo, hi, ...from.params, ...q.where.params],
     };
   }
   // min(p.ply) makes SQLite take next_uci from the first occurrence (bare column of a min() aggregate).
+  // The slice bounds are written as >= / <=: without ANALYZE statistics SQLite ignores a BETWEEN on
+  // the set's index here and would walk the whole database in every slice.
   return {
     sql: `SELECT ${cols}, p.next_uci AS next_uci, min(p.ply) AS ply
             FROM ${from.sql} CROSS JOIN positions p
-           WHERE pg.game_id BETWEEN ? AND ? AND ${q.where.sql} AND p.pos_key = ? AND p.game_id = pg.game_id
+           WHERE pg.game_id >= ? AND pg.game_id <= ? AND ${q.where.sql} AND p.pos_key = ? AND p.game_id = pg.game_id
            GROUP BY pg.game_id${dedupe ? '' : ', pg.color'}`,
     params: [...from.params, lo, hi, ...q.where.params, q.key],
   };

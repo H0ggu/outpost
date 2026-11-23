@@ -10,7 +10,9 @@ import { parseRange } from '../src/explorer/nnue.ts';
 import { checkVariantLine, lichessUpstreamQuery, lichessQuerySchema, mastersQuerySchema, mastersUpstreamQuery } from '../src/explorer/params.ts';
 import { gamePgn, movetext } from '../src/explorer/pgn.ts';
 import { resolvePosition } from '../src/explorer/position.ts';
-import { fideDp } from '../src/explorer/responses.ts';
+import { fideDp, loadGameInfo, pgnDateParts, toGameRef } from '../src/explorer/responses.ts';
+import { insertGame } from '../src/chess/store.ts';
+import { testGame } from './helpers.ts';
 
 /** A manual clock with timers. */
 function manualClock(start = 1_000_000) {
@@ -280,5 +282,32 @@ describe('PGN and performance helpers', () => {
     expect(parseRange('bytes=5-1', 100)).toBe('unsatisfiable');
     expect(parseRange('bytes=0-1,5-6', 100)).toBeNull();
     expect(parseRange('items=0-1', 100)).toBeNull();
+  });
+
+  it('reads year and month from PGN dates', () => {
+    expect(pgnDateParts('2001.03.??')).toEqual({ year: 2001, month: 3 });
+    expect(pgnDateParts('2001.??.??')).toEqual({ year: 2001, month: null });
+    expect(pgnDateParts('1999')).toEqual({ year: 1999, month: null });
+    expect(pgnDateParts('2001.13.01')).toEqual({ year: 2001, month: null });
+    expect(pgnDateParts('????.??.??')).toBeNull();
+    expect(pgnDateParts('0000.00.00')).toBeNull();
+    expect(pgnDateParts(null)).toBeNull();
+  });
+
+  it('dates undated game refs from their PGN headers', () => {
+    const db = openDb(':memory:');
+    migrate(db);
+    const dbId = db.run("INSERT INTO databases (name, kind, created_at) VALUES ('x', 'games', 0)").lastInsertRowid;
+    const add = (key: string, headers: Record<string, string> | null) =>
+      insertGame(db, testGame({ origin: 'pgn', originId: `${dbId}:${key}`, databaseId: dbId, startedAt: null, endedAt: null, headers, timeClass: 'unknown' })).gameId;
+    const ids = [add('a', { Date: '2001.03.??' }), add('b', { Date: '????.??.??', EventDate: '1999.??.??' }), add('c', null)];
+    const info = loadGameInfo(db, ids);
+    const refs = ids.map(id => toGameRef(info.get(id)!, { withSpeed: false }));
+    expect(refs.map(r => [r.year, r.month])).toEqual([
+      [2001, '2001-03'],
+      [1999, null],
+      [0, null],
+    ]);
+    db.close();
   });
 });

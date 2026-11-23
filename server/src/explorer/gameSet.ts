@@ -13,7 +13,9 @@
  * - the reference explorer and a reference-backed masters explorer → every game of the reference
  *   databases (or of one), from White's side, with only the neutral filters applied.
  *
- * Derived sets use `source_id = 0`, so `playerGamesWhere` gets `sourceIds: [0]`.
+ * Derived sets use `source_id = 0`, so `playerGamesWhere` gets `sourceIds: [0]`. Sets over whole
+ * databases read `games_explorer_db` (a covering index, migration 401) and are versioned by
+ * `explorer_db_stats`, so their results can be cached until those databases change.
  */
 import type { Id } from '@outpost/shared/api';
 import { colorChar, type Color } from '@outpost/shared/chess';
@@ -65,6 +67,21 @@ const derivedColumns = (side: Color): string => {
           g.ended_at AS ended_at, g.time_class AS time_class, g.rated AS rated`;
 };
 
+const placeholders = (n: number): string => Array.from({ length: n }, () => '?').join(', ');
+
+/** `fn` computed once (a set lives for one request). */
+const once = <T>(fn: (db: Db) => T): ((db: Db) => T) => {
+  let done = false;
+  let value: T;
+  return db => {
+    if (!done) {
+      value = fn(db);
+      done = true;
+    }
+    return value;
+  };
+};
+
 /** `player_games` for a list of source ids. */
 const playerGamesSet = (spec: PlayerSpec, sourceIds: Id[]): GameSet => ({
   spec,
@@ -73,10 +90,11 @@ const playerGamesSet = (spec: PlayerSpec, sourceIds: Id[]): GameSet => ({
   sourceIds,
   from: () => ({ sql: 'player_games pg', params: [] }),
   cacheKey: `${spec.kind}:${sourceIds.join(',')}`,
-  size: db =>
+  size: once(db =>
     sourceIds.length === 0
       ? 0
       : (db.value<number>(`SELECT count(*) FROM player_games WHERE source_id IN (${placeholders(sourceIds.length)})`, sourceIds) ?? 0),
+  ),
   idRange: db => {
     let lo = Infinity;
     let hi = -Infinity;
@@ -93,8 +111,6 @@ const playerGamesSet = (spec: PlayerSpec, sourceIds: Id[]): GameSet => ({
   version: () => null,
   multiRow: color => color === null && sourceIds.length > 1,
 });
-
-const placeholders = (n: number): string => Array.from({ length: n }, () => '?').join(', ');
 
 /** Games and change counter of some databases (`explorer_db_stats`, kept by triggers on `games`). */
 function databaseStats(db: Db, ids: readonly Id[]): { games: number; version: string } {

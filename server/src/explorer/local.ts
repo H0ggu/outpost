@@ -53,6 +53,8 @@ export const MAX_CONCURRENT_SCANS = 2;
 export const MAX_QUEUED_SCANS = 64;
 /** Deepest games-list position served from a scan; deeper pages use one direct query. */
 export const MAX_SCANNED_LIST = 5_000;
+/** Cached results with a relative period (`7d`, …) move with the clock in steps of this. */
+export const PERIOD_STEP_MS = 10 * 60_000;
 
 /** lila's explorer settings, as sent. */
 export interface LilaRestrictionsInput {
@@ -268,6 +270,17 @@ export function createLocalExplorer(deps: {
     return join<T>(key, flight, signal);
   };
 
+  /**
+   * The clock for the conditions, and its cache-key part: a relative period is resolved against a
+   * clock rounded to `PERIOD_STEP_MS` for cached (versioned) sets, so their results stay reusable.
+   */
+  const clockFor = (set: GameSet, filters: ProfileFilters): { now: number; part: number | null } => {
+    const t = now();
+    if (filters.period === undefined || set.version(db) === null) return { now: t, part: null };
+    const step = Math.floor(t / PERIOD_STEP_MS) * PERIOD_STEP_MS;
+    return { now: step, part: step };
+  };
+
   const restrictionsOf = (q: LilaRestrictionsInput) =>
     explorerQueryRestrictions({ speeds: q.speeds, modes: q.modes, since: q.since, until: q.until });
 
@@ -284,9 +297,10 @@ export function createLocalExplorer(deps: {
       const restrictions = restrictionsOf(input);
       const moves = clamp(input.moves, EXPLORER_LIMITS.defaultMoves, EXPLORER_LIMITS.maxMoves);
       const recentGames = clamp(input.recentGames, EXPLORER_LIMITS.defaultRecentGames, EXPLORER_LIMITS.maxRecentGames);
-      const parts = ['player', input.color, normalizeFen(input.fen ?? ''), position.line.join(','), filtersKey(input.filters), restrictions, moves, recentGames];
+      const clock = clockFor(set, input.filters);
+      const parts = ['player', input.color, normalizeFen(input.fen ?? ''), position.line.join(','), filtersKey(input.filters), clock.part, restrictions, moves, recentGames];
       return shared(set, parts, input.signal, async signal => {
-        const where = setConditions(set, input.filters, restrictions, { color: input.color, now: now() });
+        const where = setConditions(set, input.filters, restrictions, { color: input.color, now: clock.now });
         const r = await scan(
           { set, where, key: position.key, color: input.color },
           { moves: true, list: { order: 'recent', limit: recentGames, withMove: true }, legal: legalAt(position), signal },
@@ -302,9 +316,10 @@ export function createLocalExplorer(deps: {
       const restrictions = restrictionsOf(input);
       const moves = clamp(input.moves, EXPLORER_LIMITS.defaultMoves, EXPLORER_LIMITS.maxMoves);
       const topGames = clamp(input.topGames, EXPLORER_LIMITS.defaultTopGames, EXPLORER_LIMITS.maxTopGames);
-      const parts = ['reference', normalizeFen(input.fen ?? ''), position.line.join(','), filtersKey(filters), restrictions, moves, topGames];
+      const clock = clockFor(set, filters);
+      const parts = ['reference', normalizeFen(input.fen ?? ''), position.line.join(','), filtersKey(filters), clock.part, restrictions, moves, topGames];
       return shared(set, parts, input.signal, async signal => {
-        const where = setConditions(set, filters, restrictions, { color: null, now: now() });
+        const where = setConditions(set, filters, restrictions, { color: null, now: clock.now });
         const r = await scan(
           { set, where, key: position.key, color: null },
           { moves: true, list: { order: 'rating', limit: topGames, withMove: true }, legal: legalAt(position), signal },
@@ -322,16 +337,17 @@ export function createLocalExplorer(deps: {
       const color: Color | null = set.spec.kind === 'db' ? (filters.color ?? 'white') : (filters.color ?? null);
       const offset = (input.page - 1) * input.pageSize;
       const want = offset + input.pageSize;
-      const parts = ['games', normalizeFen(input.fen ?? ''), position.line.join(','), filtersKey(filters), restrictions, color];
+      const clock = clockFor(set, filters);
+      const parts = ['games', normalizeFen(input.fen ?? ''), position.line.join(','), filtersKey(filters), clock.part, restrictions, color];
       const q = (): PositionQuery => ({
         set,
-        where: setConditions(set, filters, restrictions, { color: null, now: now() }),
+        where: setConditions(set, filters, restrictions, { color: null, now: clock.now }),
         key: position.key,
         color,
       });
       const page = async (): Promise<{ total: number; hits: ListedHit[] }> => {
         if (want <= MAX_SCANNED_LIST) {
-          // The scan keeps whole pages of 20 (or the requested size), so neighbouring pages share it.
+          // The scan keeps the newest games up to the next multiple of 100, so neighbouring pages share it.
           const keep = Math.min(MAX_SCANNED_LIST, Math.ceil(want / 100) * 100);
           const r = await shared(set, [...parts, keep], input.signal, signal =>
             scan(q(), { count: true, list: { order: 'recent', limit: keep, withMove: false }, signal }),
