@@ -141,7 +141,7 @@ link reference games only, one copy per game; decision 1). There is no `502` (me
   - Index `(pos_key, game_id)`.
   - `pos_key` is a 53-bit integer taken from the SHA-1 of the chessops EPD (`makeFen(setup,{epd:true})`, which only includes a legal en-passant square), so transpositions merge.
   - `next_uci` uses standard castling notation (e1g1).
-- **players_cache** `(kind, key, country, title, name, fetched_at, PK(kind,key))`: opponent country and title for the world map.
+- **players_cache** `(kind, key, country, title, name, fetched_at, PK(kind,key))`: opponent country and title for the world map. Lichess and Chess.com rows come from the geo lookups; `fide` rows (key = FIDE id) from the reference index's federations (`reference/federations.ts` maps FIDE codes to ISO alpha-2), copied at import, from broadcast previews and once at startup.
 - **databases** `(id, owner_user_id, name, kind 'games'|'reference', visibility, source_label, licence, created_at, game_count)`
 - **files** `(id, owner_user_id, folder, name, kind 'study'|'repertoire', color NULL, pgn, created_at, updated_at, deleted_at NULL)`: Studio "My Files". Deleting a file soft-deletes it into the recycle bin.
 - **jobs** `(id, kind, payload_json, status 'queued'|'running'|'done'|'error'|'cancelled', priority, user_id, progress_json, error, created_at, started_at, finished_at, dedupe_key)`

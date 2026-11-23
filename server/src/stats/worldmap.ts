@@ -1,10 +1,11 @@
 /**
  * World map (`GET /api/profiles/:slug/worldmap`, PLAN §5 "World Map"): games and opponents per
- * opponent country, from `players_cache` (filled by the geo lookups of the jobs module).
+ * opponent country, from `players_cache` (filled by the geo lookups of the jobs module, and for
+ * FIDE opponents from their federation in the reference index: reference/players.ts).
  *
  * - `countries`: ISO 3166-1 alpha-2 codes (`normalizeCountry`), most games first.
  * - `unknownGames`: games whose opponent has no known country — not looked up yet, no flag set,
- *   or a PGN / FIDE opponent without a cached country.
+ *   a PGN opponent, or a FIDE opponent whose federation the reference index doesn't know.
  * - `pendingLookups`: Lichess / Chess.com opponents still waiting for a lookup: no cache row yet,
  *   or a row queued for (re)lookup (`fetched_at` NULL). PGN and FIDE names are never looked up.
  */

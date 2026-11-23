@@ -123,7 +123,7 @@ describe('World map tab', () => {
     vi.unstubAllGlobals();
     const pgnOnly = profileHeader({ sources: profileHeader().sources.map(s => ({ ...s, kind: 'pgn' as const })) });
     renderProfile(`${SLUG}/worldmap`, { header: pgnOnly, patch: { worldmap: () => ({ countries: [], unknownGames: 19, pendingLookups: 0 }) } });
-    expect(await screen.findByText(/Opponents from PGN databases and the reference database come with a name only/)).toBeTruthy();
+    expect(await screen.findByText(/Opponents from PGN databases come with a name only, and reference-database opponents have a country only when their FIDE federation is known/)).toBeTruthy();
     cleanup();
     vi.unstubAllGlobals();
     renderProfile(`${SLUG}/worldmap`, { fail: [{ match: /worldmap$/, status: 500, code: 'internal', message: 'Map failed' }] });

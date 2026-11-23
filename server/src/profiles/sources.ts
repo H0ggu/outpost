@@ -34,6 +34,7 @@ import { HttpError, validationError } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import { UPSTREAM, upstreamHttpError, type Upstream } from '../http/upstream.ts';
 import { sourceSyncStatus } from '../jobs/index.ts';
+import { federationCountry } from '../reference/federations.ts';
 import { loadDatabaseForViewer } from './access.ts';
 import { upstreamJsonWithin } from './upstreamJson.ts';
 
@@ -267,6 +268,10 @@ async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: stri
  * `player_games`), so only those may name the player: a FideId tag in someone's private PGN
  * database must not leak through a public FIDE profile.
  */
+/** A FIDE player's country from the reference index's federation (`players_cache`, reference/players.ts). */
+const referenceCountry = (db: Db, fideId: string): string | null =>
+  db.value<string | null>("SELECT country FROM players_cache WHERE kind = 'fide' AND key = ?", [fideId]) ?? null;
+
 async function checkFideId(
   db: Db,
   upstream: Upstream,
@@ -302,7 +307,7 @@ async function checkFideId(
     displayName: fideName ?? local!.name,
     siteUserId: fideId,
     title: titleOf(fide?.title) ?? titleOf(local?.title),
-    country: null,
+    country: federationCountry(typeof fide?.federation === 'string' ? fide.federation : null) ?? referenceCountry(db, fideId),
     databaseId: null,
     profileJson: fide ? JSON.stringify(fide) : null,
     existingId: null,

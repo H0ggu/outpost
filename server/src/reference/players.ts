@@ -6,6 +6,9 @@
  * Search (`GET /api/reference/players`, unified search) matches FIDE id prefixes, or every word of
  * the query against the start of a word of the folded name, so "magnus carlsen", "carlsen" and
  * "Carlsen, M" all find "Carlsen, Magnus".
+ *
+ * A FIDE player's federation also becomes their country in `players_cache` (kind `fide`, key the
+ * FIDE id), where the world map, the opponents list and game rows look opponents up.
  */
 import type { EpochMs, Id, ReferencePlayer, Title } from '@outpost/shared/api';
 import { isTitle, playerKey } from '@outpost/shared/chess';
@@ -13,6 +16,7 @@ import { pgnSourceKey } from '../chess/index.ts';
 import type { Db } from '../db/index.ts';
 import type { AuthUser } from '../http/types.ts';
 import { visibleReferenceDbSql } from './databases.ts';
+import { federationCountry } from './federations.ts';
 
 /** Default and maximum number of search results. */
 export const PLAYER_SEARCH_DEFAULT_LIMIT = 20;
@@ -84,6 +88,62 @@ function setPlayerWords(db: Db, playerId: Id, searchName: string, replace: boole
   }
 }
 
+/**
+ * Stores a FIDE player's country (from their federation) in `players_cache`, where the stats look
+ * opponents up (`opp_source_kind = 'fide'`, `opp_key` = FIDE id). A known country is never replaced
+ * by an unknown one.
+ */
+export function cacheFideCountry(db: Db, fideId: string, federation: string | null, info: { title: string | null; name: string | null }): void {
+  const country = federationCountry(federation);
+  if (!country) return;
+  db.run(
+    `INSERT INTO players_cache (kind, key, country, title, name, fetched_at) VALUES ('fide', ?, ?, ?, ?, ?)
+     ON CONFLICT (kind, key) DO UPDATE SET country = excluded.country, title = COALESCE(excluded.title, players_cache.title),
+       name = COALESCE(excluded.name, players_cache.name), fetched_at = excluded.fetched_at
+     WHERE players_cache.country IS NOT excluded.country OR players_cache.title IS NOT COALESCE(excluded.title, players_cache.title)`,
+    [fideId, country, isTitle(info.title) ? info.title : null, info.name, Date.now()],
+  );
+}
+
+/**
+ * Copies the countries of every indexed FIDE player with a federation into `players_cache` (those
+ * missing there, or with another country), and gives FIDE sources without a country theirs (the FIDE
+ * directory's federation kept in `profile_json`, else the index's). Idempotent; run at startup, so
+ * federations known before countries were derived from them count too. Returns the rows written.
+ */
+export function backfillFideCountries(db: Db): number {
+  return backfillFidePlayers(db) + backfillFideSources(db);
+}
+
+function backfillFideSources(db: Db): number {
+  const sources = db.all<{ id: Id; key: string; federation: string | null; cached: string | null }>(
+    `SELECT s.id, s.key, json_extract(s.profile_json, '$.federation') AS federation, pc.country AS cached
+       FROM sources s LEFT JOIN players_cache pc ON pc.kind = 'fide' AND pc.key = s.key
+      WHERE s.kind = 'fide' AND s.country IS NULL AND json_valid(coalesce(s.profile_json, 'null'))`,
+  );
+  let n = 0;
+  for (const s of sources) {
+    const country = federationCountry(typeof s.federation === 'string' ? s.federation : null) ?? s.cached;
+    if (country) n += db.run('UPDATE sources SET country = ? WHERE id = ? AND country IS NULL', [country, s.id]).changes;
+  }
+  return n;
+}
+
+function backfillFidePlayers(db: Db): number {
+  const rows = db.all<{ fide_id: string; federation: string; title: string | null; name: string; cached: string | null }>(
+    `SELECT rp.fide_id, rp.federation, rp.title, rp.name, pc.country AS cached
+       FROM reference_players rp
+       LEFT JOIN players_cache pc ON pc.kind = 'fide' AND pc.key = rp.fide_id
+      WHERE rp.fide_id IS NOT NULL AND rp.federation IS NOT NULL`,
+  );
+  const todo = rows.filter(r => federationCountry(r.federation) !== null && federationCountry(r.federation) !== r.cached);
+  if (todo.length === 0) return 0;
+  return db.tx(() => {
+    for (const r of todo) cacheFideCountry(db, r.fide_id, r.federation, { title: r.title, name: r.name });
+    return todo.length;
+  });
+}
+
 /** Upper bound of a prefix range: every string starting with `prefix` sorts below it (BINARY collation). */
 const prefixEnd = (prefix: string): string => `${prefix}\u{10FFFF}`;
 
@@ -112,6 +172,7 @@ export function indexReferencePlayer(db: Db, databaseId: Id, p: IndexedPlayer, p
       [p.fideId, p.fideId ? null : databaseId, key, name, searchName, p.title, p.federation, playedAt, p.rating, p.rating, now],
     );
     setPlayerWords(db, lastInsertRowid, searchName, false);
+    if (p.fideId && p.federation) cacheFideCountry(db, p.fideId, p.federation, { title: p.title, name });
     return;
   }
   const newer = playedAt !== null && (row.last_played === null || playedAt >= row.last_played);
@@ -119,6 +180,8 @@ export function indexReferencePlayer(db: Db, databaseId: Id, p: IndexedPlayer, p
   // FIDE rows follow the player's latest spelling; name-keyed rows keep their key.
   const nextName = newer && p.fideId ? name : row.name;
   if (nextName !== row.name) setPlayerWords(db, row.id, foldName(nextName), true);
+  const federation = newer ? (p.federation ?? row.federation) : (row.federation ?? p.federation);
+  const title = newer ? (p.title ?? row.title) : (row.title ?? p.title);
   db.run(
     `UPDATE reference_players
         SET games = games + 1, name = ?, name_key = ?, search_name = ?, title = ?, federation = ?,
@@ -128,8 +191,8 @@ export function indexReferencePlayer(db: Db, databaseId: Id, p: IndexedPlayer, p
       nextName,
       p.fideId ? playerKey(nextName) : row.name_key,
       foldName(nextName),
-      newer ? (p.title ?? row.title) : (row.title ?? p.title),
-      newer ? (p.federation ?? row.federation) : (row.federation ?? p.federation),
+      title,
+      federation,
       newer ? playedAt : row.last_played,
       newer ? (p.rating ?? row.last_rating) : (row.last_rating ?? p.rating),
       maxRating,
@@ -137,6 +200,8 @@ export function indexReferencePlayer(db: Db, databaseId: Id, p: IndexedPlayer, p
       row.id,
     ],
   );
+  if (p.fideId && federation && (federation !== row.federation || title !== row.title))
+    cacheFideCountry(db, p.fideId, federation, { title, name: nextName });
 }
 
 /** Records federations seen elsewhere (live round previews) for players already in the index. */
@@ -145,10 +210,15 @@ export function updateFederations(db: Db, feds: ReadonlyMap<string, string>): nu
   return db.tx(() => {
     let n = 0;
     for (const [fideId, fed] of feds) {
-      n += db.run(
+      const changed = db.run(
         'UPDATE reference_players SET federation = ?, updated_at = ? WHERE fide_id = ? AND federation IS NOT ?',
         [fed, Date.now(), fideId, fed],
       ).changes;
+      if (changed) {
+        const row = db.get<{ title: string | null; name: string }>('SELECT title, name FROM reference_players WHERE fide_id = ?', [fideId]);
+        cacheFideCountry(db, fideId, fed, { title: row?.title ?? null, name: row?.name ?? null });
+      }
+      n += changed;
     }
     return n;
   });

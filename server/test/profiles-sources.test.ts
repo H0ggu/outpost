@@ -91,6 +91,7 @@ describe('FIDE sources and source helpers', () => {
       title: 'IM',
       gameCount: 0,
       fide: { standard: 2450, rapid: 2400, blitz: null },
+      country: 'NO', // the FIDE directory's federation NOR
     });
     const unknown = await create({ displayName: 'Nobody', sources: [{ kind: 'fide', key: '999' }] });
     expect(unknown.statusCode).toBe(400);

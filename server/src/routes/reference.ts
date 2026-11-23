@@ -17,7 +17,13 @@ import { startBroadcastAutoImport } from '../reference/autoImport.ts';
 import { MAX_LICENCE_LENGTH, MAX_NAME_LENGTH } from '../reference/databases.ts';
 import { REFERENCE_JOB_HANDLERS } from '../reference/jobs.ts';
 import { BroadcastMonthCatalog } from '../reference/months.ts';
-import { PLAYER_SEARCH_DEFAULT_LIMIT, PLAYER_SEARCH_MAX_LIMIT, PLAYER_SEARCH_MAX_QUERY, searchReferencePlayers } from '../reference/players.ts';
+import {
+  backfillFideCountries,
+  PLAYER_SEARCH_DEFAULT_LIMIT,
+  PLAYER_SEARCH_MAX_LIMIT,
+  PLAYER_SEARCH_MAX_QUERY,
+  searchReferencePlayers,
+} from '../reference/players.ts';
 import { enqueueBroadcastMonths, enqueueReferenceImport, referenceInfo } from '../reference/service.ts';
 import { receiveReferenceUpload, removeUpload, sweepReferenceUploads } from '../reference/upload.ts';
 import { MAX_IMPORT_URL_LENGTH } from '../reference/urls.ts';
@@ -125,6 +131,13 @@ const referenceRoutes: FastifyPluginAsync = async app => {
   let sweeping: Promise<unknown> = Promise.resolve();
   let stopAutoImport: (() => Promise<void>) | null = null;
   app.addHook('onReady', async () => {
+    // FIDE players' countries for the stats (federations indexed before they were cached too).
+    try {
+      const n = backfillFideCountries(app.db);
+      if (n) app.log.info({ players: n }, 'cached the countries of FIDE players from their federations');
+    } catch (err) {
+      app.log.warn({ err }, 'could not cache the countries of FIDE players');
+    }
     const sweep = (): void => {
       sweeping = sweepReferenceUploads(app.db, app.config).catch(err => app.log.warn({ err }, 'reference upload sweep failed'));
     };
