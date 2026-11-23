@@ -50,7 +50,9 @@ export const libraryKeys = {
   broadcasts: ['broadcasts'] as const,
   broadcastTour: (tourId: string) => ['broadcasts', 'tour', tourId] as const,
   broadcastRound: (roundId: string) => ['broadcasts', 'round', roundId] as const,
+  /** The round's PGN; one board's PGN sits under it, so cancelling this key cancels both. */
   broadcastRoundPgn: (roundId: string) => ['broadcasts', 'round-pgn', roundId] as const,
+  broadcastGamePgn: (roundId: string, gameId: string) => ['broadcasts', 'round-pgn', roundId, 'game', gameId] as const,
   reference: ['reference'] as const,
   referencePlayers: (q: string) => ['reference', 'players', q] as const,
 };
@@ -403,6 +405,22 @@ export function fetchRoundPgnGames(qc: QueryClient, roundId: string): Promise<Ro
     staleTime: POLL.broadcastMs,
     gcTime: POLL.broadcastMs,
     structuralSharing: false,
+    retry: false,
+  });
+}
+
+/**
+ * One board's PGN (`GET /api/broadcasts/round/:roundId/game/:gameId.pgn`, decision 17): the server
+ * cuts it from its cached round PGN by the game's URL tag, so opening a board doesn't download the
+ * whole round. Fails with 404 when no URL tag matched (the round PGN can still match by names).
+ * Kept for one poll interval; cancelled with the round PGN's key.
+ */
+export function fetchBroadcastGamePgn(qc: QueryClient, roundId: string, gameId: string): Promise<string> {
+  return qc.fetchQuery({
+    queryKey: libraryKeys.broadcastGamePgn(roundId, gameId),
+    queryFn: ({ signal }) => api.text(API_ROUTES.broadcastGamePgn(roundId, gameId), undefined, signal),
+    staleTime: POLL.broadcastMs,
+    gcTime: POLL.broadcastMs,
     retry: false,
   });
 }

@@ -2,13 +2,14 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { API_ROUTES, type BroadcastGamePreview } from '@outpost/shared/api';
+import { ApiError } from '../api/client.ts';
 import { Box, EmptyState, licon, Page, Spinner } from '../components/index.ts';
 import { paths } from '../paths.ts';
 import { BroadcastError, formatTourDates, RoundStatusPill } from './components/library/broadcast.tsx';
 import { MiniGame } from './components/library/MiniGame.tsx';
 import { extractBroadcastGame } from './components/library/broadcastPgn.ts';
 import { timeAgo } from './components/library/format.ts';
-import { fetchRoundPgnGames, libraryKeys, POLL, useBroadcastRound, useBroadcastTour } from './library-hooks.ts';
+import { fetchBroadcastGamePgn, fetchRoundPgnGames, libraryKeys, POLL, useBroadcastRound, useBroadcastTour } from './library-hooks.ts';
 import './components/library/library.css';
 import './BroadcastsPage.css';
 
@@ -22,22 +23,34 @@ export const studioNavigation = { go: (href: string) => window.location.assign(h
 export const OPEN_PGN_TIMEOUT = { ms: 8000 };
 
 /**
- * Studio link for a live game: its PGN out of the round PGN (cached per round for a poll interval,
- * only that game parsed), else — on an error, a missing game or a slow download, which is then
- * cancelled — the current position.
+ * The Studio PGN of a live game: the board's own PGN from the server (cut from its cached round
+ * PGN by URL tag), or, when no URL tag matched there (404), the round PGN matched by players
+ * (cached per round for a poll interval, only that game parsed). Null when neither has it.
+ */
+async function broadcastStudioPgn(qc: QueryClient, roundId: string, game: BroadcastGamePreview): Promise<string | null> {
+  try {
+    const pgn = extractBroadcastGame(await fetchBroadcastGamePgn(qc, roundId, game.id), game);
+    if (pgn) return pgn;
+  } catch (e) {
+    // Anything but "no such game" (no token, Lichess down…) would fail for the round PGN too.
+    if (!(e instanceof ApiError && e.isNotFound)) throw e;
+  }
+  return extractBroadcastGame(await fetchRoundPgnGames(qc, roundId), game);
+}
+
+/**
+ * Studio link for a live game: its PGN (`broadcastStudioPgn`), else — on an error, a missing game
+ * or a slow download, which is then cancelled — the current position.
  */
 export async function studioHrefForGame(qc: QueryClient, roundId: string, game: BroadcastGamePreview): Promise<string> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<null>(resolve => {
-    timer = setTimeout(() => resolve(null), OPEN_PGN_TIMEOUT.ms);
+  const timeout = new Promise<'timeout'>(resolve => {
+    timer = setTimeout(() => resolve('timeout'), OPEN_PGN_TIMEOUT.ms);
   });
   try {
-    const entries = await Promise.race([fetchRoundPgnGames(qc, roundId), timeout]);
-    if (entries === null) void qc.cancelQueries({ queryKey: libraryKeys.broadcastRoundPgn(roundId) });
-    else {
-      const pgn = extractBroadcastGame(entries, game);
-      if (pgn) return paths.studio({ pgn });
-    }
+    const pgn = await Promise.race([broadcastStudioPgn(qc, roundId, game), timeout]);
+    if (pgn === 'timeout') void qc.cancelQueries({ queryKey: libraryKeys.broadcastRoundPgn(roundId) });
+    else if (pgn) return paths.studio({ pgn });
   } catch {
     // fall back to the position
   } finally {

@@ -207,6 +207,34 @@ describe('BroadcastRoundPage', () => {
     expect(pgn).not.toContain('Bc4');
   });
 
+  it('opens a board from its own PGN without downloading the round (decision 17)', async () => {
+    base();
+    const GAME_PGN = ROUND_PGN.slice(ROUND_PGN.indexOf('[Event', 10));
+    api().on('GET', '/api/broadcasts/round/rnd00002/game/chap0001.pgn', text(GAME_PGN));
+    const go = vi.spyOn(studioNavigation, 'go').mockImplementation(() => undefined);
+    renderPage(<BroadcastRoundPage />, ROUTE);
+    fireEvent.click(await screen.findByRole('link', { name: /Alpha – Beta/ }));
+    await waitFor(() => expect(go).toHaveBeenCalledOnce());
+    const pgn = new URL(go.mock.calls[0]![0], 'http://x').searchParams.get('pgn')!;
+    expect(pgn).toContain('[White "Alpha"]');
+    expect(pgn).toContain('1. e4 e5 2. Nf3 *');
+    expect(pgn).not.toContain('%clk');
+    expect(api().find('GET', '/api/broadcasts/round/rnd00002.pgn')).toHaveLength(0);
+  });
+
+  it('does not try the round PGN when the board PGN fails for another reason than a missing game', async () => {
+    base();
+    api()
+      .on('GET', '/api/broadcasts/round/rnd00002/game/chap0002.pgn', apiError(503, 'upstream_unavailable'))
+      .on('GET', '/api/broadcasts/round/rnd00002.pgn', text(ROUND_PGN));
+    const go = vi.spyOn(studioNavigation, 'go').mockImplementation(() => undefined);
+    renderPage(<BroadcastRoundPage />, ROUTE);
+    fireEvent.click(await screen.findByRole('link', { name: /Gamma – Delta/ }));
+    await waitFor(() => expect(go).toHaveBeenCalledOnce());
+    expect(new URL(go.mock.calls[0]![0], 'http://x').searchParams.get('fen')).toBe(games[1]!.fen);
+    expect(api().find('GET', '/api/broadcasts/round/rnd00002.pgn')).toHaveLength(0);
+  });
+
   it('downloads the round PGN once: a second click waits, a later board reuses it', async () => {
     base();
     let release: () => void = () => undefined;
