@@ -1744,6 +1744,13 @@ html[data-theme='light'] {
   border-radius: 2px;
 }
 
+.profile-page .chart-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-right: 0.8rem;
+}
+
 .profile-page .heat-cell {
   cursor: crosshair;
 }

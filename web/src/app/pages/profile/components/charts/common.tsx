@@ -134,7 +134,7 @@ export function Swatch({ color, dash }: { color: string; dash?: string }) {
 /** "Less ▢▢▢▢▢ More" legend of the sequential ramp. */
 export function SeqLegend({ low = 'Fewer', high = 'More', label }: { low?: string; high?: string; label?: string }) {
   return (
-    <div className="chart-legend" aria-label={label ?? 'Colour scale'}>
+    <div className="chart-legend" role="group" aria-label={label ? `${label} colour scale` : 'Colour scale'}>
       {label && <span className="chart-legend__title">{label}</span>}
       <span>{low}</span>
       {Array.from({ length: SEQ_STEPS }, (_, i) => (
@@ -149,13 +149,27 @@ export function SeqLegend({ low = 'Fewer', high = 'More', label }: { low?: strin
 export function ScoreLegend({ label = 'Score' }: { label?: string }) {
   const titles = ['under 20%', '20–35%', '35–45%', '45–55%', '55–65%', '65–80%', 'over 80%'];
   return (
-    <div className="chart-legend" aria-label={`${label} colour scale`}>
+    <div className="chart-legend" role="group" aria-label={`${label} colour scale`}>
       <span className="chart-legend__title">{label}</span>
       <span>0%</span>
       {titles.map((t, i) => (
         <span key={t} className="chart-legend__cell" title={t} style={{ background: scoreColor(i) }} />
       ))}
       <span>100%</span>
+    </div>
+  );
+}
+
+/** A legend of a few named colours (e.g. played / not played). */
+export function CategoryLegend({ label, items }: { label: string; items: ReadonlyArray<{ label: string; color: string }> }) {
+  return (
+    <div className="chart-legend" role="group" aria-label={label}>
+      {items.map(i => (
+        <span key={i.label} className="chart-legend__item">
+          <span className="chart-legend__cell" style={{ background: i.color }} />
+          <span>{i.label}</span>
+        </span>
+      ))}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import type { WorldMapCountry } from '@outpost/shared/api';
 import { useWorldMap } from '../../api/hooks.ts';
 import { Box, countryName, EmptyState, ErrorBox, FlagEmoji, licon, Spinner, WdlBar } from '../../components/index.ts';
 import { ScoreText, Segmented, StatTile } from './components/bits.tsx';
-import { ScoreLegend, SeqLegend } from './components/charts/common.tsx';
+import { CategoryLegend, ScoreLegend, SeqLegend } from './components/charts/common.tsx';
 import { WorldMap, type MapMetric } from './components/charts/WorldMap.tsx';
 import { fmtInt, scoreOfWdl } from './format.ts';
 import { oneOf, useProfile, useQueryParam } from './hooks.ts';
@@ -79,10 +79,13 @@ export default function WorldMapPage() {
               {metric === 'score' ? (
                 <ScoreLegend />
               ) : metric === 'played' ? (
-                <span className="chart-legend">
-                  <span className="chart-legend__cell" style={{ background: 'var(--c-seq-4)' }} /> Played
-                  <span className="chart-legend__cell" style={{ background: 'var(--c-map-land)' }} /> Not played
-                </span>
+                <CategoryLegend
+                  label="Countries played"
+                  items={[
+                    { label: 'Played', color: 'var(--c-seq-4)' },
+                    { label: 'Not played', color: 'var(--c-map-land)' },
+                  ]}
+                />
               ) : (
                 <SeqLegend label={metric === 'games' ? 'Games' : 'Opponents'} />
               )}

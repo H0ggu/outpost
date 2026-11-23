@@ -150,6 +150,17 @@ describe('Games tab', () => {
     expect(screen.queryByRole('link', { name: 'Analyse' })).toBeNull();
   });
 
+  it('shows a preview that fails to load inline, keeping the page', async () => {
+    renderProfile(`${SLUG}/games`, { fail: [{ match: /^GET \/api\/games\/\d+$/, status: 404, code: 'not_found', message: 'No such game' }] });
+    await screen.findByRole('button', { name: 'Next page' });
+    fireEvent.click(document.querySelector<HTMLTableRowElement>('tr.game-row')!);
+    expect(await screen.findByText('Could not load the game')).toBeTruthy();
+    expect(screen.getByText('No such game')).toBeTruthy();
+    // The links don't need the PGN.
+    expect(screen.getByRole('link', { name: 'Analyse' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1 })).toBeTruthy();
+  });
+
   it('says when the filters match nothing and resets them', async () => {
     const { location } = renderProfile(`${SLUG}/games?oppName=nobody-at-all`);
     expect(await screen.findByText('No games match these filters')).toBeTruthy();
@@ -168,6 +179,25 @@ describe('Games tab', () => {
   it('warns when the export would be cut at 10,000 games', async () => {
     renderProfile(`${SLUG}/games`, { patch: { games: p => ({ ...p, total: 12_345 }) } });
     expect(await screen.findByText(/One file holds at most 10,000 of these 12,345 games/)).toBeTruthy();
+  });
+});
+
+describe('opponent name suggestions', () => {
+  it('loads the most played opponents once the field is focused', async () => {
+    const { requests } = renderProfile(`${SLUG}/games`);
+    fireEvent.click(await screen.findByRole('button', { name: /More filters/ }));
+    const input = screen.getByLabelText('Opponent') as HTMLInputElement;
+    const opponentCalls = () => requests(api('opponents')).filter(c => c.url.searchParams.get('pageSize') === '100');
+    expect(opponentCalls().length).toBe(0);
+    fireEvent.focus(input);
+    await waitFor(() => expect(opponentCalls().length).toBe(1));
+    // Unfiltered, whatever the page's filters are.
+    expect([...opponentCalls()[0]!.url.searchParams.keys()].sort()).toEqual(['page', 'pageSize', 'view']);
+    await waitFor(() => expect(input.getAttribute('list')).toBeTruthy());
+    const list = document.getElementById(input.getAttribute('list')!)!;
+    expect(list.tagName).toBe('DATALIST');
+    expect(list.querySelectorAll('option').length).toBeGreaterThan(10);
+    expect(list.querySelector('option')!.getAttribute('value')).toMatch(/^Opponent\d\d$/);
   });
 });
 
