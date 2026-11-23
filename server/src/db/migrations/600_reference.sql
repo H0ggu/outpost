@@ -79,6 +79,15 @@ CREATE UNIQUE INDEX reference_players_fide ON reference_players (fide_id) WHERE 
 CREATE UNIQUE INDEX reference_players_name ON reference_players (database_id, name_key) WHERE fide_id IS NULL;
 CREATE INDEX reference_players_games ON reference_players (games DESC);
 
+-- The words of each player's search_name, so a name search is an index range scan on the word
+-- prefix instead of a scan of every player. Written with reference_players (src/reference/players.ts).
+CREATE TABLE reference_player_words (
+  word      TEXT    NOT NULL,
+  player_id INTEGER NOT NULL REFERENCES reference_players (id) ON DELETE CASCADE,
+  PRIMARY KEY (word, player_id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX reference_player_words_player ON reference_player_words (player_id);
+
 -- Keep game counts right when reference games go away (a deleted game, or a whole database via
 -- ON DELETE CASCADE, which fires this trigger too). Inserts are counted by the importer.
 CREATE TRIGGER reference_players_game_deleted AFTER DELETE ON games WHEN old.origin = 'reference'

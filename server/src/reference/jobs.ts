@@ -46,7 +46,8 @@ interface Download {
 /**
  * GETs `url` through `ctx.upstream` and streams the body, capped at `max` bytes. The body must keep
  * flowing: after `DOWNLOAD_IDLE_MS` without data the request is aborted with a retryable
- * `UpstreamError('network')`, which the workers retry with backoff. Cancelling the job aborts it too.
+ * `UpstreamError('network')`, which the workers retry with backoff; a connection that breaks off
+ * mid-body fails the same way. Cancelling the job aborts it too.
  * The caller checks `res` (allowed statuses, redirects) before reading `chunks`.
  */
 async function download(
@@ -77,10 +78,12 @@ async function download(
         },
       });
     } catch (e) {
-      if (idle.signal.aborted && !ctx.signal.aborted) {
+      if (ctx.signal.aborted || e instanceof SizeLimitError || e instanceof UpstreamError) throw e;
+      if (idle.signal.aborted) {
         throw new UpstreamError('network', host, `${host} sent no data for ${Math.round(DOWNLOAD_IDLE_MS.value / 1000)} s`, { cause: e });
       }
-      throw e;
+      // The connection broke off mid-body (reset, "terminated"): retryable like any network error.
+      throw new UpstreamError('network', host, `The download from ${host} broke off: ${errorMessage(e)}`, { cause: e });
     } finally {
       clearTimeout(timer);
     }
@@ -182,9 +185,10 @@ async function importUrl(ctx: JobContext<'referenceImport'>, databaseId: number,
     max: REFERENCE_LIMITS.downloadBytes,
     what: 'The download',
   });
-  if (dl.res.url && !dl.res.url.startsWith('https://')) {
+  const redirectProblem = dl.res.url && dl.res.url !== target.href ? importUrlProblem(dl.res.url) : null;
+  if (redirectProblem) {
     void dl.res.body?.cancel().catch(() => {});
-    throw new Error('The download was redirected to a non-https address');
+    throw new Error(`The download was redirected to an address that cannot be imported: ${redirectProblem}`);
   }
   if (dl.total !== null && dl.total > REFERENCE_LIMITS.downloadBytes) {
     void dl.res.body?.cancel().catch(() => {});

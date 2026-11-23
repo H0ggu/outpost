@@ -8,7 +8,7 @@ import { getJobHandler } from '../src/jobs/index.ts';
 import { ensureBroadcastDatabase, findOrCreateReferenceDatabase } from '../src/reference/databases.ts';
 import { linkFideSources } from '../src/reference/importer.ts';
 import { DOWNLOAD_IDLE_MS } from '../src/reference/jobs.ts';
-import { referencePlayerByFideId, searchReferencePlayers } from '../src/reference/players.ts';
+import { indexReferencePlayer, referencePlayerByFideId, searchReferencePlayers } from '../src/reference/players.ts';
 import { sweepReferenceUploads } from '../src/reference/upload.ts';
 import { createSource, makeJobContext, makeTestApp, type TestApp } from './helpers.ts';
 
@@ -241,6 +241,25 @@ describe('reference imports', () => {
     expect(referencePlayerByFideId(t.db, '900002')?.games).toBe(1);
     t.db.run('DELETE FROM databases WHERE id = ?', [dbId]);
     expect(searchReferencePlayers(t.db, '')).toEqual([]);
+    expect(t.db.value("SELECT COUNT(*) FROM reference_players WHERE fide_id IS NULL")).toBe(0);
+    expect(t.db.value('SELECT COUNT(*) FROM reference_player_words WHERE player_id NOT IN (SELECT id FROM reference_players)')).toBe(0);
+  });
+
+  it("follows a FIDE player's latest spelling in the index and its search words", () => {
+    const dbId = ensureBroadcastDatabase(t.db);
+    const hikaru = { fideId: '2016192', title: 'GM' as const };
+    t.db.tx(() => {
+      indexReferencePlayer(t.db, dbId, { ...hikaru, name: 'Nakamura, H.', rating: 2780, federation: null }, Date.UTC(2025, 0, 1));
+      indexReferencePlayer(t.db, dbId, { ...hikaru, name: 'Nakamura, Hikaru', rating: 2800, federation: 'USA' }, Date.UTC(2026, 0, 1));
+      // An older game keeps the newer spelling.
+      indexReferencePlayer(t.db, dbId, { ...hikaru, name: 'Nakamura Hik.', rating: 2700, federation: null }, Date.UTC(2024, 0, 1));
+    });
+    expect(searchReferencePlayers(t.db, 'hikaru nakamura')).toMatchObject([
+      { fideId: '2016192', name: 'Nakamura, Hikaru', games: 3, lastRating: 2800, maxRating: 2800, federation: 'USA', title: 'GM' },
+    ]);
+    expect(searchReferencePlayers(t.db, 'Nakamura, H')).toHaveLength(1);
+    expect(searchReferencePlayers(t.db, 'hik')).toHaveLength(1);
+    expect(t.db.all('SELECT word FROM reference_player_words ORDER BY word').map(r => (r as { word: string }).word)).toEqual(['hikaru', 'nakamura']);
   });
 
   it('links FIDE sources: insertGame matches by FIDE id, and sources created mid-way are rebuilt', async () => {
@@ -335,6 +354,37 @@ describe('reference imports', () => {
     }
   });
 
+  it('turns a connection that breaks off mid-body into a retryable network error', async () => {
+    const zst = fixture('broadcast-2026-01.pgn.zst');
+    const broken = fakeNetwork({
+      [MONTH_URL('2025-10')]: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.enqueue(new Uint8Array(zst.subarray(0, 200)));
+              controller.error(new TypeError('terminated'));
+            },
+          }),
+        ),
+    });
+    const t2 = await makeTestApp({ fetch: broken.fetch });
+    try {
+      const id = ensureBroadcastDatabase(t2.db);
+      const { ctx } = makeJobContext(t2, 'broadcastMonth', { databaseId: id, month: '2025-10' });
+      await expect(getJobHandler('broadcastMonth')!(ctx)).rejects.toMatchObject({
+        name: 'UpstreamError',
+        reason: 'network',
+        message: 'The download from database.lichess.org broke off: terminated',
+      });
+      expect(t2.db.get('SELECT status, error FROM reference_broadcast_months')).toEqual({
+        status: 'error',
+        error: 'The download from database.lichess.org broke off: terminated',
+      });
+    } finally {
+      await t2.close();
+    }
+  });
+
   it('imports an uploaded file (zstd or plain) and deletes it afterwards', async () => {
     const dbId = findOrCreateReferenceDatabase(t.db, { name: 'TWIC', licence: 'Free for non-commercial use' });
     mkdirSync(t.config.uploadsDir, { recursive: true });
@@ -363,9 +413,17 @@ describe('reference imports', () => {
 
   it('imports a URL (gzip) without sending the token off Lichess, and refuses bad URLs in the job too', async () => {
     const dbId = findOrCreateReferenceDatabase(t.db, { name: 'Club archive' });
+    const redirected = (to: string) => () => {
+      const res = bytes(fixture('broadcast-2026-02.pgn'))();
+      Object.defineProperty(res, 'url', { value: to });
+      return res;
+    };
     const net3 = fakeNetwork({
       'https://files.example.org/club.pgn.gz': bytes(gzipSync(fixture('broadcast-2026-02.pgn'))),
       'https://lichess.org/api/broadcast/TourAAAA.pgn': bytes(fixture('round-Rnd5EEEE.pgn')),
+      'https://files.example.org/moved.pgn': redirected('https://mirror.example.net/moved.pgn'),
+      'https://files.example.org/to-http.pgn': redirected('http://files.example.org/to-http.pgn'),
+      'https://files.example.org/to-lan.pgn': redirected('https://10.1.2.3/secret.pgn'),
     });
     const t3 = await makeTestApp({ fetch: net3.fetch, env: { LICHESS_TOKEN: 'lip_testtoken' } });
     try {
@@ -380,6 +438,10 @@ describe('reference imports', () => {
       expect(net3.calls.map(c => c.auth)).toEqual([null, 'Bearer lip_testtoken']);
       await expect(run('http://files.example.org/club.pgn')).rejects.toThrow(/https/);
       await expect(run('https://files.example.org/missing.pgn')).rejects.toMatchObject({ name: 'UpstreamError', status: 404 });
+      // Redirects: another public https host is fine; plain http or a private address is refused.
+      expect((await run('https://files.example.org/moved.pgn')).counts).toMatchObject({ imported: 0, duplicates: 3 });
+      await expect(run('https://files.example.org/to-http.pgn')).rejects.toThrow(/redirected .*https/);
+      await expect(run('https://files.example.org/to-lan.pgn')).rejects.toThrow(/redirected .*not a public host/);
     } finally {
       await t3.close();
     }

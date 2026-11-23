@@ -75,6 +75,17 @@ const PLAYER_COLUMNS = 'id, fide_id, database_id, name_key, name, title, federat
 /** True for names that identify nobody ("?", empty). */
 const isAnonymous = (name: string): boolean => !/[\p{L}\p{N}]/u.test(name);
 
+/** Replaces the search words of a player (`reference_player_words`) with those of `searchName`. */
+function setPlayerWords(db: Db, playerId: Id, searchName: string, replace: boolean): void {
+  if (replace) db.run('DELETE FROM reference_player_words WHERE player_id = ?', [playerId]);
+  for (const word of new Set(searchName.split(' ').filter(Boolean))) {
+    db.run('INSERT OR IGNORE INTO reference_player_words (word, player_id) VALUES (?, ?)', [word, playerId]);
+  }
+}
+
+/** Upper bound of a prefix range: every string starting with `prefix` sorts below it (BINARY collation). */
+const prefixEnd = (prefix: string): string => `${prefix}\u{10FFFF}`;
+
 /**
  * Counts one newly stored game for a player (call inside the import transaction): creates the row or
  * bumps `games`, keeps the highest rating, and takes name, title, federation and rating from the
@@ -92,18 +103,21 @@ export function indexReferencePlayer(db: Db, databaseId: Id, p: IndexedPlayer, p
         key,
       ]);
   if (!row) {
-    db.run(
+    const searchName = foldName(name);
+    const { lastInsertRowid } = db.run(
       `INSERT INTO reference_players (fide_id, database_id, name_key, name, search_name, title, federation, games,
          last_played, last_rating, max_rating, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-      [p.fideId, p.fideId ? null : databaseId, key, name, foldName(name), p.title, p.federation, playedAt, p.rating, p.rating, now],
+      [p.fideId, p.fideId ? null : databaseId, key, name, searchName, p.title, p.federation, playedAt, p.rating, p.rating, now],
     );
+    setPlayerWords(db, lastInsertRowid, searchName, false);
     return;
   }
   const newer = playedAt !== null && (row.last_played === null || playedAt >= row.last_played);
   const maxRating = p.rating !== null && (row.max_rating === null || p.rating > row.max_rating) ? p.rating : row.max_rating;
   // FIDE rows follow the player's latest spelling; name-keyed rows keep their key.
   const nextName = newer && p.fideId ? name : row.name;
+  if (nextName !== row.name) setPlayerWords(db, row.id, foldName(nextName), true);
   db.run(
     `UPDATE reference_players
         SET games = games + 1, name = ?, name_key = ?, search_name = ?, title = ?, federation = ?,
@@ -201,13 +215,17 @@ export function searchReferencePlayers(
     const folded = foldName(query);
     const tokens = [...new Set(folded.split(' ').filter(Boolean))].slice(0, MAX_TOKENS);
     if (tokens.length === 0) return [];
+    // Candidates come from the word index (the longest token is the most selective prefix); every
+    // token must then start a word of the name.
+    const anchor = tokens.reduce((a, b) => (b.length > a.length ? b : a));
     const where = tokens.map(() => `instr(' ' || search_name, ?) > 0`).join(' AND ');
     rows = db.all<PlayerRow>(
       `SELECT ${PLAYER_COLUMNS} FROM reference_players
-        WHERE games > 0 AND ${where}
+        WHERE id IN (SELECT player_id FROM reference_player_words WHERE word >= ? AND word < ?)
+          AND games > 0 AND ${where}
         ORDER BY (search_name = ?) DESC, (substr(search_name, 1, ?) = ?) DESC, games DESC, id
         LIMIT ?`,
-      [...tokens.map(t => ` ${t}`), folded, folded.length, folded, limit],
+      [anchor, prefixEnd(anchor), ...tokens.map(t => ` ${t}`), folded, folded.length, folded, limit],
     );
   }
   return rows.map(r => toReferencePlayer(db, r, viewer));
