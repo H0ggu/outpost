@@ -179,6 +179,17 @@ export const DEFAULT_PREFS: UserPrefs = {
 /** `PUT /api/me/prefs` body: any subset; the server merges and returns the full `UserPrefs`. */
 export type UpdatePrefsRequest = Partial<UserPrefs>;
 
+/**
+ * Outpost account usernames (setup, signup): 2–30 characters, letters, digits, `_` and `-`,
+ * starting with a letter or digit. Unique case-insensitively (`users.username COLLATE NOCASE`);
+ * the case typed at signup is kept for display.
+ */
+export const ACCOUNT_USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{1,29}$/;
+/** Minimum password length (characters) for new passwords. */
+export const PASSWORD_MIN_LENGTH = 8;
+/** Maximum password length (characters). */
+export const PASSWORD_MAX_LENGTH = 256;
+
 /** The signed-in user as the browser sees it. */
 export interface SessionUser {
   id: Id;
@@ -239,6 +250,10 @@ export interface TotpSetupResponse {
   otpauthUrl: string;
   /** The URI as an inline SVG QR code (rendered server-side, no external requests). */
   qrSvg: string;
+  /** The same QR code as a `data:image/png;base64,…` URL, for an `<img src>` (CSP allows `img-src data:`). */
+  qrDataUrl?: string;
+  /** When the pending secret expires unless confirmed with `enable`. */
+  expiresAt?: EpochMs;
 }
 
 /** `POST /api/me/totp/enable`: confirm the pending secret with a current code. */
@@ -246,7 +261,10 @@ export interface TotpEnableRequest {
   code: string;
 }
 
-/** `POST /api/me/totp/disable`. */
+/**
+ * `POST /api/me/totp/disable`. Either proof is enough: the current password **or** a current code
+ * (send an empty string for the one you don't use).
+ */
 export interface TotpDisableRequest {
   password: string;
   code: string;
@@ -378,6 +396,13 @@ export interface UpstreamStatus {
   error: string | null;
 }
 
+/**
+ * Outcome of the Lichess token check (`GET https://lichess.org/api/account` with the token):
+ * `missing` none configured, `valid` accepted, `invalid` refused (401/403), `unknown` Lichess could
+ * not be asked (network error, timeout, rate limit, 5xx).
+ */
+export type LichessTokenState = 'missing' | 'valid' | 'invalid' | 'unknown';
+
 /** `GET /api/admin/status`. */
 export interface AdminStatus {
   version: string;
@@ -385,6 +410,7 @@ export interface AdminStatus {
   sqliteVersion: string;
   uptimeSec: number;
   dataDir: string;
+  /** Database file plus its write-ahead log (`outpost.db` + `outpost.db-wal`). */
   dbSizeBytes: number;
   lichessToken: {
     configured: boolean;
@@ -392,8 +418,17 @@ export interface AdminStatus {
     valid: boolean | null;
     userId: string | null;
     scopes: string[];
+    state?: LichessTokenState;
+    /** Why the check failed (`invalid` / `unknown`), else null. */
+    error?: string | null;
+    /** True when the token comes from the LICHESS_TOKEN env var. */
+    fromEnv?: boolean;
   };
   upstream: UpstreamStatus[];
+  /** When the token check and upstream probes ran (they are cached for about a minute). */
+  checkedAt?: EpochMs;
+  /** Number of jobs in each status. */
+  jobs?: Record<JobStatus, number>;
   counts: {
     users: number;
     profiles: number;
