@@ -13,6 +13,7 @@ import { OPP_STRENGTHS, PERIODS, type OppStrength, type Period, type ProfileFilt
 import { useUrlFilters } from '../../../api/hooks.ts';
 import { licon, TIME_CLASS_ICONS, TIME_CLASS_LABELS } from '../../../components/index.ts';
 import { fmtLine, OPP_LABELS, OUTCOME_PLURAL, parseMovesInput, PERIOD_LABELS } from '../format.ts';
+import { useOpponentNames } from '../hooks.ts';
 import { Segmented, SelectField, SiteIcon, ToggleChip } from './bits.tsx';
 
 const PERIOD_SHORT: Readonly<Record<Period, string>> = {
@@ -60,19 +61,27 @@ export function describeFilters(f: ProfileFilters, header?: Pick<ProfileHeader, 
   return out;
 }
 
-/** A text filter that commits on Enter, on blur, or after a short pause. */
+/**
+ * A text filter that commits on Enter, on blur, or after a short pause. `suggestions` feed a
+ * `<datalist>`; `onFocus` lets the caller load them only when the field is used.
+ */
 function TextFilter({
   label,
   placeholder,
   value,
   onCommit,
+  suggestions,
+  onFocus,
 }: {
   label: string;
   placeholder: string;
   value: string | undefined;
   onCommit: (v: string | undefined) => void;
+  suggestions?: readonly string[];
+  onFocus?: () => void;
 }) {
   const id = useId();
+  const listId = `${id}-list`;
   const [text, setText] = useState(value ?? '');
   useEffect(() => setText(value ?? ''), [value]);
 
@@ -106,12 +115,21 @@ function TextFilter({
           maxLength={100}
           autoComplete="off"
           spellCheck={false}
+          list={suggestions?.length ? listId : undefined}
+          onFocus={onFocus}
           onChange={e => setText(e.target.value)}
           onBlur={() => commit(text)}
           onKeyDown={e => {
             if (e.key === 'Enter') commit(text);
           }}
         />
+        {suggestions?.length ? (
+          <datalist id={listId}>
+            {suggestions.map(v => (
+              <option key={v} value={v} />
+            ))}
+          </datalist>
+        ) : null}
       </span>
     </span>
   );
@@ -203,13 +221,16 @@ function DateRange({ f, set }: { f: ProfileFilters; set: (patch: Partial<Profile
 
 /**
  * The filters bar. `sources` come from the profile header (only shown with 2+ accounts).
- * `hideColor` drops the colour control where the page has its own (the Explorer's side toggle).
+ * `hideColor` drops the colour control where the page has its own (the Explorer's and the
+ * Openings tab's side toggles, which write the same `color` filter).
  */
 export function FiltersBar({ header, hideColor = false }: { header: ProfileHeader; hideColor?: boolean }) {
   const [filters, setFilters] = useUrlFilters();
   const [open, setOpen] = useState(false);
   const [more, setMore] = useState(false);
   const [customDates, setCustomDates] = useState(!!(filters.from || filters.to));
+  const [wantNames, setWantNames] = useState(false);
+  const opponentNames = useOpponentNames(header.slug, wantNames);
   useEffect(() => {
     if (filters.from || filters.to) setCustomDates(true);
   }, [filters.from, filters.to]);
@@ -373,7 +394,14 @@ export function FiltersBar({ header, hideColor = false }: { header: ProfileHeade
             options={[{ value: '', label: 'Any' }, ...OPP_STRENGTHS.map(o => ({ value: o, label: OPP_LABELS[o] }))]}
             onChange={v => set({ opp: (v || undefined) as OppStrength | undefined })}
           />
-          <TextFilter label="Opponent" placeholder="Name or username" value={filters.oppName} onCommit={v => set({ oppName: v })} />
+          <TextFilter
+            label="Opponent"
+            placeholder="Name or username"
+            value={filters.oppName}
+            onCommit={v => set({ oppName: v })}
+            suggestions={opponentNames}
+            onFocus={() => setWantNames(true)}
+          />
           <TextFilter label="Event" placeholder="Tournament" value={filters.event} onCommit={v => set({ event: v })} />
           <LineFilter line={filters.line} onChange={line => set({ line })} />
         </div>

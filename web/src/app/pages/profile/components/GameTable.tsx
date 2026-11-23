@@ -7,6 +7,7 @@ import type { GameRow, SourceSummary } from '@outpost/shared/api';
 import { Spinner, TIME_CLASS_LABELS, TimeClassIcon } from '../../../components/index.ts';
 import { fmtDate, fmtDateTime, fmtSigned, fmtTimeControl, TERMINATION_LABELS } from '../format.ts';
 import { ColorDot, OpponentName, OutcomeMark, SiteIcon } from './bits.tsx';
+import { Boundary } from './Boundary.tsx';
 
 const GamePreview = lazy(() => import('./GamePreview.tsx'));
 
@@ -97,9 +98,11 @@ export function GameTable({ slug, games, sources, timeZone }: GameTableProps) {
                 {expanded && (
                   <tr className="game-preview-row">
                     <td colSpan={8}>
-                      <Suspense fallback={<Spinner center size={28} label="Loading game" />}>
-                        <GamePreview slug={slug} game={g} timeZone={timeZone} />
-                      </Suspense>
+                      <Boundary title="Could not show the game">
+                        <Suspense fallback={<Spinner center size={28} label="Loading game" />}>
+                          <GamePreview slug={slug} game={g} timeZone={timeZone} />
+                        </Suspense>
+                      </Boundary>
                     </td>
                   </tr>
                 )}

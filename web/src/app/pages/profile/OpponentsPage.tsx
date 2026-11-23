@@ -30,6 +30,14 @@ export default function OpponentsPage() {
   let table;
   if (opponents.isPending) table = <Spinner center label="Loading opponents" />;
   else if (opponents.isError) table = <ErrorBox error={opponents.error} onRetry={() => void opponents.refetch()} title="Could not load the opponents" />;
+  else if (opponents.data.rows.length === 0 && opponents.data.total > 0)
+    table = (
+      <EmptyState icon={licon.Group} title="No opponents on this page">
+        <button type="button" className="button button-secondary button-thin" onClick={() => setPage(1)}>
+          Back to the first page
+        </button>
+      </EmptyState>
+    );
   else if (opponents.data.rows.length === 0)
     table = (
       <EmptyState icon={licon.Group} title={view === 'titled' ? 'No titled opponents' : filtered ? 'No opponents match these filters' : 'No opponents yet'} />

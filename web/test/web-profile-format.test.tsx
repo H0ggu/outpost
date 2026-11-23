@@ -93,7 +93,12 @@ describe('links', () => {
     expect(url.searchParams.get('color')).toBe('black');
     expect(url.searchParams.get('embed')).toBe('explorer');
     expect(url.searchParams.get('pgn')).toBe('1. e4 c5');
-    expect(decodeFiltersSegment(url.searchParams.get('filters')!)).toEqual({ tc: ['blitz'], line: ['e2e4', 'c7c5'] });
+    // The line sets up the board; it is not an explorer restriction.
+    expect(decodeFiltersSegment(url.searchParams.get('filters')!)).toEqual({ tc: ['blitz'] });
+    // An illegal line is dropped rather than sent.
+    const bad = new URL(studioExplorerLink('magnus', 'white', { line: ['e2e5'] }, true), 'http://x');
+    expect(bad.searchParams.has('pgn')).toBe(false);
+    expect(bad.searchParams.get('filters')).toBe('_');
     const plain = new URL(studioExplorerLink('magnus', 'white', {}, false), 'http://x');
     expect(plain.searchParams.get('filters')).toBe('_');
     expect(plain.searchParams.has('embed')).toBe(false);

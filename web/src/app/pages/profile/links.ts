@@ -11,15 +11,18 @@ import { lineToSanMoves, numberedSan } from './format.ts';
 export const studioGameLink = (id: number): string => withQuery(paths.studio(), { game: toExplorerGameId(id) });
 
 /**
- * Studio URL for the profile's player explorer. When the filters hold a line, the line is also
- * passed as `pgn` (numbered SAN) so the board opens on that position.
+ * Studio URL for the profile's player explorer with the other filters. A `line` filter becomes
+ * the board's moves (`pgn`, numbered SAN) instead of an explorer restriction: the explorer
+ * already reads the position on the board, and keeping the line as a filter would hide every
+ * other game once the viewer steps back from it. An illegal line is dropped.
  */
 export function studioExplorerLink(slug: string, color: Color, filters: ProfileFilters, embed: boolean): string {
-  const san = filters.line?.length ? lineToSanMoves(filters.line) : null;
+  const { line, ...rest } = filters;
+  const san = line?.length ? lineToSanMoves(line) : null;
   return paths.studio({
     explorer: `player:${slug}`,
     color,
-    filters: encodeFiltersSegment(filters),
+    filters: encodeFiltersSegment(rest),
     ...(san?.length ? { pgn: numberedSan(san) } : {}),
     ...(embed ? { embed: 'explorer' as const } : {}),
   });

@@ -521,7 +521,27 @@ export interface MockOptions {
   fail?: Array<{ match: RegExp; status: number; code: string; message: string; details?: unknown }>;
   /** Called with every request. */
   record?: (method: string, url: URL, body: unknown) => void;
+  /** Rewrites a stats response before it is sent (the request's filters are passed along). */
+  patch?: { [K in keyof StatsResponses]?: (r: StatsResponses[K], f: ProfileFilters) => StatsResponses[K] };
 }
+
+/** Response type of each stats endpoint (the last path segment). */
+export interface StatsResponses {
+  overview: OverviewStats;
+  games: GamesPage;
+  openings: OpeningsResponse;
+  opponents: OpponentsPage;
+  behaviour: BehaviourStats;
+  worldmap: WorldMapStats;
+  activity: ActivityStats;
+  rating: RatingStats;
+}
+
+/** Applies `opts.patch` for one endpoint. */
+const patched = <K extends keyof StatsResponses>(opts: MockOptions, key: K, r: StatsResponses[K], f: ProfileFilters): StatsResponses[K] => {
+  const fn = opts.patch?.[key] as ((r: StatsResponses[K], f: ProfileFilters) => StatsResponses[K]) | undefined;
+  return fn ? fn(r, f) : r;
+};
 
 const json = (body: unknown, status = 200): MockResponse => ({ status, body });
 const err = (status: number, code: string, message: string, details?: unknown): MockResponse => ({ status, body: { error: { code, message, details } } });
@@ -574,23 +594,23 @@ export function mockApi(method: string, rawUrl: string, body: unknown, opts: Moc
     case 'POST sources':
       return json(header);
     case 'GET overview':
-      return json(overview(f));
+      return json(patched(opts, 'overview', overview(f), f));
     case 'GET games':
-      return json(gamesPage(f, Number(url.searchParams.get('page') ?? 1), Number(url.searchParams.get('pageSize') ?? 20)));
+      return json(patched(opts, 'games', gamesPage(f, Number(url.searchParams.get('page') ?? 1), Number(url.searchParams.get('pageSize') ?? 20)), f));
     case 'GET games.pgn':
       return { status: 200, body: '[Event "x"]\n\n1. e4 *\n', contentType: 'application/x-chess-pgn' };
     case 'GET openings':
-      return json(openings(f, url.searchParams));
+      return json(patched(opts, 'openings', openings(f, url.searchParams), f));
     case 'GET opponents':
-      return json(opponents(f, url.searchParams));
+      return json(patched(opts, 'opponents', opponents(f, url.searchParams), f));
     case 'GET behaviour':
-      return json(behaviour(f));
+      return json(patched(opts, 'behaviour', behaviour(f), f));
     case 'GET worldmap':
-      return json(worldMap(f));
+      return json(patched(opts, 'worldmap', worldMap(f), f));
     case 'GET activity':
-      return json(activity(f, url.searchParams.get('tz') ?? 'UTC'));
+      return json(patched(opts, 'activity', activity(f, url.searchParams.get('tz') ?? 'UTC'), f));
     case 'GET rating':
-      return json(ratingStats(f));
+      return json(patched(opts, 'rating', ratingStats(f), f));
     default: {
       const src = /^sources\/(\d+)$/.exec(rest);
       if (src && method === 'DELETE') return json({ ...header, sources: header.sources.filter(s => s.id !== Number(src[1])) });

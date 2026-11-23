@@ -40,9 +40,15 @@ export default function GamesPage() {
         </div>
         {total > 0 && <WdlBar w={g.summary.w} d={g.summary.d} l={g.summary.l} className="games-summary__bar" />}
         <div className="games-summary__export">
-          <a className="button button-secondary button-thin" href={exportHref} download={`${slug}.pgn`} data-icon={licon.Download} aria-disabled={g.total === 0 || undefined}>
-            Download PGN
-          </a>
+          {g.total > 0 ? (
+            <a className="button button-secondary button-thin" href={exportHref} download={`${slug}.pgn`} data-icon={licon.Download}>
+              Download PGN
+            </a>
+          ) : (
+            <button type="button" className="button button-secondary button-thin" data-icon={licon.Download} disabled>
+              Download PGN
+            </button>
+          )}
           <span className="muted">
             {g.total > PGN_EXPORT_LIMIT
               ? `One file holds at most ${fmtInt(PGN_EXPORT_LIMIT)} of these ${fmtInt(g.total)} games: narrow the filters to get the rest.`
@@ -53,7 +59,13 @@ export default function GamesPage() {
         </div>
       </div>
 
-      {g.games.length === 0 ? (
+      {g.games.length === 0 && g.total > 0 ? (
+        <EmptyState icon={licon.Search} title="No games on this page">
+          <button type="button" className="button button-secondary button-thin" onClick={() => setPage(1)}>
+            Back to the first page
+          </button>
+        </EmptyState>
+      ) : g.games.length === 0 ? (
         <EmptyState icon={licon.Search} title={isEmptyFilters(filters) ? 'No games yet' : 'No games match these filters'}>
           {!isEmptyFilters(filters) && (
             <button type="button" className="button button-secondary button-thin" onClick={() => setFilters({})}>

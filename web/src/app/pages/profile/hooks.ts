@@ -4,7 +4,7 @@
  * Query keys live under the existing `queryKeys.profile(slug)` prefix (docs/CONVENTIONS.md).
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useState, type RefObject } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router';
 import {
   API_ROUTES,
@@ -14,12 +14,14 @@ import {
   type GameResponse,
   type Id,
   type OkResponse,
+  type OpponentsPage,
   type ProfileHeader,
   type ProfileStatus,
   type ProfileUpdateResponse,
   type UpdateProfileRequest,
   type UserPrefs,
 } from '@outpost/shared/api';
+import { statsQuery } from '@outpost/shared/filters';
 import { api } from '../../api/client.ts';
 import { queryKeys } from '../../api/hooks.ts';
 
@@ -145,6 +147,25 @@ export function useGame(slug: string, id: Id | null) {
     enabled: id !== null,
     staleTime: Infinity,
   });
+}
+
+/** Most opponents the name suggestions offer (the endpoint's page-size cap). */
+export const OPPONENT_SUGGESTIONS = 100;
+
+/**
+ * Names of the most played opponents (all games, unfiltered), for the opponent filter's
+ * suggestions. Loaded only once `enabled` (the field got focus). Shares the cache entry of an
+ * identical `useOpponents` call.
+ */
+export function useOpponentNames(slug: string, enabled: boolean): string[] {
+  const extra = { view: 'most', page: 1, pageSize: OPPONENT_SUGGESTIONS };
+  const q = useQuery({
+    queryKey: queryKeys.stats(slug, 'opponents', {}, extra),
+    queryFn: ({ signal }) => api.get<OpponentsPage>(API_ROUTES.stats.opponents(slug), statsQuery({}, extra), signal),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+  return useMemo(() => [...new Set(q.data?.rows.map(r => r.name) ?? [])], [q.data]);
 }
 
 /** `GET /api/databases` (to attach a PGN-database player as a source). */

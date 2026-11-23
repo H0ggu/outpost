@@ -19,12 +19,13 @@ type Moves = (typeof MOVES)[number];
 /**
  * Openings tab (PLAN §5, §6 `GET /api/profiles/:slug/openings`): opening lines per colour with
  * most played / best / worst order, minimum games and a move range (1–5 full moves). The side
- * follows the filters' colour. A row opens the Explorer tab at that line.
+ * control is the filters' colour (the filters bar hides its own colour control on this tab), so
+ * it carries over to the other tabs. A row opens the Explorer tab at that line.
  */
 export default function OpeningsPage() {
   const { slug } = useProfile();
   const navigate = useNavigate();
-  const [filters] = useUrlFilters();
+  const [filters, setFilters] = useUrlFilters();
   const [order, setOrder] = useQueryParam<Order>('order', oneOf(ORDERS, 'most'), 'most');
   const [minGames, setMinGames] = useQueryParam<MinGames>('minGames', oneOf(MIN_GAMES, ''), '');
   const [minMoves] = useQueryParam<Moves>('minMoves', oneOf(MOVES, ''), '');
@@ -37,7 +38,8 @@ export default function OpeningsPage() {
     order,
     ...(minGames ? { minGames: Number(minGames) } : {}),
     ...(minMoves ? { minMoves: Number(minMoves) } : {}),
-    ...(maxMoves ? { maxMoves: Number(maxMoves) } : {}),
+    // A hand-edited URL with min > max would be rejected by the server: drop the max instead.
+    ...(maxMoves && !(minMoves && Number(minMoves) > Number(maxMoves)) ? { maxMoves: Number(maxMoves) } : {}),
   };
   const openings = useOpenings(slug, filters, params);
 
@@ -46,6 +48,20 @@ export default function OpeningsPage() {
 
   const controls = (
     <div className="openings-controls">
+      <span className="field">
+        <span className="field__label">Side</span>
+        <Segmented
+          label="Side"
+          size="sm"
+          value={side}
+          options={[
+            { value: 'both', label: 'Both' },
+            { value: 'white', label: <><span className="color-dot color-dot--white" aria-hidden /> White</> },
+            { value: 'black', label: <><span className="color-dot color-dot--black" aria-hidden /> Black</> },
+          ]}
+          onChange={v => setFilters({ ...filters, color: v === 'both' ? undefined : v })}
+        />
+      </span>
       <span className="field">
         <span className="field__label">Order</span>
         <Segmented
