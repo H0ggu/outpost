@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AuthUser } from '../src/http/types.ts';
-import { loadDatabaseForViewer, loadProfileForViewer } from '../src/profiles/access.ts';
+import { loadDatabaseForViewer, loadProfileByIdForViewer, loadProfileForViewer } from '../src/profiles/access.ts';
 import { parsePrefs } from '../src/auth/session.ts';
 import { createSource, createUserSession, makeTestApp, type TestApp } from './helpers.ts';
 
@@ -63,5 +63,36 @@ describe('profile and database access', () => {
     expect(() => loadDatabaseForViewer(t.db, mine, other)).toThrow(/not found/);
     expect(loadDatabaseForViewer(t.db, ref, null)).toMatchObject({ kind: 'reference', canEdit: false });
     expect(loadDatabaseForViewer(t.db, ref, admin).canEdit).toBe(true);
+  });
+
+  it('counts pgn sources only while the viewer may read their database', () => {
+    const now = Date.now();
+    const privateDb = t.db.run("INSERT INTO databases (owner_user_id, name, kind, visibility, created_at) VALUES (?, 'club', 'games', 'private', 0)", [
+      owner.id,
+    ]).lastInsertRowid;
+    const refDb = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('ref2', 'reference', 'private', 0)").lastInsertRowid;
+    const fromPrivate = createSource(t.db, { kind: 'pgn', key: `${privateDb}:anna`, databaseId: privateDb });
+    const fromRef = createSource(t.db, { kind: 'pgn', key: `${refDb}:anna`, databaseId: refDb });
+    const lichess = createSource(t.db, { kind: 'lichess', key: 'anna' });
+    // A public profile of `other` that uses the owner's private database.
+    const p = t.db.run(
+      "INSERT INTO profiles (slug, display_name, owner_user_id, visibility, created_at, updated_at) VALUES ('anna', 'Anna', ?, 'public', ?, ?)",
+      [other.id, now, now],
+    ).lastInsertRowid;
+    for (const s of [fromPrivate, fromRef, lichess]) t.db.run('INSERT INTO profile_sources (profile_id, source_id) VALUES (?, ?)', [p, s]);
+    const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
+    expect(loadProfileForViewer(t.db, 'anna', other).sourceIds).toEqual(sorted([fromRef, lichess]));
+    expect(loadProfileForViewer(t.db, 'anna', null).sourceIds).toEqual(sorted([fromRef, lichess]));
+    expect(loadProfileForViewer(t.db, 'anna', owner).sourceIds).toEqual(sorted([fromPrivate, fromRef, lichess]));
+    expect(loadProfileForViewer(t.db, 'anna', admin).sourceIds).toEqual(sorted([fromPrivate, fromRef, lichess]));
+    t.db.run("UPDATE databases SET visibility = 'public' WHERE id = ?", [privateDb]);
+    expect(loadProfileForViewer(t.db, 'anna', other).sourceIds).toEqual(sorted([fromPrivate, fromRef, lichess]));
+  });
+
+  it('loads profiles by id with the same rules', () => {
+    const id = t.db.value<number>("SELECT id FROM profiles WHERE slug = 'private-one'")!;
+    expect(loadProfileByIdForViewer(t.db, id, owner).slug).toBe('private-one');
+    expect(() => loadProfileByIdForViewer(t.db, id, other)).toThrow(/not found/);
+    expect(() => loadProfileByIdForViewer(t.db, 987654, owner)).toThrow(/not found/);
   });
 });
