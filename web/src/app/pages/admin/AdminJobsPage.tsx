@@ -132,28 +132,30 @@ export default function AdminJobsPage() {
     {
       key: 'status',
       header: 'Status',
-      render: j => <JobStatusBadge job={j} />,
+      render: j => (
+        <div className="adm-job__side">
+          <JobStatusBadge job={j} />
+          {j.status === 'queued' || j.status === 'running' ? (
+            <Button variant="empty" size="sm" icon={licon.X} disabled={action.isPending} onClick={() => run(j, 'cancel')} aria-label={`Cancel job ${j.id}`}>
+              Cancel
+            </Button>
+          ) : j.status === 'done' ? (
+            <Button variant="empty" size="sm" icon={licon.Reload} disabled={action.isPending} onClick={() => run(j, 'retry')} aria-label={`Run job ${j.id} again`}>
+              Run again
+            </Button>
+          ) : (
+            <Button variant="secondary" size="sm" icon={licon.Reload} disabled={action.isPending} onClick={() => run(j, 'retry')} aria-label={`Retry job ${j.id}`}>
+              Retry
+            </Button>
+          )}
+        </div>
+      ),
     },
     {
       key: 'time',
       header: 'When',
       hideBelow: 760,
       render: j => <JobTimes job={j} fmt={fmt} />,
-    },
-    {
-      key: 'actions',
-      header: <span className="visually-hidden">Actions</span>,
-      align: 'right',
-      render: j =>
-        j.status === 'queued' || j.status === 'running' ? (
-          <Button variant="empty" size="sm" icon={licon.X} disabled={action.isPending} onClick={() => run(j, 'cancel')} aria-label={`Cancel job ${j.id}`}>
-            Cancel
-          </Button>
-        ) : (
-          <Button variant="secondary" size="sm" icon={licon.Reload} disabled={action.isPending} onClick={() => run(j, 'retry')} aria-label={`Retry job ${j.id}`}>
-            Retry
-          </Button>
-        ),
     },
   ];
 

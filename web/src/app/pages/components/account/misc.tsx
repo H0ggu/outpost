@@ -94,7 +94,7 @@ export function RowMenu({ label, actions }: { label: string; actions: readonly R
         aria-expanded={open}
         aria-label={label}
         title={label}
-        data-icon={licon.MoreTriangle}
+        data-icon={licon.Gear}
         onClick={() => setOpen(o => !o)}
       />
       {open && (

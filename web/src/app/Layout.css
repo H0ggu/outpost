@@ -34,6 +34,15 @@
   flex-shrink: 0;
 }
 
+/* The kit's generic input[type=search] rule would draw a second box inside the pill. */
+.site-search input[type='search'] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.25rem 0;
+  color: var(--c-font-clear);
+}
+
 /* Search inside the phone menu: hidden while the header has room for its own. */
 .site-search--menu {
   display: none;
@@ -343,5 +352,14 @@
 
   .site-banner {
     margin-inline: 8px;
+  }
+
+  /* Full-width job list under the header (the toggle is not at the screen edge). */
+  .site-jobs__panel {
+    position: fixed;
+    top: calc(var(--site-header-height) - 2px);
+    left: 8px;
+    right: 8px;
+    width: auto;
   }
 }

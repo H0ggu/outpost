@@ -60,10 +60,10 @@ export const THEMES: ReadonlyArray<{ value: ThemeName; label: string; help: stri
 ];
 
 const STUDIO_LAYOUT_LABELS: Readonly<Record<StudioLayout, { label: string; help: string }>> = {
-  default: { label: 'Standard', help: 'Board, moves and tools side by side.' },
-  explorer: { label: 'Explorer', help: 'Opening explorer opened next to the board.' },
-  games: { label: 'Games', help: 'Room for game lists and My Files.' },
-  focus: { label: 'Focus', help: 'Just the board and the moves.' },
+  default: { label: 'Standard', help: "Lichess's analysis board layout." },
+  explorer: { label: 'Explorer', help: 'Opens the opening explorer next to the board.' },
+  games: { label: 'Games', help: 'Makes room for game lists and My Files.' },
+  focus: { label: 'Focus', help: 'Fewer panels: the board and the moves.' },
 };
 
 /** Saves one preference change and reports it. */
@@ -128,7 +128,7 @@ export function AppearanceSection({ prefs }: { prefs: UserPrefs }) {
               {BOARD_THEMES.map((b: BoardTheme) => (
                 <label key={b} className={['acc-tile', prefs.boardTheme === b && 'active'].filter(Boolean).join(' ')} title={BOARD_FILES[b].label}>
                   <input type="radio" name="board" value={b} checked={prefs.boardTheme === b} onChange={() => update({ boardTheme: b })} />
-                  <img src={boardThumbnailUrl(b)} alt="" width={64} height={64} loading="lazy" />
+                  <img src={boardThumbnailUrl(b)} alt="" width={72} height={36} loading="lazy" />
                   <span className="acc-tile__name">{BOARD_FILES[b].label}</span>
                 </label>
               ))}
@@ -146,8 +146,8 @@ export function AppearanceSection({ prefs }: { prefs: UserPrefs }) {
                 >
                   <input type="radio" name="pieces" value={set} checked={prefs.pieceSet === set} onChange={() => update({ pieceSet: set })} />
                   <span className="acc-tile__pieces" style={{ backgroundImage: `url('${boardThumbnailUrl(prefs.boardTheme)}')` }}>
-                    <img src={pieceUrl(set, 'white', 'knight')} alt="" width={32} height={32} loading="lazy" />
-                    <img src={pieceUrl(set, 'black', 'queen')} alt="" width={32} height={32} loading="lazy" />
+                    <img src={pieceUrl(set, 'white', 'knight')} alt="" width={34} height={34} loading="lazy" />
+                    <img src={pieceUrl(set, 'black', 'queen')} alt="" width={34} height={34} loading="lazy" />
                   </span>
                   <span className="acc-tile__name">{PIECE_SET_LABELS[set]}</span>
                 </label>

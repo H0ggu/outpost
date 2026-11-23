@@ -63,9 +63,6 @@
 }
 
 .adm-savebar {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -83,6 +80,9 @@
 }
 
 .adm-savebar--dirty {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   box-shadow: 0 -6px 16px rgb(0 0 0 / 0.25);
 }
 
@@ -108,6 +108,7 @@
 
 .adm-user__name > i {
   color: var(--c-font-dim);
+  margin-right: 0.35em;
 }
 
 .adm-user__tags {
@@ -616,4 +617,20 @@
 
 .adm-upload .acc-progress {
   height: 8px;
+}
+
+.adm-job__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.adm-job__side .button {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.adm-job__side .button-secondary {
+  padding: 0.35em 0.8em;
 }

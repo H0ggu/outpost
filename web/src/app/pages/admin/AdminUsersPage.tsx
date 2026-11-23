@@ -109,7 +109,7 @@ function UsersBox({ me }: { me: SessionUser | null }) {
     },
     {
       key: 'actions',
-      header: <span className="visually-hidden">Actions</span>,
+      header: <span className="acc-sr">Actions</span>,
       align: 'right',
       render: u => {
         const self = u.id === me?.id;
@@ -356,7 +356,7 @@ function InvitesBox() {
     },
     {
       key: 'actions',
-      header: <span className="visually-hidden">Actions</span>,
+      header: <span className="acc-sr">Actions</span>,
       align: 'right',
       render: i => (
         <div className="adm-invite__actions">

@@ -61,7 +61,8 @@ export default function Layout() {
 
   const info = session.data;
   const user = info?.user ?? null;
-  const setupNeeded = info?.setupRequired && location.pathname !== paths.setup;
+  // The auth pages explain setup themselves.
+  const setupNeeded = info?.setupRequired && !/^\/(setup|login|signup)(\/|$)/.test(location.pathname);
 
   return (
     <>

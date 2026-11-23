@@ -252,6 +252,17 @@
   font-size: 0.85em;
 }
 
+/* Screen-reader-only text that stays in the flow (no absolute positioning: inside a scrolled
+   table it would otherwise widen the page). */
+.acc-sr {
+  display: inline-block;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .acc-lead {
   color: var(--c-font);
   margin-bottom: 1.2rem;
@@ -437,7 +448,8 @@
  * ------------------------------------------------------------------------ */
 
 .acc-radio {
-  display: flex;
+  display: inline-flex;
+  max-width: 100%;
   flex-wrap: wrap;
   gap: 3px;
   padding: 3px;
@@ -450,6 +462,7 @@
 .acc-radio > label {
   position: relative;
   flex: 1 1 auto;
+  min-width: 5.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -807,6 +820,10 @@ html[data-theme='black'] .acc-dialog {
   margin: 0.2em 0;
 }
 
+.acc-markdown li > ul {
+  margin: 0.2em 0 0.4em;
+}
+
 .acc-markdown code {
   font-family: var(--font-mono);
   font-size: 0.9em;
@@ -845,8 +862,6 @@ html[data-theme='black'] .acc-dialog {
 
 .acc-rowmenu__toggle::before {
   margin: 0 !important;
-  display: inline-block;
-  transform: rotate(90deg);
 }
 
 .acc-rowmenu__toggle:hover,
@@ -928,7 +943,7 @@ html[data-theme='black'] .acc-dialog {
     align-items: start;
   }
 
-  .acc-appearance__preview {
+  .acc-appearance > .acc-appearance__preview {
     position: sticky;
     top: calc(var(--site-header-height) + 1rem);
     order: 2;
@@ -937,6 +952,7 @@ html[data-theme='black'] .acc-dialog {
 
 .acc-appearance__preview {
   margin: 0;
+  order: -1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -947,8 +963,14 @@ html[data-theme='black'] .acc-dialog {
 }
 
 .acc-preview-board {
-  width: 100%;
+  width: min(100%, 220px);
   aspect-ratio: 1;
+}
+
+@media (min-width: 1000px) {
+  .acc-preview-board {
+    width: 100%;
+  }
 }
 
 .acc-preview-board > .cg-wrap {
@@ -964,8 +986,32 @@ html[data-theme='black'] .acc-dialog {
 /* Theme cards with a miniature of each theme (fixed colours: they show the other themes). */
 .acc-themes {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10.5rem), 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
+  max-width: 40rem;
+}
+
+@media (max-width: 560px) {
+  .acc-themes {
+    gap: 0.4rem;
+  }
+
+  .acc-theme {
+    padding: 0.4rem;
+  }
+
+  .acc-theme__swatch {
+    height: 3.4rem;
+  }
+
+  .acc-theme__help {
+    display: none;
+  }
+
+  .acc-sounds .acc-radio > label {
+    min-width: 0;
+    padding-inline: 0.5rem;
+  }
 }
 
 .acc-theme {
@@ -1149,8 +1195,8 @@ html[data-theme='black'] .acc-dialog {
 }
 
 .acc-tile > img {
-  width: 64px;
-  height: 64px;
+  width: 72px;
+  height: 36px;
   border-radius: 2px;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
 }
@@ -1158,18 +1204,17 @@ html[data-theme='black'] .acc-dialog {
 .acc-tile__pieces {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 64px;
-  height: 64px;
+  justify-content: space-around;
+  width: 72px;
+  height: 36px;
   border-radius: 2px;
-  background-size: 400% 400%;
-  background-position: 0 0;
+  background-size: 100% 100%;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
 }
 
 .acc-tile__pieces img {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
 }
 
 .acc-tile__name {

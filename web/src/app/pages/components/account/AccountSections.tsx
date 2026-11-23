@@ -137,19 +137,22 @@ const svgDataUrl = (svg: string): string => `data:image/svg+xml;charset=utf-8,${
 export function TotpSection({ user }: { user: SessionUser }) {
   const [message, setMessage] = useState<string | null>(null);
   return (
-    <Box title="Two-factor authentication" level={2}>
-      <p className="acc-lead">
-        {user.totpEnabled ? (
-          <span className="acc-state acc-state--good">
+    <Box
+      title="Two-factor authentication"
+      level={2}
+      actions={
+        user.totpEnabled ? (
+          <span className="acc-badge acc-badge--done">
             <i data-icon={licon.Checkmark} aria-hidden /> On
           </span>
         ) : (
-          <span className="acc-state acc-state--dim">
-            <i data-icon={licon.Padlock} aria-hidden /> Off
-          </span>
-        )}{' '}
-        Ask for a code from an authenticator app (Aegis, 2FAS, Google Authenticator, 1Password…) after the password when
-        signing in.
+          <span className="acc-badge acc-badge--cancelled">Off</span>
+        )
+      }
+    >
+      <p className="acc-lead">
+        Ask for a code from an authenticator app (Aegis, 2FAS, Google Authenticator, 1Password…) after the password when signing
+        in.
       </p>
       {message && <Flash>{message}</Flash>}
       {user.totpEnabled ? (
