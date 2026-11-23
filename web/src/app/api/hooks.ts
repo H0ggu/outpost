@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import {
   API_ROUTES,
+  SEARCH_QUERY_MIN_LENGTH,
   type ActivityStats,
   type BehaviourStats,
   type GamesPage,
@@ -135,7 +136,7 @@ export function useSearch(q: string) {
   return useQuery({
     queryKey: queryKeys.search(term),
     queryFn: ({ signal }) => api.get<SearchResults>(API_ROUTES.search, { q: term }, signal),
-    enabled: term.length >= 2,
+    enabled: term.length >= SEARCH_QUERY_MIN_LENGTH,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });

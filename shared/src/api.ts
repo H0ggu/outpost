@@ -728,7 +728,12 @@ export interface ProfileStatus {
 // Search (PLAN §6, unified search)
 // ===========================================================================
 
-/** `GET /api/search?q=`. */
+/** Shortest `GET /api/search` query (trimmed); shorter answers 400 `validation`. */
+export const SEARCH_QUERY_MIN_LENGTH = 2;
+/** Longest `GET /api/search` query (also the database games `q`). */
+export const SEARCH_QUERY_MAX_LENGTH = 100;
+
+/** `GET /api/search?q=` (`SEARCH_QUERY_MIN_LENGTH`–`SEARCH_QUERY_MAX_LENGTH` characters, trimmed). */
 export interface SearchQuery {
   q: string;
 }

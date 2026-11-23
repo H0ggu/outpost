@@ -10,6 +10,7 @@
 import {
   API_ROUTES,
   explorerEndpoint,
+  SEARCH_QUERY_MIN_LENGTH,
   type Color,
   type DatabaseInfo,
   type ProfileHeader,
@@ -148,7 +149,7 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
       },
       async searchPlayers(term) {
         const q = term.trim();
-        if (q.length < 2) return [];
+        if (q.length < SEARCH_QUERY_MIN_LENGTH) return [];
         const r = await api.get<SearchResults>(API_ROUTES.search, { q });
         const choices: ExplorerPlayerChoice[] = [];
         for (const p of r.profiles) {

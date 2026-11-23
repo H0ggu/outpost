@@ -18,7 +18,16 @@
  * viewer may see: a source row that only a private profile uses doesn't reveal that someone
  * tracks the account.
  */
-import type { ExternalPlayerHit, Id, ProfileSummary, ReferencePlayer, SearchResults, Title } from '@outpost/shared/api';
+import {
+  SEARCH_QUERY_MAX_LENGTH,
+  SEARCH_QUERY_MIN_LENGTH,
+  type ExternalPlayerHit,
+  type Id,
+  type ProfileSummary,
+  type ReferencePlayer,
+  type SearchResults,
+  type Title,
+} from '@outpost/shared/api';
 import { isTitle, playerKey } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
 import type { AuthUser } from '../http/types.ts';
@@ -29,10 +38,10 @@ import { upstreamJsonWithin } from '../profiles/upstreamJson.ts';
 import { searchReferencePlayers } from '../reference/index.ts';
 import { likeContains } from '../stats/index.ts';
 
-/** Shortest query (the web app searches from 2 characters). */
-export const MIN_QUERY_LENGTH = 2;
-/** Longest query. */
-export const MAX_QUERY_LENGTH = 100;
+/** Shortest query (the contract's `SEARCH_QUERY_MIN_LENGTH`; the web app searches from there). */
+export const MIN_QUERY_LENGTH = SEARCH_QUERY_MIN_LENGTH;
+/** Longest query (`SEARCH_QUERY_MAX_LENGTH`). */
+export const MAX_QUERY_LENGTH = SEARCH_QUERY_MAX_LENGTH;
 /** Results per list. */
 export const SEARCH_LIMIT = 10;
 /** Upstream deadline (headers and body): search must feel instant, partial results beat waiting. */

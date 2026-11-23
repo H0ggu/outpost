@@ -5,14 +5,14 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router';
-import type { JobInfo } from '@outpost/shared/api';
+import { SEARCH_QUERY_MAX_LENGTH, type JobInfo } from '@outpost/shared/api';
 import { Button, licon, type ButtonVariant, type LiconValue } from '../../../components/index.ts';
 import { paths } from '../../../paths.ts';
 import { fullNumber } from './format.ts';
 import { isUnauthorized, useHere } from './QueryView.tsx';
 
-/** Longest query the search endpoints accept (`/api/search`, database games `q`). */
-export const MAX_QUERY_LENGTH = 100;
+/** Longest query the search endpoints accept (`/api/search`, database games `q`): the contract's. */
+export const MAX_QUERY_LENGTH = SEARCH_QUERY_MAX_LENGTH;
 
 /** A search input with lila's magnifier; `onSubmit` fires on Enter. */
 export function SearchField({
