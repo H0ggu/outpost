@@ -229,6 +229,11 @@ export function DisplaySection({ prefs }: { prefs: UserPrefs }) {
               <span className="acc-wdl-demo__label">White / Black: like the Lichess explorer</span>
               <WdlBar w={52} d={18} l={30} mode="color" />
             </div>
+            <p className="acc-wdl-demo__note">
+              White / Black results show wherever the player had one colour in every game of a bar: opening and prep lines,
+              the By colour rows, and every bar while a profile is filtered by colour. Bars mixing both colours keep the
+              player's results.
+            </p>
           </div>
         }
       />

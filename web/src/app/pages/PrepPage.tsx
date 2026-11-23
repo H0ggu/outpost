@@ -367,6 +367,7 @@ function PrepFilters({
 function Report({ set }: { set: PrepSet }) {
   const session = useSession();
   const utc = session.data?.user?.prefs.timezone === 'utc';
+  const perspective = session.data?.user?.prefs.winratePerspective ?? 'player';
   const tz = utc ? 'UTC' : browserTimeZone();
   const [urlFilters, setFilters] = useUrlFilters();
   const filters = useMemo(() => prepFilters(urlFilters), [urlFilters]);
@@ -422,7 +423,14 @@ function Report({ set }: { set: PrepSet }) {
               </EmptyState>
             ) : (
               r.opponents.map(o => (
-                <PrepReportCard key={o.profile.id} report={o} filters={filters} utc={utc} minGames={minGames ?? DEFAULT_MIN_GAMES} />
+                <PrepReportCard
+                  key={o.profile.id}
+                  report={o}
+                  filters={filters}
+                  utc={utc}
+                  minGames={minGames ?? DEFAULT_MIN_GAMES}
+                  perspective={perspective}
+                />
               ))
             )}
           </div>

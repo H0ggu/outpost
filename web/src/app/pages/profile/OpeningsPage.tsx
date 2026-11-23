@@ -4,7 +4,7 @@ import { OPENINGS_RANK_MIN_GAMES, type OpeningRow, type OpeningsParams } from '@
 import type { Color } from '@outpost/shared/chess';
 import { filtersKey, isEmptyFilters } from '@outpost/shared/filters';
 import { useOpenings, useUrlFilters } from '../../api/hooks.ts';
-import { Box, EmptyState, ErrorBox, licon, Spinner, WdlBar } from '../../components/index.ts';
+import { Box, EmptyState, ErrorBox, licon, perspectiveWdl, Spinner, WdlBar, type WdlPerspective } from '../../components/index.ts';
 import { ColorDot, Pager, rowClick, ScoreText, Segmented, SelectField } from './components/bits.tsx';
 import { fmtInt, fmtLine, fmtMoves, scoreOfWdl } from './format.ts';
 import { oneOf, useProfile, useQueryParam, useSetQueryParams } from './hooks.ts';
@@ -28,7 +28,7 @@ export const OPENINGS_PAGE_SIZE = 20;
  * `OPENINGS_PAGE_SIZE` lines at a time, back on its first page whenever the controls change.
  */
 export default function OpeningsPage() {
-  const { slug } = useProfile();
+  const { slug, prefs } = useProfile();
   const navigate = useNavigate();
   const [filters, setFilters] = useUrlFilters();
   const [order, setOrder] = useQueryParam<Order>('order', oneOf(ORDERS, 'most'), 'most');
@@ -123,6 +123,7 @@ export default function OpeningsPage() {
             onOpen={r => navigate(linkOf(r))}
             filtered={!isEmptyFilters(filters)}
             rankMin={rankMin}
+            perspective={prefs.winratePerspective}
           />
         ))}
       </div>
@@ -143,6 +144,7 @@ function OpeningsTable({
   onOpen,
   filtered,
   rankMin,
+  perspective,
 }: {
   color: Color;
   rows: readonly OpeningRow[];
@@ -151,6 +153,7 @@ function OpeningsTable({
   filtered: boolean;
   /** Under best / worst: the fewest games a ranked line has. */
   rankMin: number | null;
+  perspective: WdlPerspective;
 }) {
   const [page, setPage] = useState(1);
   const shown = rows.slice((page - 1) * OPENINGS_PAGE_SIZE, page * OPENINGS_PAGE_SIZE);
@@ -185,12 +188,12 @@ function OpeningsTable({
                     </Link>
                     <span className="op-name__line san">{fmtLine(r.line)}</span>
                     {/* Phones show the bar under the name instead of in its own column. */}
-                    <WdlBar w={r.w} d={r.d} l={r.l} className="cell-bar" />
+                    <WdlBar {...perspectiveWdl(r, r.color, perspective)} className="cell-bar" />
                   </td>
                   <td className="num">{fmtInt(r.games)}</td>
                   <td className="num op-moves">{fmtMoves(r.avgPly)}</td>
                   <td className="op-wdl col-wdl">
-                    <WdlBar w={r.w} d={r.d} l={r.l} />
+                    <WdlBar {...perspectiveWdl(r, r.color, perspective)} />
                   </td>
                   <td className="num">
                     <ScoreText score={scoreOfWdl(r)} />

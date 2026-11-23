@@ -60,6 +60,30 @@ const NAMES = {
   color: { w: 'White wins', d: 'draws', l: 'Black wins' },
 } as const;
 
+/** One game: `1 win`, `1 White win`, `1 draw`, `1 loss`. */
+const NAMES_ONE = {
+  player: { w: 'win', d: 'draw', l: 'loss' },
+  color: { w: 'White win', d: 'draw', l: 'Black win' },
+} as const;
+
+/** The `winratePerspective` preference: the player's results, or White / Black results. */
+export type WdlPerspective = 'player' | 'white';
+
+/**
+ * Bar props for a player's W/D/L under the viewer's `winratePerspective`. With `white`, a bar
+ * whose games the player all played with one colour (`color` known: an opening line, a colour
+ * row, a prep line, any bar under a colour filter) shows White wins / draws / Black wins in the
+ * explorer's colours; a bar mixing both colours can't be split and keeps the player's results.
+ */
+export function perspectiveWdl(
+  x: { w: number; d: number; l: number },
+  color: 'white' | 'black' | null | undefined,
+  perspective: WdlPerspective,
+): Pick<WdlBarProps, 'w' | 'd' | 'l' | 'mode'> {
+  if (perspective !== 'white' || !color) return { w: x.w, d: x.d, l: x.l, mode: 'player' };
+  return color === 'white' ? { w: x.w, d: x.d, l: x.l, mode: 'color' } : { w: x.l, d: x.d, l: x.w, mode: 'color' };
+}
+
 /** A horizontal W/D/L bar. */
 export function WdlBar({ w, d, l, mode = 'player', className }: WdlBarProps) {
   const segments = wdlSegments(w, d, l);
@@ -67,7 +91,7 @@ export function WdlBar({ w, d, l, mode = 'player', className }: WdlBarProps) {
   const title =
     total === 0
       ? 'No games'
-      : segments.map(s => `${s.count} ${NAMES[mode][s.key]} (${((s.count * 100) / total).toFixed(1)}%)`).join(', ');
+      : segments.map(s => `${s.count} ${(s.count === 1 ? NAMES_ONE : NAMES)[mode][s.key]} (${((s.count * 100) / total).toFixed(1)}%)`).join(', ');
   return (
     <div className={['wdl-bar', total === 0 && 'wdl-bar--empty', className].filter(Boolean).join(' ')} title={title} role="img" aria-label={title}>
       {segments.map(s =>
