@@ -58,7 +58,7 @@ export const IMPORT_POLL_MS = 1500;
 export const BROADCAST_POLL_MS = 10_000;
 
 /** A job that is still queued or running. */
-export const isActiveJob = (job: JobInfo | null | undefined): job is JobInfo =>
+export const isActiveJob = (job: JobInfo | null | undefined): job is JobInfo & { status: 'queued' | 'running' } =>
   !!job && (job.status === 'queued' || job.status === 'running');
 
 /** `value`, updated only after it has been stable for `ms` (debounced search boxes). */
