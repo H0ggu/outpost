@@ -1306,10 +1306,26 @@ body.studio-embed .analyse__underboard {
   display: none;
 }
 
+/* The explorer is what the embed is for: the move list takes what its moves need, up to about five
+   rows, and scrolls; the explorer gets the rest of the tools box (lila splits it 2:3 and keeps an
+   empty move list as tall as at the end of a game). Also when lila would shrink a failing or
+   out-of-book explorer, which would leave the box half empty here. */
+body.studio-embed .analyse__tools .analyse__moves {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 10em;
+}
+
+body.studio-embed .analyse__tools .explorer-box,
+body.studio-embed .analyse__tools .explorer-box.reduced {
+  flex: 1 1 0;
+}
+
 /* Phones (lila's one-column layout): the explorer is what the embed is for, the move list only says
    where you are, so the explorer takes most of the tools box. */
 @media (max-width: 799.29px) and (orientation: portrait) {
-  body.studio-embed .analyse__tools .explorer-box {
+  body.studio-embed .analyse__tools .explorer-box,
+  body.studio-embed .analyse__tools .explorer-box.reduced {
     flex: 5 1 0;
   }
 
