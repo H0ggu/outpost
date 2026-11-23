@@ -144,9 +144,10 @@ export function gamesAtPosition(
   key: number,
   color: Color | null,
   page: { offset: number; limit: number },
+  plan?: 'set' | 'position',
 ): { total: number; hits: PageHit[] } {
   const from = set.from(color);
-  const rare = positionRowsUpTo(db, key, RARE_POSITION_ROWS) < RARE_POSITION_ROWS;
+  const rare = plan ? plan === 'position' : positionRowsUpTo(db, key, RARE_POSITION_ROWS) < RARE_POSITION_ROWS;
   const body = rare
     ? {
         sql: `FROM positions p CROSS JOIN ${from.sql} WHERE p.pos_key = ? AND pg.game_id = p.game_id AND ${where.sql}`,
@@ -170,8 +171,15 @@ export function gamesAtPosition(
  * twice in the set (two of a profile's accounts played each other, uncoloured queries) keeps the
  * first row seen.
  */
-export function collectHits(db: Db, set: GameSet, where: SqlFragment, key: number, color: Color | null): Hit[] {
-  const q = hitsQuery(db, set, where, key, color);
+export function collectHits(
+  db: Db,
+  set: GameSet,
+  where: SqlFragment,
+  key: number,
+  color: Color | null,
+  plan?: 'set' | 'position',
+): Hit[] {
+  const q = hitsQuery(db, set, where, key, color, plan);
   const byGame = new Map<Id, Hit>();
   for (const r of db.iterate<HitRow>(q.sql, q.params)) {
     const prev = byGame.get(r.game_id);
