@@ -4,7 +4,8 @@
  *
  * Colours come from CSS tokens in profile.css, each with dark and light steps:
  * - `--c-seq-0..5`: one-hue sequential ramp for magnitude (games, opponents); 0 = no data;
- * - `--c-div-0..6`: diverging score scale, red (0%) → grey (50%) → blue (100%);
+ * - `--c-div-0..6`: diverging score scale in lila's result hues, red (0%) → grey (50%) → green
+ *   (100%), lighter towards wins (never blue, which is the count ramp's hue);
  * - `--c-series-1..8`: categorical series, assigned by entity (time class), never by rank.
  */
 import type { ReactNode } from 'react';

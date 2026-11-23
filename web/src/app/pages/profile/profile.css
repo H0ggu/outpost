@@ -6,7 +6,12 @@
  * light steps rather than an automatic flip):
  *   --c-series-1..8  categorical, assigned by entity (time class), never by rank
  *   --c-seq-0..5     sequential one-hue (blue) ramp for magnitude; 0 = no data
- *   --c-div-0..6     diverging score: red (0%) → neutral grey (50%) → blue (100%)
+ *   --c-div-0..6     diverging score in lila's result hues, its own family so it never reads as
+ *                    a count: red (0%) → neutral grey (50%) → green (100%). Lightness also rises
+ *                    from losses to wins, so the two arms stay apart for red-green colour
+ *                    blindness. Every score step is at least 3:1 against the chart surface
+ *                    (--c-bg-box) in each theme, and so is every count step in dark and true
+ *                    black; in light the count ramp's low end fades towards the surface.
  */
 
 :root {
@@ -20,19 +25,19 @@
   --c-series-8: #e66767;
 
   --c-seq-0: hsl(0 0% 15%);
-  --c-seq-1: #184f95;
-  --c-seq-2: #256abf;
-  --c-seq-3: #3987e5;
-  --c-seq-4: #6da7ec;
-  --c-seq-5: #b7d3f6;
+  --c-seq-1: #3074ca;
+  --c-seq-2: #418be6;
+  --c-seq-3: #68a5ee;
+  --c-seq-4: #91bcf2;
+  --c-seq-5: #bed7f5;
 
-  --c-div-0: #e66767;
-  --c-div-1: #b0504d;
-  --c-div-2: #74413f;
-  --c-div-3: #4a4a47;
-  --c-div-4: #285790;
-  --c-div-5: #3987e5;
-  --c-div-6: #86b6ef;
+  --c-div-0: #d24c49;
+  --c-div-1: #c2655f;
+  --c-div-2: #af7c77;
+  --c-div-3: #929292;
+  --c-div-4: #8aa97a;
+  --c-div-5: #8bc06d;
+  --c-div-6: #8fd961;
 
   --c-map-land: hsl(0 0% 20%);
   --c-chart-grid: hsl(0 0% 100% / 0.08);
@@ -64,13 +69,13 @@ html[data-theme='light'] {
   --c-seq-4: #2a78d6;
   --c-seq-5: #184f95;
 
-  --c-div-0: #c43c3c;
-  --c-div-1: #e08381;
-  --c-div-2: #f2c4c3;
-  --c-div-3: #dcdbd5;
-  --c-div-4: #b7d3f6;
-  --c-div-5: #5598e7;
-  --c-div-6: #1c5cab;
+  --c-div-0: #971a20;
+  --c-div-1: #993d39;
+  --c-div-2: #8e5d59;
+  --c-div-3: #767676;
+  --c-div-4: #6b895b;
+  --c-div-5: #67984a;
+  --c-div-6: #63a535;
 
   --c-map-land: hsl(0 0% 86%);
   --c-chart-grid: #e7e6e0;
