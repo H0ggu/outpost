@@ -108,14 +108,21 @@ export function sweepPendingLookups(db: Db, now: EpochMs): JobInfo[] {
 const markUnknown = (db: Db, site: GeoSite, key: string, now: EpochMs): void =>
   upsertPlayerCache(db, site, key, { country: null, title: null, name: null }, now);
 
-/** Progress done in earlier runs of this job (it yields and resumes). */
-const previousDone = (ctx: JobContext): number =>
-  ctx.db.value<number>("SELECT json_extract(progress_json, '$.done') FROM jobs WHERE id = ?", [ctx.job.id]) ?? 0;
+/**
+ * Lookups made, and accounts found, in earlier runs of this job: it yields the lane (`RequeueJob`)
+ * and resumes, and both counters keep adding up across its runs.
+ */
+function previousProgress(ctx: JobContext): { done: number; found: number } {
+  const row = ctx.db.get<{ done: number | null; found: number | null }>(
+    "SELECT json_extract(progress_json, '$.done') AS done, json_extract(progress_json, '$.counts.found') AS found FROM jobs WHERE id = ?",
+    [ctx.job.id],
+  );
+  return { done: row?.done ?? 0, found: row?.found ?? 0 };
+}
 
 async function lookUpLichess(ctx: JobContext<'geo'>): Promise<void> {
   const { db, upstream, signal } = ctx;
-  let done = previousDone(ctx);
-  let found = 0;
+  let { done, found } = previousProgress(ctx);
   for (let request = 0; ; request++) {
     throwIfAborted(signal);
     const keys = db
@@ -191,8 +198,7 @@ function nextChesscomKeys(db: Db, limit: number): string[] {
  */
 async function lookUpChesscom(ctx: JobContext<'geo'>): Promise<void> {
   const { db, signal } = ctx;
-  let done = previousDone(ctx);
-  let found = 0;
+  let { done, found } = previousProgress(ctx);
   const room = CHESSCOM_LOOKUPS_PER_JOB - done;
   for (const key of room > 0 ? nextChesscomKeys(db, Math.min(CHESSCOM_LOOKUPS_PER_RUN, room)) : []) {
     throwIfAborted(signal);

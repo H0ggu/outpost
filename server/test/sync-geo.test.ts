@@ -85,11 +85,22 @@ describe('opponent geo lookups', () => {
     t.db.tx(() => {
       for (let i = 0; i < n; i++) t.db.run("INSERT INTO players_cache (kind, key, fetched_at) VALUES ('lichess', ?, NULL)", [`player${String(i).padStart(5, '0')}`]);
     });
-    const { ctx } = makeJobContext(t, 'geo', { kind: 'lichess', keys: [] });
-    await expect(geoHandler(ctx)).rejects.toBeInstanceOf(RequeueJob);
+    const jobId = t.db.run("INSERT INTO jobs (kind, lane, payload_json, status, created_at) VALUES ('geo', 'lichess', '{}', 'running', 0)").lastInsertRowid;
+    const first = makeJobContext(t, 'geo', { kind: 'lichess', keys: [] }, { jobId });
+    await expect(geoHandler(first.ctx)).rejects.toBeInstanceOf(RequeueJob);
     expect(fake.callsTo('/api/users')).toHaveLength(LICHESS_BATCHES_PER_RUN);
     expect(fake.callsTo('/api/users').every(c => c.body!.split(',').length <= LICHESS_USERS_BATCH)).toBe(true);
     expect(pendingLookupCount(t.db, 'lichess')).toBe(5);
+
+    // The next run resumes the counters: the fake knows none of these names, then one of the last five.
+    t.db.run('UPDATE jobs SET progress_json = ? WHERE id = ?', [
+      JSON.stringify({ ...first.updates.at(-1), counts: { found: 7 } }),
+      jobId,
+    ]);
+    t.db.run("UPDATE players_cache SET key = 'synthrival' WHERE kind = 'lichess' AND fetched_at IS NULL AND key = (SELECT MIN(key) FROM players_cache WHERE kind = 'lichess' AND fetched_at IS NULL)");
+    const second = makeJobContext(t, 'geo', { kind: 'lichess', keys: [] }, { jobId });
+    await geoHandler(second.ctx);
+    expect(second.updates.at(-1)).toMatchObject({ done: n, total: n, counts: { found: 8 } });
   });
 
   it('looks Chess.com players up one by one, maps countries and backfills titles', async () => {
@@ -122,11 +133,20 @@ describe('opponent geo lookups', () => {
     const jobId = t.db.run("INSERT INTO jobs (kind, lane, payload_json, status, created_at) VALUES ('geo', 'chesscom', '{}', 'running', 0)").lastInsertRowid;
     const first = makeJobContext(t, 'geo', { kind: 'chesscom', keys: [] }, { jobId });
     await expect(geoHandler(first.ctx)).rejects.toBeInstanceOf(RequeueJob);
-    expect(first.updates.at(-1)).toMatchObject({ done: CHESSCOM_LOOKUPS_PER_RUN, total: CHESSCOM_LOOKUPS_PER_RUN + 3 });
+    expect(first.updates.at(-1)).toMatchObject({
+      done: CHESSCOM_LOOKUPS_PER_RUN,
+      total: CHESSCOM_LOOKUPS_PER_RUN + 3,
+      counts: { found: CHESSCOM_LOOKUPS_PER_RUN },
+    });
     t.db.run('UPDATE jobs SET progress_json = ? WHERE id = ?', [JSON.stringify(first.updates.at(-1)), jobId]);
     const second = makeJobContext(t, 'geo', { kind: 'chesscom', keys: [] }, { jobId });
     await geoHandler(second.ctx);
-    expect(second.updates.at(-1)).toMatchObject({ done: CHESSCOM_LOOKUPS_PER_RUN + 3, total: CHESSCOM_LOOKUPS_PER_RUN + 3 });
+    // Both counters add up over the job's runs (the admin jobs list shows "found" next to "done").
+    expect(second.updates.at(-1)).toMatchObject({
+      done: CHESSCOM_LOOKUPS_PER_RUN + 3,
+      total: CHESSCOM_LOOKUPS_PER_RUN + 3,
+      counts: { found: CHESSCOM_LOOKUPS_PER_RUN + 3 },
+    });
   });
 
   it('looks the most recently met Chess.com opponents up first', async () => {
