@@ -1,8 +1,8 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { DatabaseInfo, DbGameRow, JobInfo } from '@outpost/shared/api';
 import { importCountItems, importOutcome, importSummaryText } from '../src/app/pages/components/library/ImportPanel.tsx';
-import DatabasePage from '../src/app/pages/DatabasePage.tsx';
+import DatabasePage, { GameActions } from '../src/app/pages/DatabasePage.tsx';
 import DatabasesPage from '../src/app/pages/DatabasesPage.tsx';
 import { POLL } from '../src/app/pages/library-hooks.ts';
 import { apiError, database, header, job, profile, renderPage, session, USER, withFakeServer } from './web-library-helpers.tsx';
@@ -331,6 +331,7 @@ describe('DatabasePage', () => {
     await waitFor(() => expect(location()).toBe('/databases/5?page=2'));
     expect(await screen.findByText('White 51')).toBeTruthy();
     expect(screen.queryByText('No games yet')).toBeNull();
+    expect(screen.queryByText(/is empty/)).toBeNull();
     // A one-page result goes back to the first page.
     const { location: loc2 } = renderPage(<DatabasePage />, { route: '/databases/:id', path: '/databases/5?page=3&q=White+7' });
     await waitFor(() => expect(loc2()).toBe('/databases/5?q=White+7'));
@@ -358,6 +359,25 @@ describe('DatabasePage', () => {
     renderPage(<DatabasePage />, ROUTE);
     expect(await screen.findByText('No games yet')).toBeTruthy();
     expect(screen.getByText('Import a PGN file above to fill this database.')).toBeTruthy();
+  });
+});
+
+describe('GameActions', () => {
+  it('disarms a delete that is not confirmed within a few seconds', () => {
+    vi.useFakeTimers();
+    const onDelete = vi.fn();
+    render(<GameActions game={dbGame(9)} canDelete onDelete={onDelete} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete White 9 vs Black 9' }));
+    expect(screen.getByRole('button', { name: 'Confirm: delete White 9 vs Black 9' })).toBeTruthy();
+    act(() => void vi.advanceTimersByTime(5100));
+    expect(screen.queryByRole('button', { name: 'Confirm: delete White 9 vs Black 9' })).toBeNull();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it('offers only the Studio link on read-only databases', () => {
+    render(<GameActions game={dbGame(9)} canDelete={false} onDelete={() => undefined} />);
+    expect(screen.getByRole('link', { name: 'Analyse White 9 vs Black 9' }).getAttribute('href')).toBe('/studio?game=9');
+    expect(screen.queryByRole('button')).toBeNull();
   });
 });
 

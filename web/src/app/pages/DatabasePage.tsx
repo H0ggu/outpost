@@ -329,9 +329,12 @@ function GamesBox({ db }: { db: DatabaseInfo }) {
         </div>
       )}
       {data ? (
-        data.games.length === 0 && data.total > 0 ? (
+        data.games.length === 0 && data.total > 0 && (pastEnd || games.isPlaceholderData) ? (
           // Past the last page (a stale ?page=, the last game of the page deleted, another tab):
-          // the effect above moves to the last page; until then, say so and offer the pages.
+          // the effect above is moving to the last page.
+          <Spinner center />
+        ) : data.games.length === 0 && data.total > 0 ? (
+          // A page that should have games came back empty (the database is changing): say so.
           <div>
             <EmptyState icon={licon.List} title={`Page ${fullNumber(page)} is empty`}>
               <p>
