@@ -14,6 +14,12 @@
  * upstream hits out (local hits stay) and lists the site in `unavailable`. Answers are cached
  * per app for a minute so typing doesn't hammer Lichess / Chess.com.
  *
+ * Hits carry what the site says about the account (ratings, last seen, games, country, closed), so
+ * lookalikes can be told apart: Lichess's `POST /api/users` for every Lichess hit (one request, ids
+ * cached), Chess.com's profile and `/stats` for the exact username; other hits use the snapshot of
+ * Outpost's last sync of the account, or the country of its opponent lookups (`players_cache`).
+ * These lookups share the search's deadline and never make a list `unavailable`.
+ *
  * "Known" accounts (local hits, `known`) are the ones with imported games, or in a profile the
  * viewer may see: a source row that only a private profile uses doesn't reveal that someone
  * tracks the account.
@@ -21,7 +27,9 @@
 import {
   SEARCH_QUERY_MAX_LENGTH,
   SEARCH_QUERY_MIN_LENGTH,
+  type ExternalHitRating,
   type ExternalPlayerHit,
+  type EpochMs,
   type Id,
   type ProfileSummary,
   type ReferencePlayer,
@@ -37,6 +45,9 @@ import { CHESSCOM_USERNAME_RE, chesscomDisplayName, LICHESS_USERNAME_RE } from '
 import { upstreamJsonWithin } from '../profiles/upstreamJson.ts';
 import { searchReferencePlayers } from '../reference/index.ts';
 import { likeContains } from '../stats/index.ts';
+import { chesscomSnapshot, type ChesscomProfile, type ChesscomStats } from '../sync/chesscom.ts';
+import { lichessSnapshot, type LichessUser } from '../sync/lichess.ts';
+import type { SourceProfileSnapshot } from '../sync/profile.ts';
 
 /** Shortest query (the contract's `SEARCH_QUERY_MIN_LENGTH`; the web app searches from there). */
 export const MIN_QUERY_LENGTH = SEARCH_QUERY_MIN_LENGTH;
@@ -98,9 +109,40 @@ export interface SearchDeps {
 interface UpstreamHit {
   username: string;
   title: Title | null;
+  /** What the site said about the account (Chess.com's exact hit). */
+  facts?: HitFacts;
+}
+
+/** What a site says about an account (the optional fields of `ExternalPlayerHit`). */
+export interface HitFacts {
+  ratings: ExternalHitRating[];
+  seenAt: EpochMs | null;
+  games: number | null;
+  country: string | null;
+  closed: boolean;
 }
 
 const titleOf = (v: unknown): Title | null => (isTitle(v) ? v : null);
+
+/** Hit facts from a site snapshot (`lichessSnapshot` / `chesscomSnapshot`, or a synced source's `profile_json`). */
+export function factsOfSnapshot(s: SourceProfileSnapshot): HitFacts {
+  const counted = s.ratings.filter(r => r.games !== null);
+  const ultraBullet = s.extraRatings.ultraBullet?.games ?? 0;
+  return {
+    ratings: s.ratings.map(r => ({ timeClass: r.timeClass, rating: r.rating, games: r.games, provisional: r.provisional })),
+    seenAt: s.seenAt,
+    games: s.counts?.all ?? (counted.length ? counted.reduce((n, r) => n + (r.games ?? 0), 0) + ultraBullet : null),
+    country: s.country,
+    closed: s.closed,
+  };
+}
+
+/** Milliseconds left of the search's upstream deadline (at least a short floor, so a late lookup can still answer). */
+const remaining = (deps: SearchDeps, started: number): number =>
+  Math.max(LOOKUP_MIN_TIMEOUT_MS, (deps.timeoutMs ?? SEARCH_UPSTREAM_TIMEOUT_MS) - (Date.now() - started));
+
+/** Shortest deadline given to a follow-up lookup (account facts). */
+export const LOOKUP_MIN_TIMEOUT_MS = 800;
 
 /** Lichess autocomplete; null when not applicable to `q`. Throws on upstream failure. */
 async function lichessAutocomplete(deps: SearchDeps, q: string): Promise<UpstreamHit[] | null> {
@@ -123,8 +165,11 @@ async function lichessAutocomplete(deps: SearchDeps, q: string): Promise<Upstrea
   return hits;
 }
 
-/** Chess.com exact-username check: the account, `[]` when it doesn't exist, null when not applicable. */
-async function chesscomExact(deps: SearchDeps, q: string): Promise<UpstreamHit[] | null> {
+/**
+ * Chess.com exact-username check: the account (with its profile facts and, when `/stats` answers in
+ * time, its ratings), `[]` when it doesn't exist, null when not applicable.
+ */
+async function chesscomExact(deps: SearchDeps, q: string, started: number): Promise<UpstreamHit[] | null> {
   if (q.length < 3 || !CHESSCOM_USERNAME_RE.test(q)) return null;
   const lower = playerKey(q);
   const key = `chesscom:${lower}`;
@@ -138,10 +183,89 @@ async function chesscomExact(deps: SearchDeps, q: string): Promise<UpstreamHit[]
   let hits: UpstreamHit[] = [];
   const player = res.body as { username?: unknown; url?: unknown; title?: unknown } | null;
   if (player && typeof player === 'object' && typeof player.username === 'string') {
-    hits = [{ username: chesscomDisplayName(player.url, player.username), title: titleOf(player.title) }];
+    let stats: ChesscomStats | null = null;
+    try {
+      const s = await upstreamJsonWithin(deps.upstream, `${UPSTREAM.chesscom}/pub/player/${encodeURIComponent(lower)}/stats`, {
+        allowStatuses: [404, 410],
+        timeoutMs: remaining(deps, started),
+        signal: deps.signal,
+      });
+      if (s.body && typeof s.body === 'object') stats = s.body as ChesscomStats;
+    } catch (e) {
+      if (deps.signal?.aborted) throw e;
+      // no ratings this time: the account itself is confirmed
+    }
+    const facts = factsOfSnapshot(chesscomSnapshot(player as ChesscomProfile, stats, Date.now()));
+    hits = [{ username: chesscomDisplayName(player.url, player.username), title: titleOf(player.title), facts }];
   }
   deps.cache.set(key, hits);
   return hits;
+}
+
+/**
+ * Lichess accounts' facts (`POST /api/users`, one request for the ids not cached yet; unknown ids
+ * are cached as such). An upstream failure answers what the cache had.
+ */
+async function lichessFacts(deps: SearchDeps, keys: readonly string[], started: number): Promise<Map<string, HitFacts>> {
+  const out = new Map<string, HitFacts>();
+  const missing: string[] = [];
+  for (const k of keys) {
+    if (!LICHESS_USERNAME_RE.test(k)) continue;
+    const cached = deps.cache.get<HitFacts | false>(`lichess-user:${k}`);
+    if (cached === undefined) missing.push(k);
+    else if (cached) out.set(k, cached);
+  }
+  if (missing.length === 0) return out;
+  let users: unknown[];
+  try {
+    const { body } = await upstreamJsonWithin(deps.upstream, `${UPSTREAM.lichess}/api/users`, {
+      postText: missing.join(','),
+      auth: 'optional',
+      timeoutMs: remaining(deps, started),
+      signal: deps.signal,
+    });
+    users = Array.isArray(body) ? body : [];
+  } catch (e) {
+    if (deps.signal?.aborted) throw e;
+    return out;
+  }
+  const now = Date.now();
+  const found = new Map<string, HitFacts>();
+  for (const u of users as Array<Partial<LichessUser> | null>)
+    if (u && typeof u === 'object' && typeof u.id === 'string' && typeof u.username === 'string')
+      found.set(u.id.toLowerCase(), factsOfSnapshot(lichessSnapshot(u as LichessUser, now)));
+  for (const k of missing) {
+    const f = found.get(k);
+    deps.cache.set(`lichess-user:${k}`, f ?? false);
+    if (f) out.set(k, f);
+  }
+  return out;
+}
+
+/** Facts from Outpost's own data: the last sync's snapshot of the account, else the country of its lookups. */
+function localFacts(db: Db, kind: 'lichess' | 'chesscom', key: string): Partial<HitFacts> | null {
+  const json = db.value<string | null>('SELECT profile_json FROM sources WHERE kind = ? AND key = ?', [kind, key]);
+  if (json) {
+    try {
+      const snap = JSON.parse(json) as Partial<SourceProfileSnapshot> | null;
+      if (snap && snap.v === 1 && Array.isArray(snap.ratings) && snap.extraRatings) return factsOfSnapshot(snap as SourceProfileSnapshot);
+    } catch {
+      // not a snapshot: fall through
+    }
+  }
+  const country = db.value<string | null>('SELECT country FROM players_cache WHERE kind = ? AND key = ? AND country IS NOT NULL', [kind, key]);
+  return country ? { country } : null;
+}
+
+/** Adds the facts to hits: the site's (`fromSite`, which also confirms the account), else Outpost's own. */
+function withFacts(db: Db, hits: readonly ExternalPlayerHit[], fromSite: ReadonlyMap<string, HitFacts>): ExternalPlayerHit[] {
+  return hits.map(h => {
+    const key = playerKey(h.username);
+    const site = fromSite.get(key);
+    if (site) return { ...h, exists: true, ...site };
+    const local = localFacts(db, h.kind, key);
+    return local ? { ...h, ...local } : h;
+  });
 }
 
 const MAX_CODEPOINT = '\u{10FFFF}';
@@ -319,7 +443,8 @@ function withProfileSlugs(db: Db, players: readonly ReferencePlayer[], viewer: A
 /** Runs the unified search. `q` must already be trimmed and within the length limits. */
 export async function search(deps: SearchDeps, q: string, viewer: AuthUser | null): Promise<SearchResults> {
   const { db } = deps;
-  const [lichess, chesscom] = await Promise.allSettled([lichessAutocomplete(deps, q), chesscomExact(deps, q)]);
+  const started = Date.now();
+  const [lichess, chesscom] = await Promise.allSettled([lichessAutocomplete(deps, q), chesscomExact(deps, q, started)]);
   const unavailable: Array<'lichess' | 'chesscom'> = [];
   if (lichess.status === 'rejected') unavailable.push('lichess');
   if (chesscom.status === 'rejected') unavailable.push('chesscom');
@@ -328,11 +453,19 @@ export async function search(deps: SearchDeps, q: string, viewer: AuthUser | nul
   if (lichess.status === 'fulfilled' && lichess.value === null) notSearched.push('lichess');
   if (chesscom.status === 'fulfilled' && chesscom.value === null) notSearched.push('chesscom');
   const upstreamOf = (r: PromiseSettledResult<UpstreamHit[] | null>): UpstreamHit[] => (r.status === 'fulfilled' && r.value ? r.value : []);
+  const lichessHits = mergeHits(db, 'lichess', q, upstreamOf(lichess), LICHESS_USERNAME_RE.test(q) ? knownUsernames(db, 'lichess', q, viewer) : [], viewer);
+  const chesscomHits = mergeHits(db, 'chesscom', q, upstreamOf(chesscom), CHESSCOM_USERNAME_RE.test(q) ? knownUsernames(db, 'chesscom', q, viewer) : [], viewer);
+  // Lichess facts for every hit when Lichess was asked and answered (else local facts only).
+  const lichessSite =
+    lichess.status === 'fulfilled' && lichess.value !== null && lichessHits.length
+      ? await lichessFacts(deps, lichessHits.map(h => playerKey(h.username)), started)
+      : new Map<string, HitFacts>();
+  const chesscomSite = new Map(upstreamOf(chesscom).flatMap(h => (h.facts ? [[playerKey(h.username), h.facts] as const] : [])));
   const result: SearchResults = {
     q,
     profiles: searchProfiles(db, q, viewer),
-    lichess: mergeHits(db, 'lichess', q, upstreamOf(lichess), LICHESS_USERNAME_RE.test(q) ? knownUsernames(db, 'lichess', q, viewer) : [], viewer),
-    chesscom: mergeHits(db, 'chesscom', q, upstreamOf(chesscom), CHESSCOM_USERNAME_RE.test(q) ? knownUsernames(db, 'chesscom', q, viewer) : [], viewer),
+    lichess: withFacts(db, lichessHits, lichessSite),
+    chesscom: withFacts(db, chesscomHits, chesscomSite),
     // With the viewer: admins also find name-only players of private reference databases, and
     // profileSlug counts the viewer's own private profiles.
     reference: withProfileSlugs(db, searchReferencePlayers(db, q, { limit: SEARCH_LIMIT, viewer }), viewer),

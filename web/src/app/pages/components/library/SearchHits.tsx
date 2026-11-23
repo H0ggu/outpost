@@ -4,9 +4,9 @@
  * caller supplies the actions on the right of a row.
  */
 import type { ReactNode } from 'react';
-import type { ExternalPlayerHit, ReferencePlayer, SearchResults } from '@outpost/shared/api';
-import { Button, licon } from '../../../components/index.ts';
-import { formatDate, plural, SOURCE_KIND_LABELS } from './format.ts';
+import type { ExternalHitRating, ExternalPlayerHit, ReferencePlayer, SearchResults } from '@outpost/shared/api';
+import { Button, FlagEmoji, licon, TIME_CLASS_LABELS, TimeClassIcon } from '../../../components/index.ts';
+import { formatDate, plural, SOURCE_KIND_LABELS, timeAgo } from './format.ts';
 import type { PickedSource } from './newProfileQuery.ts';
 
 /** The source to create for an external hit. */
@@ -58,8 +58,27 @@ export function HitSection({
   );
 }
 
-/** One Lichess / Chess.com account. */
+/** Site ratings shown with a hit: the most played time classes first. */
+export const hitRatings = (ratings: readonly ExternalHitRating[] | undefined, max = 3): ExternalHitRating[] =>
+  [...(ratings ?? [])].sort((a, b) => (b.games ?? 0) - (a.games ?? 0) || b.rating - a.rating).slice(0, max);
+
+/** The meta line of an account: where it is known from, then what its site says. */
+export function hitMeta(hit: ExternalPlayerHit, now = Date.now()): string {
+  return [
+    hit.profileSlug ? 'has a profile here' : hit.known ? 'seen in imported games' : hit.exists ? 'account found' : 'not confirmed',
+    hit.games !== undefined && hit.games !== null ? plural(hit.games, 'game') : null,
+    hit.seenAt ? `seen ${timeAgo(hit.seenAt, now)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/**
+ * One Lichess / Chess.com account, with what its site says (ratings, games, last seen, flag) so
+ * lookalikes can be told apart.
+ */
 export function ExternalHitRow({ hit, actions }: { hit: ExternalPlayerHit; actions?: ReactNode }) {
+  const ratings = hitRatings(hit.ratings);
   return (
     <li className="lib-hit">
       <span className={`lib-hit__kind lib-source--${hit.kind}`}>{SOURCE_KIND_LABELS[hit.kind]}</span>
@@ -67,10 +86,27 @@ export function ExternalHitRow({ hit, actions }: { hit: ExternalPlayerHit; actio
         <span className="lib-hit__name">
           {hit.title && <span className="title-badge">{hit.title}</span>}
           {hit.username}
+          <FlagEmoji code={hit.country} className="lib-hit__flag" />
+          {hit.closed && <span className="lib-hit__closed">closed</span>}
         </span>
-        <span className="lib-hit__meta">
-          {hit.profileSlug ? 'has a profile here' : hit.known ? 'seen in imported games' : hit.exists ? 'account found' : 'not confirmed'}
-        </span>
+        <span className="lib-hit__meta">{hitMeta(hit)}</span>
+        {ratings.length > 0 && (
+          <span className="lib-ratings lib-hit__ratings">
+            {ratings.map(r => (
+              <span
+                key={r.timeClass}
+                className="lib-rating"
+                title={`${TIME_CLASS_LABELS[r.timeClass]} ${r.rating}${r.provisional ? '?' : ''} on ${SOURCE_KIND_LABELS[hit.kind]}${r.games !== null ? `, ${plural(r.games, 'game')}` : ''}`}
+              >
+                <TimeClassIcon tc={r.timeClass} />
+                <span className="lib-rating__value">
+                  {r.rating}
+                  {r.provisional ? '?' : ''}
+                </span>
+              </span>
+            ))}
+          </span>
+        )}
       </span>
       {actions && <span className="lib-hit__actions">{actions}</span>}
     </li>

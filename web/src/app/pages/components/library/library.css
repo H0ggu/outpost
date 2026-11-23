@@ -894,6 +894,26 @@
   white-space: nowrap;
 }
 
+.lib-hit__flag {
+  margin-inline-start: 0.35em;
+}
+
+.lib-hit__closed {
+  margin-inline-start: 0.5em;
+  padding: 0 0.35em;
+  border: 1px solid var(--c-bad);
+  border-radius: 3px;
+  color: var(--c-bad);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.lib-hit__ratings {
+  margin-top: 0.15rem;
+  font-size: 0.85rem;
+  color: var(--c-font-dim);
+}
+
 .lib-hit__actions {
   display: flex;
   align-items: center;
