@@ -122,7 +122,8 @@ function matchSources(db: Db, g: GameFacts): Array<{ sourceId: Id; color: Color 
     if (g.origin === 'lichess' || g.origin === 'chesscom') add(g.origin, side.key, color);
     else {
       if (g.databaseId !== null) add('pgn', `${g.databaseId}:${side.key}`, color);
-      add('fide', side.fideId, color);
+      // FIDE profiles are built from reference-DB games only (PLAN §5), never from users' PGN databases.
+      if (g.origin === 'reference') add('fide', side.fideId, color);
     }
   }
   return out;
@@ -275,7 +276,7 @@ interface GameSideRow {
 
 /**
  * Adds the missing `player_games` rows of one source from games already stored: a `pgn` source's
- * player in its database, a `fide` source's games in any database, or a lichess/chesscom source's
+ * player in its database, a `fide` source's games in any reference database, or a lichess/chesscom source's
  * games imported while syncing someone else. Existing rows are kept (so `rating_after` survives).
  * Returns the number of rows added. Runs in one transaction.
  */
@@ -300,7 +301,10 @@ export function rebuildPlayerGames(db: Db, sourceId: Id): number {
       isWhite = r => r.white_key === src.key;
       break;
     case 'fide':
-      rows = db.all<GameSideRow>(`SELECT ${cols} FROM games WHERE white_fide_id = ? OR black_fide_id = ?`, [src.key, src.key]);
+      rows = db.all<GameSideRow>(
+        `SELECT ${cols} FROM games WHERE (white_fide_id = ? OR black_fide_id = ?) AND origin = 'reference'`,
+        [src.key, src.key],
+      );
       isWhite = r => r.white_fide_id === src.key;
       break;
     case 'pgn': {
