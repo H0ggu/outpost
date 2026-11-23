@@ -1250,14 +1250,17 @@ export interface CloudEvalQuery {
   multiPv?: number;
   variant?: 'standard';
   /**
-   * `'1'`: a position without a cloud eval answers 200 with `pvs: []` (`depth`/`knodes` 0) instead
-   * of 404, so the browser logs no failed request for an ordinary miss (the Studio asks for every
-   * position it shows). Servers that ignore it still answer 404, which callers treat the same way.
+   * `'1'`: a position without a cloud eval answers 200 with `pvs: []` (`depth`/`knodes` 0, `fen`
+   * the requested position) instead of 404, so the browser logs no failed request for an ordinary
+   * miss (the Studio asks for every position it shows; decision 12). Without it a miss is 404.
    */
   emptyOnMiss?: '1';
 }
 
-/** `GET /api/cloud-eval` response (Lichess shape). 404 when no cloud eval exists (see `emptyOnMiss`). */
+/**
+ * `GET /api/cloud-eval` response (Lichess shape). A miss is 404 `not_found`, or 200 with `pvs: []`
+ * when the request sets `emptyOnMiss=1`.
+ */
 export interface CloudEvalResponse {
   fen: Fen;
   knodes: number;

@@ -118,6 +118,8 @@ export const cloudEvalQuerySchema = z.object({
   fen: z.string().trim().min(1).max(MAX_FEN_LENGTH * 2),
   multiPv: int(1, 5).default(1),
   variant: z.enum(Object.keys(LICHESS_VARIANTS) as [string, ...string[]]).optional(),
+  /** `'1'`: answer a miss with an empty evaluation (200) instead of 404 (`CloudEvalQuery.emptyOnMiss`). */
+  emptyOnMiss: z.literal('1').optional(),
 });
 
 // ---------------------------------------------------------------------------

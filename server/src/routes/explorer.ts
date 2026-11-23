@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import { API_ROUTES, fromExplorerGameId, type Id } from '@outpost/shared/api';
+import { API_ROUTES, fromExplorerGameId, type CloudEvalResponse, type Id } from '@outpost/shared/api';
 import { decodeFiltersSegment, type ProfileFilters } from '@outpost/shared/filters';
 import { ZodError } from 'zod';
 import { requireUser, requireViewer } from '../auth/session.ts';
@@ -40,7 +40,8 @@ import { readSettings } from '../settings.ts';
  *   - GET /api/explorer/reference, /f/:filters/reference — masters shape from the reference DBs
  *   - GET /api/explorer/games — ExplorerGamesPage
  *   - GET /api/tablebase/:variant — proxy, **no session** (lila omits credentials), per-IP limit
- *   - GET /api/cloud-eval — proxy, 404 passthrough
+ *   - GET /api/cloud-eval — proxy, 404 passthrough; with `emptyOnMiss=1` a miss is 200 with `pvs: []`
+ *     (the Studio asks for every position it shows, and browsers log every failed request)
  *
  * Every lila database also answers under `/f/:filters/` because lila resolves `./<db>` against
  * the (filtered) endpoint. Proxied databases ignore the filters; the reference explorer applies
@@ -185,7 +186,12 @@ const explorerRoutes: FastifyPluginAsync = async app => {
   app.get(API_ROUTES.cloudEval, { preHandler: requireViewer, config: { rateLimit: { max: 120, timeWindow: MIN } } }, async (req, reply) => {
     const q = parseQuery(cloudEvalQuerySchema, req.query);
     const variant = q.variant === undefined || q.variant === 'fromPosition' ? 'standard' : q.variant;
-    const r = await proxy.cloudEval({ fen: cloudEvalFen(q.fen), multiPv: q.multiPv, variant }, clientSignal(reply));
+    const fen = cloudEvalFen(q.fen);
+    const r = await proxy.cloudEval({ fen, multiPv: q.multiPv, variant }, clientSignal(reply));
+    if (r.status === 404 && q.emptyOnMiss === '1') {
+      const empty: CloudEvalResponse = { fen, knodes: 0, depth: 0, pvs: [] };
+      return reply.header('x-outpost-cache', r.cache).header('cache-control', 'private, max-age=300').send(empty);
+    }
     return sendProxy(reply, r, 'private, max-age=300', 'No cloud evaluation available for that position');
   });
 };

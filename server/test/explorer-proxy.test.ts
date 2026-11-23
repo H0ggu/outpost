@@ -336,6 +336,25 @@ describe('explorer proxies', () => {
       expect((await get(`/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=9`)).statusCode).toBe(400);
       expect((await get(`/api/cloud-eval?fen=${encodeURIComponent(fen)}`, null)).statusCode).toBe(401);
     });
+
+    it('answers a miss with an empty evaluation when asked to (emptyOnMiss=1)', async () => {
+      up.on(() => Response.json({ error: 'No cloud evaluation available for that position' }, { status: 404 }));
+      const fen = '8/8/8/3k4/8/8/2NBK3/6q1 w - - 0 1';
+      const res = await get(`/api/cloud-eval?fen=${encodeURIComponent(fen)}&emptyOnMiss=1`);
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toMatch(/^application\/json/);
+      expect(res.json()).toEqual({ fen, knodes: 0, depth: 0, pvs: [] });
+      // Same cache entry as a plain request; a hit is passed through unchanged.
+      expect((await get(`/api/cloud-eval?fen=${encodeURIComponent(fen)}`)).statusCode).toBe(404);
+      expect(up.calls).toHaveLength(1);
+      const body = fixtureText('cloud-eval-sample.json').trim();
+      up.on(() => new Response(body));
+      const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+      const hit = await get(`/api/cloud-eval?fen=${encodeURIComponent(start)}&emptyOnMiss=1`);
+      expect(hit.statusCode).toBe(200);
+      expect(hit.json().pvs.length).toBeGreaterThan(0);
+      expect((await get(`/api/cloud-eval?fen=${encodeURIComponent(fen)}&emptyOnMiss=yes`)).statusCode).toBe(400);
+    });
   });
 
   it('rate-limits the tablebase per IP', async () => {
