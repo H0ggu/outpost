@@ -142,7 +142,14 @@ describe('DatabasePage', () => {
     renderPage(<DatabasePage />, ROUTE);
     fireEvent.click(await screen.findByRole('button', { name: 'Delete White 1 vs Black 1' }));
     expect(api().find('DELETE', '/api/databases/5/games/1')).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    // Armed: the row offers confirm and cancel in place of its two icons.
+    expect(screen.queryByRole('link', { name: 'Analyse White 1 vs Black 1' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('link', { name: 'Analyse White 1 vs Black 1' })).toBeTruthy();
+    expect(api().find('DELETE', '/api/databases/5/games/1')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete White 1 vs Black 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm: delete White 1 vs Black 1' }));
     await waitFor(() => expect(screen.queryByText('White 1')).toBeNull());
     expect(api().find('DELETE', '/api/databases/5/games/1')).toHaveLength(1);
   });

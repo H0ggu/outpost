@@ -84,7 +84,9 @@ describe('SearchPage', () => {
       .on('GET', '/api/session', session(USER))
       .on('GET', '/api/search', req => results(req.query.get('q')!, { unavailable: ['lichess'] }));
     renderPage(<SearchPage />, { route: '/search', path: '/search?q=somebody' });
-    expect(await screen.findByText(/Didn't answer in time/)).toBeTruthy();
+    expect(await screen.findByText("Couldn't reach Lichess this time, so results here may be missing.")).toBeTruthy();
+    // Only the failed site is flagged.
+    expect(screen.queryByText(/Couldn't reach Chess.com/)).toBeNull();
     // Not "no players found": one list is unknown.
     expect(screen.queryByText(/No players found/)).toBeNull();
     expect(screen.getByText('No Chess.com account with exactly this username.')).toBeTruthy();
