@@ -27,13 +27,17 @@ export interface ViewableProfile {
   autoRefresh: boolean;
   /** Owner or admin: may edit, update, delete, and sees hidden sources. */
   canEdit: boolean;
-  /** Source ids the viewer may see (hidden ones only when `canEdit`). Pass these to `playerGamesWhere`. */
+  /**
+   * Source ids the viewer may see (hidden ones only when `canEdit`; `pgn` sources only when the
+   * viewer may read their database). Pass these to `playerGamesWhere`.
+   */
   sourceIds: Id[];
 }
 
 /**
  * Loads a profile by slug for `viewer` (null = anonymous). Private profiles are visible to their
  * owner and admins only; public ones to every viewer. Throws 404 otherwise.
+ * Use `loadProfileByIdForViewer` when you hold an id (prep, bookmarks).
  */
 export function loadProfileForViewer(db: Db, slug: string, viewer: AuthUser | null): ViewableProfile {
   const row = db.get<{
@@ -45,12 +49,21 @@ export function loadProfileForViewer(db: Db, slug: string, viewer: AuthUser | nu
     auto_refresh: number;
   }>('SELECT id, slug, display_name, owner_user_id, visibility, auto_refresh FROM profiles WHERE slug = ?', [slug]);
   if (!row) throw notFound('Profile not found');
-  const canEdit = viewer !== null && (viewer.role === 'admin' || viewer.id === row.owner_user_id);
+  const isAdmin = viewer?.role === 'admin';
+  const canEdit = viewer !== null && (isAdmin || viewer.id === row.owner_user_id);
   if (row.visibility === 'private' && !canEdit) throw notFound('Profile not found');
+  // A `pgn` source reads a database: its games count only while the viewer may read that database
+  // (a public profile must not expose a private PGN collection of someone else).
   const sourceIds = db
     .all<{ source_id: Id }>(
-      'SELECT source_id FROM profile_sources WHERE profile_id = ? AND (hidden = 0 OR ?) ORDER BY source_id',
-      [row.id, canEdit],
+      `SELECT ps.source_id
+         FROM profile_sources ps
+         JOIN sources s ON s.id = ps.source_id
+         LEFT JOIN databases d ON d.id = s.database_id
+        WHERE ps.profile_id = ? AND (ps.hidden = 0 OR ?)
+          AND (s.database_id IS NULL OR d.kind = 'reference' OR d.visibility = 'public' OR ? OR d.owner_user_id = ?)
+        ORDER BY ps.source_id`,
+      [row.id, canEdit, isAdmin, viewer?.id ?? null],
     )
     .map(r => r.source_id);
   return {
@@ -91,4 +104,11 @@ export function loadDatabaseForViewer(db: Db, id: Id, viewer: AuthUser | null): 
   const canEdit = row.kind === 'reference' ? isAdmin : isAdmin || (viewer !== null && viewer.id === row.owner_user_id);
   if (row.kind === 'games' && row.visibility === 'private' && !canEdit) throw notFound('Database not found');
   return { id: row.id, name: row.name, kind: row.kind, ownerUserId: row.owner_user_id, visibility: row.visibility, canEdit };
+}
+
+/** `loadProfileForViewer` by profile id (same rules, same 404). */
+export function loadProfileByIdForViewer(db: Db, id: Id, viewer: AuthUser | null): ViewableProfile {
+  const slug = db.value<string>('SELECT slug FROM profiles WHERE id = ?', [id]);
+  if (slug === undefined) throw notFound('Profile not found');
+  return loadProfileForViewer(db, slug, viewer);
 }

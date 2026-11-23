@@ -687,6 +687,8 @@ export interface SearchResults {
   lichess: ExternalPlayerHit[];
   chesscom: ExternalPlayerHit[];
   reference: ReferencePlayer[];
+  /** Sites whose upstream lookup failed this time; their lists then hold local hits only. */
+  unavailable?: Array<'lichess' | 'chesscom'>;
 }
 
 // ===========================================================================
@@ -1203,6 +1205,11 @@ export interface DatabaseInfo {
   canEdit: boolean;
   /** The latest import job, while queued/running or if it failed. */
   importJob: JobInfo | null;
+  /**
+   * The latest finished PGN import (`done`), whose `progress.counts` hold the summary
+   * (`imported`, `duplicates`, `skipped`, and `skip:<reason>` per skip reason). Null when none.
+   */
+  lastImport?: JobInfo | null;
 }
 
 /** `GET /api/databases`. Mine plus visible public ones. */
@@ -1539,6 +1546,10 @@ export interface PrepOpponentReport {
 /** Endpoint params of `GET /api/prep/:id/report`: IANA zone for the activity buckets (default UTC). */
 export interface PrepReportParams {
   tz?: string;
+  /** Length of the repertoire lines in plies (2–20, default 8). */
+  plies?: number;
+  /** Fewest games for a line to appear among the worst lines (1–100, default 3). */
+  minGames?: number;
 }
 
 /** `GET /api/prep/:id/report` query: the filters apply to every opponent. */
