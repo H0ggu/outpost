@@ -6,14 +6,18 @@
  */
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type DragEvent, type FormEvent } from 'react';
-import type { DatabaseInfo, Id, JobInfo } from '@outpost/shared/api';
+import { PGN_PASTE_MAX_BYTES, PGN_UPLOAD_MAX_BYTES, type DatabaseInfo, type Id, type JobInfo } from '@outpost/shared/api';
 import { Button, ErrorBox, licon } from '../../../components/index.ts';
 import { isActiveJob, libraryKeys, useImportPgn } from '../../library-hooks.ts';
 import { JobProgress } from './controls.tsx';
 import { fullNumber, plural, timeAgo } from './format.ts';
 
-/** Upload limit (PLAN §10: PGN 50 MB). */
-export const MAX_PGN_BYTES = 50 * 1024 * 1024;
+/** Upload limit (PLAN §10: PGN 50 MB; the contract's `PGN_UPLOAD_MAX_BYTES`). */
+export const MAX_PGN_BYTES = PGN_UPLOAD_MAX_BYTES;
+/** Pasted PGN limit (the contract's `PGN_PASTE_MAX_BYTES`): bigger collections are uploaded as a file. */
+export const MAX_PASTE_BYTES = PGN_PASTE_MAX_BYTES;
+
+const mb = (bytes: number): string => `${Math.round(bytes / 1048576)} MB`;
 
 /** The end of an import as shown to the user. */
 export interface ImportOutcome {
@@ -122,7 +126,7 @@ export function ImportPanel({ db }: { db: DatabaseInfo }) {
     if (!f) return setFile(null);
     if (f.size > MAX_PGN_BYTES) {
       setFile(null);
-      return setError(`That file is ${(f.size / 1048576).toFixed(0)} MB; the limit is 50 MB. Split it or import it in parts.`);
+      return setError(`That file is ${(f.size / 1048576).toFixed(0)} MB; the limit is ${mb(MAX_PGN_BYTES)}. Split it or import it in parts.`);
     }
     setError(null);
     setFile(f);
@@ -133,7 +137,8 @@ export function ImportPanel({ db }: { db: DatabaseInfo }) {
     setOutcome(null);
     if (mode === 'file' && !file) return setError('Choose a .pgn file first.');
     if (mode === 'paste' && !text.trim()) return setError('Paste some PGN first.');
-    if (mode === 'paste' && new Blob([text]).size > MAX_PGN_BYTES) return setError('That is more than 50 MB of text.');
+    if (mode === 'paste' && new Blob([text]).size > MAX_PASTE_BYTES)
+      return setError(`That is more than ${mb(MAX_PASTE_BYTES)} of text: save it as a .pgn file and upload it instead (up to ${mb(MAX_PGN_BYTES)}).`);
     setError(null);
     importPgn.mutate(mode === 'file' ? { file: file! } : { pgn: text }, {
       onSuccess: ({ job }) => {
@@ -202,7 +207,7 @@ export function ImportPanel({ db }: { db: DatabaseInfo }) {
                 <span>
                   Drop a <strong>.pgn</strong> file here or <span className="lib-link">choose one</span>
                 </span>
-                <span className="lib-hint">Up to 50 MB. Every game in the file is imported.</span>
+                <span className="lib-hint">Up to {mb(MAX_PGN_BYTES)}. Every game in the file is imported.</span>
               </span>
             )}
             <input
@@ -224,7 +229,11 @@ export function ImportPanel({ db }: { db: DatabaseInfo }) {
               spellCheck={false}
               placeholder={'[Event "Club championship"]\n[White "…"]\n[Black "…"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 …'}
               onChange={e => setText(e.target.value)}
+              aria-describedby={`${id}-pgn-help`}
             />
+            <span className="lib-hint" id={`${id}-pgn-help`}>
+              Up to {mb(MAX_PASTE_BYTES)}; upload bigger collections as a file.
+            </span>
           </div>
         )}
 

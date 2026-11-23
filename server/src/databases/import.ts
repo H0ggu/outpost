@@ -28,7 +28,7 @@ import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import type { Readable } from 'node:stream';
-import type { Id, ImportResponse, JobProgress } from '@outpost/shared/api';
+import { PGN_PASTE_MAX_BYTES, PGN_UPLOAD_MAX_BYTES, type Id, type ImportResponse, type JobProgress } from '@outpost/shared/api';
 import { getOpeningBook } from '../chess/openings.ts';
 import { parsePgnGames, pgnToNormalizedGame, type PgnGame, type PgnSkipReason } from '../chess/pgn.ts';
 import { insertGame, InvalidGameError, type NormalizedGame } from '../chess/store.ts';
@@ -37,10 +37,10 @@ import type { Db } from '../db/index.ts';
 import { HttpError } from '../http/errors.ts';
 import { enqueueJob, type JobContext } from '../jobs/index.ts';
 
-/** Largest PGN upload (PLAN §10). */
-export const MAX_PGN_BYTES = 50 * 1024 * 1024;
+/** Largest PGN upload (PLAN §10; the contract's `PGN_UPLOAD_MAX_BYTES`). */
+export const MAX_PGN_BYTES = PGN_UPLOAD_MAX_BYTES;
 /** Largest pasted PGN (the JSON body is buffered and parsed in memory: big files are uploaded). */
-export const MAX_PASTE_BYTES = 5 * 1024 * 1024;
+export const MAX_PASTE_BYTES = PGN_PASTE_MAX_BYTES;
 /** Queued or running imports one user may have. */
 export const MAX_PENDING_IMPORTS = 3;
 /** Games one (non-admin) user may keep across their databases. */

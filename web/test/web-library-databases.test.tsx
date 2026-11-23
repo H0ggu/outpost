@@ -231,6 +231,21 @@ describe('DatabasePage', () => {
     expect(screen.getByText(/Last import .*: 9 imported, 1 duplicates skipped, 2 skipped \(1 variant, 1 unfinished\)\./)).toBeTruthy();
   });
 
+  it('keeps pasted PGN under the server limit and shows the import refusals', async () => {
+    base(() => database());
+    api().on('POST', '/api/databases/5/import', apiError(429, 'rate_limited', 'You already have 3 imports waiting; try again when one has finished', { pending: 3, max: 3 }));
+    renderPage(<DatabasePage />, ROUTE);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Paste PGN' }));
+    expect(screen.getByText(/Up to 5 MB; upload bigger collections as a file/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('PGN'), { target: { value: 'x'.repeat(5 * 1024 * 1024 + 1) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    expect(screen.getByText(/more than 5 MB of text: save it as a \.pgn file and upload it instead/)).toBeTruthy();
+    expect(api().find('POST', '/api/databases/5/import')).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText('PGN'), { target: { value: '1. e4 e5 1-0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    expect(await screen.findByText(/You already have 3 imports waiting/)).toBeTruthy();
+  });
+
   it('uploads a .pgn file as multipart and refuses oversized files', async () => {
     base(() => database());
     api().on('POST', '/api/databases/5/import', { job: job({ id: 78, status: 'error', error: 'Not a PGN file' }) });

@@ -1357,7 +1357,19 @@ export interface UpdateDatabaseRequest {
   licence?: string | null;
 }
 
-/** `POST /api/databases/:id/import` JSON form (or multipart field `file` with a `.pgn`). */
+/** Largest `.pgn` upload to `POST /api/databases/:id/import` (PLAN §10); larger answers 413. */
+export const PGN_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+/**
+ * Largest pasted PGN (`ImportPgnRequest.pgn`, UTF-8 bytes): the JSON body is buffered, so bigger
+ * collections go through the streamed upload. Larger answers 413.
+ */
+export const PGN_PASTE_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * `POST /api/databases/:id/import` JSON form (or multipart field `file` with a `.pgn`). Besides
+ * 413 for size, it answers 429 `rate_limited` (`details: {pending, max}`) while the user already
+ * has the most imports queued or running, and 403 when the owner's game allowance is used up.
+ */
 export interface ImportPgnRequest {
   pgn: string;
 }
