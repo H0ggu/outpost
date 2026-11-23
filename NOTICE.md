@@ -35,7 +35,8 @@ Copied by `scripts/vendor-lichess.sh` from lila at the commit above; lila's `COP
 - **Piece sets:** cburnett (Colin M.L. Burnett, GPLv2+); merida (Armando Hernandez Marroquin, GPLv2+);
   chessnut (Alexis Luengas, Apache-2.0); fantasy, spatial and celtic (Maurizio Monge, MIT); kiwen-suwi
   (neverRare, CC BY 4.0); firi (James Faure, CC BY 4.0); rhosgfx (RhosGFX, CC0); mpchess (Maxime Chupin,
-  GPLv3+); pixel (therealqtpi, AGPLv3+); letter (usolando, AGPLv3+)
+  GPLv3+); pixel (therealqtpi, AGPLv3+); letter (usolando, AGPLv3+); mono (Thibault Duplessis and
+  Colin M.L. Burnett, GPLv2+), the grey pieces of the Studio's material-difference display
 - **Board images:** the lila authors and pirouetti, AGPLv3+
 - **Sounds** sfx, piano and nes: Enigmahack, AGPLv3+
 - **lichess icon font:** Dave Gandy / Font Awesome (OFL), GitHub Octicons (MIT), Webalys, Zurb, Daniel

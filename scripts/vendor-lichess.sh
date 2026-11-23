@@ -4,7 +4,7 @@
 #
 #   lila @ LILA_COMMIT                      → web/vendor/lila/{analyse,lib,keyboardMove,site,editor,@types/lichess}
 #                                              + tsconfig.base.json, translation/source, COPYING.md, NOTICE
-#   lila public/ (free assets only)         → web/public/lichess/{piece/<set>,board,sound/<set>,font}
+#   lila public/ (free assets only)         → web/public/lichess/{piece/<set>,piece/mono,board,sound/<set>,font}
 #   lila ui/lib/src/licon.ts                → web/src/lichess/licon.ts
 #   chess-openings @ OPENINGS_COMMIT        → server/data/openings/{a..e}.tsv (+ COPYING.txt)
 #   scripts/lila-patches/*.patch (if any)   → applied to web/vendor/lila afterwards
@@ -23,6 +23,9 @@ OPENINGS_REPO=https://github.com/lichess-org/chess-openings.git
 OPENINGS_COMMIT=48a8c0e733facfdc9a3723fe882e51ec28014074
 
 PIECE_SETS=(cburnett merida chessnut fantasy spatial celtic kiwen-suwi firi rhosgfx mpchess pixel letter)
+# lila's grey one-colour set (GPLv2+), used only by the Studio's material-difference display; not a
+# selectable piece set, and it has 6 files (P N B R Q K) instead of 12.
+MONO_PIECES=(P N B R Q K)
 BOARDS_PNG=(brown blue green purple ic)
 BOARDS_JPG=(wood4 maple olive grey blue3)
 SOUND_SETS=(sfx piano nes)
@@ -83,6 +86,7 @@ LILA_PATTERNS=(
   /public/font/
 )
 for s in "${PIECE_SETS[@]}"; do LILA_PATTERNS+=("/public/piece/$s/"); done
+LILA_PATTERNS+=("/public/piece/mono/")
 for b in "${BOARDS_PNG[@]}"; do LILA_PATTERNS+=("/public/images/board/$b.png" "/public/images/board/$b.thumbnail.png"); done
 for b in "${BOARDS_JPG[@]}"; do LILA_PATTERNS+=("/public/images/board/$b.jpg" "/public/images/board/$b.thumbnail.jpg"); done
 for s in "${SOUND_SETS[@]}"; do LILA_PATTERNS+=("/public/sound/$s/"); done
@@ -143,6 +147,9 @@ for s in "${PIECE_SETS[@]}"; do
   for f in "$L/public/piece/$s"/*.svg; do cp -L "$f" "$P/piece/$s/"; n=$((n + 1)); done
   [ "$n" -eq 12 ] || die "piece set $s has $n svg files (expected 12)"
 done
+mkdir -p "$P/piece/mono"
+for r in "${MONO_PIECES[@]}"; do cp -L "$L/public/piece/mono/$r.svg" "$P/piece/mono/"; done
+[ "$(find "$L/public/piece/mono" -name '*.svg' | wc -l | tr -d ' ')" -eq "${#MONO_PIECES[@]}" ] || die "unexpected files in lila's mono piece set"
 for b in "${BOARDS_PNG[@]}"; do cp -L "$L/public/images/board/$b.png" "$L/public/images/board/$b.thumbnail.png" "$P/board/"; done
 for b in "${BOARDS_JPG[@]}"; do cp -L "$L/public/images/board/$b.jpg" "$L/public/images/board/$b.thumbnail.jpg" "$P/board/"; done
 for s in "${SOUND_SETS[@]}"; do

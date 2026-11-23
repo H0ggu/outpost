@@ -108,7 +108,8 @@ describe('SCSS glue', () => {
   it('points lila asset URLs at Outpost’s /lichess tree', () => {
     expect(lilaCssAssetPath('../font/lichess-chess.woff2')).toBe('/lichess/font/lichess-chess.woff2');
     expect(lilaCssAssetPath('../images/board/brown.png')).toBe('/lichess/board/brown.png');
-    expect(lilaCssAssetPath('../piece/mono/N.svg')).toBe('/lichess/piece/cburnett/wN.svg');
+    // lila's grey mono set (material difference) is vendored like the other pieces.
+    expect(lilaCssAssetPath('../piece/mono/N.svg')).toBe('/lichess/piece/mono/N.svg');
     expect(lilaCssAssetPath('../piece/merida/wK.svg')).toBe('/lichess/piece/merida/wK.svg');
     expect(lilaCssAssetPath('/assets/images/whatever.png')).toBeNull();
   });
