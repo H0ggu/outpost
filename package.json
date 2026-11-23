@@ -16,7 +16,7 @@
   "scripts": {
     "dev": "trap 'kill $(jobs -p) 2>/dev/null' INT TERM; npm run dev -w @outpost/server & npm run dev -w @outpost/web & wait",
     "build": "npm run build -w @outpost/web",
-    "start": "node --env-file-if-exists=.env server/src/main.ts",
+    "start": "NODE_ENV=production node --env-file-if-exists=.env server/src/main.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "npm run typecheck --workspaces",

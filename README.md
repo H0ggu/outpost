@@ -41,9 +41,9 @@ Open http://localhost:5173. Other scripts:
 | Command | Does |
 |---|---|
 | `npm test` | Vitest for shared, server and web |
-| `npm run typecheck` | TypeScript 7 (`tsc`) for every workspace; `web/vendor` is excluded |
+| `npm run typecheck` | TypeScript 7 (`tsc`) for every workspace; the Studio (`web/src/studio`) has its own program |
 | `npm run build` | Builds the web app into `web/dist` (served by the server when present) |
-| `npm start` | Runs the server (`node server/src/main.ts`) |
+| `npm start` | Runs the server in production mode (`NODE_ENV=production`, so `PUBLIC_ORIGIN` is required) |
 | `npm run vendor` | Re-vendors Lichess code and assets at the pinned commits (`scripts/vendor-lichess.sh`) |
 
 Layout: `shared/` (API contract types, filters, chess helpers), `server/` (Fastify + `node:sqlite`),
@@ -56,14 +56,15 @@ Set in `.env` (or the environment). Relative paths resolve against the repositor
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8080` | Port to listen on |
-| `HOST` | `0.0.0.0` | Address to bind |
+| `HOST` | `0.0.0.0` | Address to bind (Docker always binds `0.0.0.0` inside the container) |
 | `PUBLIC_ORIGIN` | — (required in production) | Public address, e.g. `https://chess.example.com`; used for the CSRF/Origin check, Secure cookies and links |
-| `TRUSTED_PROXIES` | empty | IPs/CIDRs or `loopback` of proxies whose `X-Forwarded-For` is trusted |
+| `TRUSTED_PROXIES` | empty | IPs/CIDRs or `loopback` / `linklocal` / `uniquelocal` of proxies whose `X-Forwarded-For` is trusted (`true`/`*` is refused) |
 | `DATA_DIR` | `./data` | SQLite file, NNUE cache, uploads |
 | `LICHESS_TOKEN` | empty | Lichess personal token (any scope; `study:read` recommended). Needed for the Lichess and player explorers and broadcasts; faster game export; rating history. Can also be set by the admin in the UI (env wins) |
 | `CHESSCOM_CONTACT` | empty | Contact for the User-Agent sent to Chess.com (it rejects anonymous clients). Can also be set in the UI (env wins) |
 | `SETUP_TOKEN` | generated, logged | One-time token for creating the first admin at `/setup` |
 | `LOG_LEVEL` | `info` | `fatal` … `trace`, or `silent` |
+| `OUTPOST_WORKERS` | `true` (`false` in tests) | Run the background job workers and the auto-refresh scheduler |
 
 ## Licence
 

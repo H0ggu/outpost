@@ -11,6 +11,7 @@
  * - `resolveDateRange` turns `period` presets or `from`/`to` into epoch-ms bounds.
  */
 import { z } from 'zod';
+import { SLUG_RE } from './api.ts';
 import { OUTCOMES, TIME_CLASSES, UCI_RE, type Color, type Outcome, type TimeClass } from './chess.ts';
 
 // ---------------------------------------------------------------------------
@@ -355,12 +356,14 @@ export type PlayerSpec =
   | { kind: 'ref'; fideId: string };
 
 const USERNAME_RE = /^[A-Za-z0-9_-]{1,50}$/;
-const PROFILE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-/** Parses `slug`, `lichess:<user>`, `chesscom:<user>`, `db:<id>` or `ref:<fideId>`; null if invalid. */
+/**
+ * Parses `slug`, `lichess:<user>`, `chesscom:<user>`, `db:<id>` or `ref:<fideId>`; null if invalid.
+ * A bare spec must be a valid profile slug (`SLUG_RE`, the same rule as everywhere else).
+ */
 export const parsePlayerSpec = (spec: string): PlayerSpec | null => {
   const i = spec.indexOf(':');
-  if (i < 0) return PROFILE_SLUG_RE.test(spec) ? { kind: 'profile', slug: spec } : null;
+  if (i < 0) return SLUG_RE.test(spec) ? { kind: 'profile', slug: spec } : null;
   const prefix = spec.slice(0, i);
   const rest = spec.slice(i + 1);
   switch (prefix) {
@@ -417,9 +420,15 @@ export const withQuery = (path: string, params?: URLSearchParams | Record<string
   return q ? `${path}${path.includes('?') ? '&' : '?'}${q}` : path;
 };
 
-/** Filters plus extra parameters as one query (`filtersToQuery` first, then extras). */
+/**
+ * Filters plus endpoint params as one query (`filtersToQuery` first, then extras). Endpoint params
+ * must not reuse a filter key (the server would read them as filters): that throws.
+ */
 export const statsQuery = (f: ProfileFilters, extra: Record<string, QueryValue> = {}): URLSearchParams => {
   const q = filtersToQuery(f);
-  for (const [k, v] of toSearchParams(extra)) q.set(k, v);
+  for (const [k, v] of toSearchParams(extra)) {
+    if ((FILTER_KEYS as readonly string[]).includes(k)) throw new Error(`statsQuery: "${k}" is a filter key; set it in the filters`);
+    q.set(k, v);
+  }
   return q;
 };

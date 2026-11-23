@@ -1,6 +1,6 @@
 {
   "extends": "../tsconfig.base.json",
-  "//": "Web app sources. web/vendor (lila) is excluded: it is vendored unchanged and type-checked by nobody here. The Studio module keeps its own imports of vendor/ out of this program (see src/studio/).",
+  "//": "React SPA sources. src/studio has its own program (tsconfig.studio.json, owned by the Studio module): once it imports web/vendor/lila, tsc follows those imports, and `exclude` cannot stop that, so the SPA program must not include src/studio at all.",
   "compilerOptions": {
     "lib": ["es2024", "dom", "dom.iterable"],
     "module": "esnext",
@@ -9,5 +9,5 @@
     "types": ["vite/client"]
   },
   "include": ["src", "test"],
-  "exclude": ["vendor", "dist", "node_modules"]
+  "exclude": ["src/studio", "vendor", "dist", "node_modules"]
 }

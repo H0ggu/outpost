@@ -6,8 +6,9 @@ import type { FastifyPluginAsync } from 'fastify';
  * Endpoints (request/response types in @outpost/shared/api):
  *   - GET /api/files?folder&trash=1 (FilesResponse)
  *   - POST /api/files (CreateFileRequest → StudioFile)
- *   - GET/PUT/DELETE /api/files/:id (StudioFile / UpdateFileRequest; DELETE soft-deletes into the recycle bin)
- *   - POST /api/files/:id/restore
+ *   - GET/PUT/DELETE /api/files/:id (StudioFile / UpdateFileRequest → StudioFile / OkResponse; DELETE soft-deletes into the
+ *     recycle bin, and deleting a file that is already in the bin removes it for good)
+ *   - POST /api/files/:id/restore (→ StudioFile)
  *   - GET /api/files/search?fen= (FileSearchResponse)
  *   - GET /api/folders (FoldersResponse)
  *

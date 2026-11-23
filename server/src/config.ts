@@ -65,10 +65,20 @@ const envSchema = z.object({
   TRUSTED_PROXIES: z
     .string()
     .default('')
-    .transform((s, ctx): boolean | string[] => {
+    .transform((s, ctx): false | string[] => {
       const t = s.trim();
       if (t === '' || t === 'false') return false;
-      if (t === 'true' || t === '*') return true;
+      if (t === 'true' || t === '*') {
+        // Trusting every hop lets any client pick its own IP via X-Forwarded-For, which defeats the
+        // per-IP login/signup throttling (PLAN §10). Name the proxy instead.
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'TRUSTED_PROXIES=true/* would trust X-Forwarded-For from anyone; list the proxy instead ' +
+            '(an IP, a CIDR such as 172.16.0.0/12 for Docker networks, or loopback / linklocal / uniquelocal)',
+        });
+        return z.NEVER;
+      }
       const list = t.split(',').map(x => x.trim()).filter(Boolean);
       const bad = list.filter(x => !isProxyEntry(x));
       if (bad.length) {
@@ -86,6 +96,10 @@ const envSchema = z.object({
   CHESSCOM_CONTACT: z.string().trim().min(1).max(200).optional(),
   SETUP_TOKEN: z.string().min(16, 'SETUP_TOKEN must be at least 16 characters').max(256).optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+  OUTPOST_WORKERS: z
+    .enum(['true', 'false', '1', '0', 'on', 'off'])
+    .transform(v => v === 'true' || v === '1' || v === 'on')
+    .optional(),
 });
 
 /** Resolved, validated configuration. */
@@ -99,8 +113,8 @@ export interface Config {
   publicOrigin: string | null;
   /** Mark the session cookie Secure (PUBLIC_ORIGIN is https). */
   secureCookies: boolean;
-  /** Passed to Fastify `trustProxy`: false, true, or a list of IPs / CIDRs / named ranges. */
-  trustProxy: boolean | string[];
+  /** Passed to Fastify `trustProxy`: false, or a list of IPs / CIDRs / named ranges (never `true`). */
+  trustProxy: false | string[];
   rootDir: string;
   /** Absolute DATA_DIR. */
   dataDir: string;
@@ -121,6 +135,13 @@ export interface Config {
   /** Env SETUP_TOKEN; when null the auth module generates one and logs it. */
   setupToken: string | null;
   logLevel: LogLevel;
+  /**
+   * Start background work: the job workers, the auto-refresh scheduler and any other timer that
+   * calls upstream (OUTPOST_WORKERS; default on, **off when NODE_ENV=test**). Every plugin that
+   * starts background work in `onReady` must check this first, so tests that enqueue jobs never
+   * reach Lichess or Chess.com. Jobs still get enqueued; tests run handlers directly.
+   */
+  startWorkers: boolean;
 }
 
 /** Thrown when the environment is invalid; `message` lists every problem. */
@@ -167,5 +188,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     chesscomContact: e.CHESSCOM_CONTACT ?? null,
     setupToken: e.SETUP_TOKEN ?? null,
     logLevel: e.LOG_LEVEL,
+    startWorkers: e.OUTPOST_WORKERS ?? e.NODE_ENV !== 'test',
   };
 }

@@ -12,16 +12,15 @@ import {
   type BehaviourStats,
   type GamesPage,
   type MyJobsResponse,
-  type OpeningsQuery,
+  type OpeningsParams,
   type OpeningsResponse,
   type OpponentsPage,
-  type OpponentsQuery,
+  type OpponentsParams,
   type OverviewStats,
   type ProfileHeader,
   type ProfileListQuery,
   type ProfileListResponse,
   type ProfileStatus,
-  type RatingQuery,
   type RatingStats,
   type SearchResults,
   type SessionInfo,
@@ -173,12 +172,12 @@ export const useOverview = (slug: string | undefined, filters: ProfileFilters) =
 export const useProfileGames = (slug: string | undefined, filters: ProfileFilters, page = 1, pageSize = 20) =>
   useStats<GamesPage>(slug, 'games', filters, { page, pageSize });
 
-/** `GET /api/profiles/:slug/openings`. */
-export const useOpenings = (slug: string | undefined, filters: ProfileFilters, opts: OpeningsQuery = {}) =>
+/** `GET /api/profiles/:slug/openings` (filters plus the endpoint's own params). */
+export const useOpenings = (slug: string | undefined, filters: ProfileFilters, opts: OpeningsParams = {}) =>
   useStats<OpeningsResponse>(slug, 'openings', filters, { ...opts });
 
-/** `GET /api/profiles/:slug/opponents`. */
-export const useOpponents = (slug: string | undefined, filters: ProfileFilters, opts: OpponentsQuery = {}) =>
+/** `GET /api/profiles/:slug/opponents` (filters plus the endpoint's own params). */
+export const useOpponents = (slug: string | undefined, filters: ProfileFilters, opts: OpponentsParams = {}) =>
   useStats<OpponentsPage>(slug, 'opponents', filters, { ...opts });
 
 /** `GET /api/profiles/:slug/behaviour`. */
@@ -193,9 +192,12 @@ export const useWorldMap = (slug: string | undefined, filters: ProfileFilters) =
 export const useActivity = (slug: string | undefined, filters: ProfileFilters, tz: string = browserTimeZone()) =>
   useStats<ActivityStats>(slug, 'activity', filters, { tz });
 
-/** `GET /api/profiles/:slug/rating`. */
-export const useRatingStats = (slug: string | undefined, filters: ProfileFilters, opts: RatingQuery = {}) =>
-  useStats<RatingStats>(slug, 'rating', filters, { ...opts });
+/**
+ * `GET /api/profiles/:slug/rating` (`RatingQuery` = the filters). To chart one source or time
+ * class, narrow `filters.src` / `filters.tc`.
+ */
+export const useRatingStats = (slug: string | undefined, filters: ProfileFilters) =>
+  useStats<RatingStats>(slug, 'rating', filters);
 
 /** The browser's IANA time zone (UTC if unknown). */
 export function browserTimeZone(): string {

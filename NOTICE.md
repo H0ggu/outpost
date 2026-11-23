@@ -41,7 +41,7 @@ Copied by `scripts/vendor-lichess.sh` from lila at the commit above; lila's `COP
 - **lichess icon font:** Dave Gandy / Font Awesome (OFL), GitHub Octicons (MIT), Webalys, Zurb, Daniel
   Bruce / Entypo, Shapemade, Sergey Shmidt (CC BY 3.0) and the lichess authors (AGPLv3+)
 - **Fonts:** Noto Sans (Google) and Roboto (Christian Robertson), Apache-2.0
-- **Chess figurine font** (Noto Chess): pgn4web authors, GPLv2+
+- **Chess figurine font**: pgn4web authors, GPLv2+
 
 Not included, because they are not free: the alpha, california and other CC BY-NC-SA piece sets, the
 `standard` (and robot, woodland, instrument, other, lisp) sounds, and the Lichess logo and favicon.

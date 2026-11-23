@@ -14,7 +14,12 @@ import type { FastifyPluginAsync } from 'fastify';
  *   - GET /api/profiles/:slug/activity (ActivityQuery → ActivityStats)
  *   - GET /api/profiles/:slug/rating (RatingQuery → RatingStats)
  *
- * Use { preHandler: requireViewer } plus the profile visibility check; parse filters with parseFiltersQuery (src/http/validate.ts). Queries live in src/stats/.
+ * Use { preHandler: requireViewer } plus loadProfileForViewer (src/profiles/access.ts: 404 for private profiles of
+ * others, visible source ids); parse filters with parseFiltersQuery (src/http/validate.ts) and turn them into SQL with
+ * playerGamesWhere (src/stats/filterSql.ts — already implemented; it is shared with the explorer and prep, so change
+ * semantics there, not per endpoint). Game lists: GAME_ROW_SELECT + toGameRow (src/stats/gameRows.ts). Queries live in src/stats/.
+ * Endpoint params (OpeningsParams, OpponentsParams, ActivityParams) never reuse filter keys; parse them with parseQuery
+ * on a schema that ignores unknown keys.
  *
  * TODO(stats): implement. Keep this file thin: validate with src/http/validate.ts, check access
  * with the preHandlers in src/auth/session.ts, call into the module, return contract types, and

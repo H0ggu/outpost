@@ -2,7 +2,7 @@
  * buildApp(): the Fastify instance with cross-cutting plugins and one route plugin per area.
  *
  * Order matters:
- *   1. decorators (config, db, req.user) and the error handler — before any plugin, so every
+ *   1. decorators (config, db, upstream, req.user) and the error handler — before any plugin, so every
  *      encapsulated route plugin inherits them;
  *   2. security headers + CSRF/Origin check (global hooks);
  *   3. cookie, multipart, rate-limit (opt-in per route), compression;
@@ -25,6 +25,7 @@ import type { Config } from './config.ts';
 import type { Db } from './db/index.ts';
 import { errorBody, errorHandler } from './http/errors.ts';
 import { registerCsrfCheck, registerSecurityHeaders } from './http/security.ts';
+import { createUpstream } from './http/upstream.ts';
 import adminRoutes from './routes/admin.ts';
 import assetRoutes from './routes/assets.ts';
 import authRoutes from './routes/auth.ts';
@@ -71,10 +72,12 @@ export interface BuildAppOptions {
   db: Db;
   /** Override the logger (tests pass `false`). Defaults to pino at `config.logLevel`. */
   logger?: FastifyServerOptions['logger'];
+  /** fetch used by `app.upstream` (tests inject a fake). Defaults to the global fetch. */
+  fetch?: typeof globalThis.fetch;
 }
 
 /** Builds the Fastify app. Call `app.listen()` (main.ts) or `app.inject()` (tests). */
-export async function buildApp({ config, db, logger }: BuildAppOptions): Promise<FastifyInstance> {
+export async function buildApp({ config, db, logger, fetch }: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     logger: logger ?? { level: config.logLevel },
     trustProxy: config.trustProxy,
@@ -85,6 +88,7 @@ export async function buildApp({ config, db, logger }: BuildAppOptions): Promise
 
   app.decorate('config', config);
   app.decorate('db', db);
+  app.decorate('upstream', createUpstream({ config, db, ...(fetch ? { fetch } : {}) }));
   app.decorateRequest('user', null);
   app.decorateRequest('sessionHash', null);
   app.setErrorHandler(errorHandler);

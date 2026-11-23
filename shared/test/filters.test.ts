@@ -75,6 +75,7 @@ describe('serialisation', () => {
 
   it('adds extra params with statsQuery and withQuery', () => {
     expect(statsQuery({ color: 'white' }, { page: 2, side: undefined }).toString()).toBe('color=white&page=2');
+    expect(() => statsQuery({ tc: ['blitz'] }, { tc: 'rapid' })).toThrow(/filter key/);
     expect(withQuery('/api/x', { a: 1, b: null, c: ['x', 'y'] })).toBe('/api/x?a=1&c=x%2Cy');
     expect(withQuery('/api/x', {})).toBe('/api/x');
   });
@@ -135,6 +136,7 @@ describe('player specs', () => {
   });
 
   it('rejects malformed specs', () => {
-    for (const c of ['', 'Upper', 'db:0', 'db:x', 'ref:abc', 'fide:1', 'lichess:', 'lichess:a b']) expect(parsePlayerSpec(c)).toBeNull();
+    for (const c of ['', 'a', 'Upper', '-ab', 'db:0', 'db:x', 'ref:abc', 'fide:1', 'lichess:', 'lichess:a b'])
+      expect(parsePlayerSpec(c)).toBeNull();
   });
 });

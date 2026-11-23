@@ -8,9 +8,10 @@ import { readSettings } from '../settings.ts';
  *
  * Endpoints (request/response types in @outpost/shared/api):
  *   - GET  /api/session (SessionInfo)            ← minimal version below; replace freely
- *   - POST /api/setup (SetupRequest → LoginResponse; first admin via SETUP_TOKEN)
+ *   - POST /api/setup (SetupRequest → LoginResponse; first admin via SETUP_TOKEN; 403 'forbidden'
+ *     once any admin row exists, disabled or not — the same rule as setupRequired below)
  *   - POST /api/login (LoginRequest → LoginResponse; 401 'totp_required' when a code is needed)
- *   - POST /api/logout
+ *   - POST /api/logout (OkResponse)
  *   - POST /api/signup (SignupRequest → LoginResponse; honours signupMode)
  *   - GET/PUT /api/me/prefs (UserPrefs / UpdatePrefsRequest)
  *   - POST /api/me/password (ChangePasswordRequest)
@@ -28,7 +29,9 @@ import { readSettings } from '../settings.ts';
 const authRoutes: FastifyPluginAsync = async app => {
   app.get(API_ROUTES.session, { preHandler: optionalUser }, async (req): Promise<SessionInfo> => {
     const settings = readSettings(app.db, app.config);
-    const hasAdmin = app.db.get("SELECT 1 AS x FROM users WHERE role = 'admin' AND disabled = 0 LIMIT 1") !== undefined;
+    // Setup is open only while no admin row exists at all — a disabled admin still closes it, so a
+    // permanent SETUP_TOKEN in env can never mint a second admin. POST /api/setup enforces the same rule.
+    const hasAdmin = app.db.get("SELECT 1 AS x FROM users WHERE role = 'admin' LIMIT 1") !== undefined;
     return {
       user: req.user ? { ...req.user } : null,
       setupRequired: !hasAdmin,

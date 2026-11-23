@@ -9,7 +9,7 @@ import type { FastifyPluginAsync } from 'fastify';
  *   - GET /api/broadcasts/round/:roundId (BroadcastRound; server cache 5 s, clients poll every 10 s)
  *   - GET /api/broadcasts/round/:roundId.pgn (find-my-way accepts this next to :roundId)
  *
- * All upstream calls carry the Lichess token (PR #21283).
+ * All upstream calls carry the Lichess token (PR #21283): app.upstream.fetch(url, { auth: 'required' }).
  *
  * TODO(reference): implement. Keep this file thin: validate with src/http/validate.ts, check access
  * with the preHandlers in src/auth/session.ts, call into the module, return contract types, and

@@ -37,9 +37,20 @@ describe('config', () => {
       '10.0.0.0/8',
       'fd00::/8',
     ]);
-    expect(loadConfig({ TRUSTED_PROXIES: 'true' }).trustProxy).toBe(true);
+    expect(loadConfig({ TRUSTED_PROXIES: 'false' }).trustProxy).toBe(false);
+    // Trusting every hop would let any client spoof its IP past the login throttling.
+    expect(() => loadConfig({ TRUSTED_PROXIES: 'true' })).toThrow(/would trust X-Forwarded-For/);
+    expect(() => loadConfig({ TRUSTED_PROXIES: '*' })).toThrow(ConfigError);
     expect(() => loadConfig({ TRUSTED_PROXIES: 'example.com' })).toThrow(ConfigError);
     expect(() => loadConfig({ TRUSTED_PROXIES: '10.0.0.0/33' })).toThrow(ConfigError);
+  });
+
+  it('starts background workers except in tests', () => {
+    expect(loadConfig({}).startWorkers).toBe(true);
+    expect(loadConfig({ NODE_ENV: 'test' }).startWorkers).toBe(false);
+    expect(loadConfig({ NODE_ENV: 'test', OUTPOST_WORKERS: 'true' }).startWorkers).toBe(true);
+    expect(loadConfig({ OUTPOST_WORKERS: '0' }).startWorkers).toBe(false);
+    expect(() => loadConfig({ OUTPOST_WORKERS: 'maybe' })).toThrow(ConfigError);
   });
 
   it('rejects malformed values', () => {

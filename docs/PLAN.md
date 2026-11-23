@@ -60,17 +60,18 @@ outpost/
     config.ts             # env parsing
     app.ts                # buildApp(): registers plugins + route modules
     db/{index.ts,migrate.ts,migrations/*.sql}
-    http/                 # security headers, CSRF/origin check, rate limit, errors
+    http/                 # security headers, CSRF/origin check, rate limit, errors, upstream client
     auth/                 # passwords (scrypt), sessions, TOTP, setup token
     jobs/                 # persistent job queue + worker + scheduler
     sync/                 # lichess + chesscom clients, importers, geo lookup
-    chess/                # position keys, opening classifier, PGN helpers
-    stats/                # profile statistics queries
+    chess/                # position keys, opening classifier, PGN helpers, game store (insertGame)
+    stats/                # profile statistics queries, filter → SQL
     explorer/             # Lichess-compatible explorer endpoints + proxies
+    profiles/             # profile/database access checks, search, databases, files, prep
     reference/            # broadcast / OTB reference DB import + player index
     broadcasts/           # live Lichess broadcasts proxy
     routes/               # one Fastify plugin per area (thin; logic lives in modules)
-    data/openings/{a..e}.tsv   # lichess-org/chess-openings (CC0)
+  server/data/openings/{a..e}.tsv   # lichess-org/chess-openings (CC0); config.openingsDir
   web/
     index.html  studio.html
     public/lichess/{piece,board,sound,font}/   # vendored lila assets (see NOTICE.md)
@@ -88,12 +89,14 @@ Vendored lila commit: **`b071608bc4ce71b31cda36ffa493100e3dc3580f`** (2026-11-22
 |---|---|---|
 | `PORT` | `8080` | Port to listen on |
 | `PUBLIC_ORIGIN` | (required in production) | e.g. `https://chess.example.com`. Used for the Origin/CSRF check and absolute links. |
-| `TRUSTED_PROXIES` | empty | CIDRs or `loopback`, passed to Fastify `trustProxy`. Gives correct client IPs for rate limits. |
+| `TRUSTED_PROXIES` | empty | IPs, CIDRs or `loopback`/`linklocal`/`uniquelocal`, passed to Fastify `trustProxy`. Gives correct client IPs for rate limits. `true`/`*` is refused (any client could spoof its IP). |
 | `DATA_DIR` | `./data` | Holds the SQLite file, NNUE cache and uploads |
 | `LICHESS_TOKEN` | empty | Personal token (any scope; `study:read` recommended). **Required** for the Lichess explorer, player explorer and broadcasts. Also speeds up game export and enables rating history. The admin can also set it in the UI; env wins. |
 | `CHESSCOM_CONTACT` | empty | Contact text put in the Chess.com User-Agent, `Outpost/<ver> (self-hosted; contact: <value>)`. Chess.com returns 403 to anonymous user agents. The admin can set it in the UI. |
 | `SETUP_TOKEN` | generated, printed to logs | One-time token to create the first admin |
 | `LOG_LEVEL` | `info` | Log level |
+| `OUTPOST_WORKERS` | `true` (`false` when `NODE_ENV=test`) | Start the job workers, the auto-refresh scheduler and any other upstream-calling timer (`config.startWorkers`) |
+| `NODE_ENV` | `development` | `npm start` and Docker force `production`; `npm run dev` is development |
 
 ## 4. Data model (SQLite)
 Migration `001_init.sql` creates the following. Later modules add their own migrations in reserved number ranges:
@@ -226,6 +229,8 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 | PUT/DELETE | `/api/profiles/:slug/bookmark` | |
 | GET | `/api/bookmarks` | |
 
+Endpoint parameters never reuse a filter key. Mutations return the type listed in `MUTATION_RESPONSES` (`shared/src/api.ts`); those without a richer result return `{ok:true}`.
+
 ### Stats (all take the filter query)
 | Path | Returns |
 |---|---|
@@ -237,7 +242,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 | `/api/profiles/:slug/behaviour` | For each of W, D and L: rows of `{termination, count, pct, avgMoves}` |
 | `/api/profiles/:slug/worldmap` | `{countries:[{code (ISO alpha-2), games, opponents, w, d, l}], unknownGames, pendingLookups}` |
 | `/api/profiles/:slug/activity` | `?tz=IANA`. Returns `{days:[{date,games,score}], byHour[24], byWeekday[7], grid[7][24]}`, each with games and score |
-| `/api/profiles/:slug/rating` | `?source&tc`. Returns `{series:[{sourceId, timeClass, points:[[t, rating]]}], averages:[{n, avgRating, avgOppRating, score}]}` |
+| `/api/profiles/:slug/rating` | Filters only (narrow the filter's `src`/`tc` to chart one source or time class). Returns `{series:[{sourceId, timeClass, points:[[t, rating]]}], averages:[{n, avgRating, avgOppRating, score}]}` |
 
 ### Games, explorer and proxies
 | Method | Path | Notes |
@@ -248,7 +253,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 | GET | `/api/explorer/player` | Lichess-compatible **NDJSON**, one final line. `player=<profile slug>` or `lichess:<user>` / `chesscom:<user>` / `db:<id>` / `ref:<fideId>`. Takes `color, speeds, modes, since, until, fen, play, recentGames, moves`, plus Outpost filters in a path segment: `/api/explorer/f/<base64url(filters)>/player` (lila builds `new URL('./player', endpoint)`, so the query would be lost). `recentGames[].id` is the Outpost game id prefixed `op` (e.g. `op123`). |
 | GET | `/api/explorer/reference` | Same shape as masters, from the local reference DB |
 | GET | `/api/explorer/games` | `?player&fen\|play&…filters&page`: games that reach a position |
-| GET | `/api/tablebase/:variant` | Proxy to `tablebase.lichess.ovh` (cached) |
+| GET | `/api/tablebase/:variant` | Proxy to `tablebase.lichess.ovh` (cached). **No session required**: lila's tablebase request omits credentials. |
 | GET | `/api/cloud-eval` | Proxy to `lichess.org/api/cloud-eval` |
 | GET | `/assets/lifat/nnue/:name` | Downloads the NNUE file once from `tests.stockfishchess.org/api/nn/:name` into `DATA_DIR/nnue` and serves it from there. Name allow-list: `^nn-[0-9a-f]{12}\.nnue$`. |
 
@@ -286,6 +291,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
   - `local` lane: PGN and reference imports.
 
   On a 429, back off 60 s or more, with exponential backoff on 5xx. Jobs left `running` at startup go back to `queued`. Every job stores progress for the UI.
+  All upstream calls (jobs and routes alike) go through one client, `app.upstream` (`server/src/http/upstream.ts`): User-Agent, token injection for Lichess hosts only, a per-host 429 cool-down shared by every module, and timeouts. Workers and schedulers start only when `config.startWorkers`.
 - **Lichess.**
   1. Stream `GET /api/games/user/{u}` as NDJSON with `Accept: application/x-ndjson` and the token. Parameters: `since=<last createdAt+1>`, `sort=dateAsc`, `opening=true`, `accuracy=true`, `perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence`.
   2. Skip games that are a variant, `fromPosition`, against AI, or anonymous.

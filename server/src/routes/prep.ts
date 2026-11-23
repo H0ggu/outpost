@@ -5,10 +5,11 @@ import type { FastifyPluginAsync } from 'fastify';
  *
  * Endpoints (request/response types in @outpost/shared/api):
  *   - GET/POST /api/prep (PrepListResponse / CreatePrepRequest → PrepSet)
- *   - GET/PUT/DELETE /api/prep/:id (PrepSet / UpdatePrepRequest)
- *   - GET /api/prep/:id/report (ProfileFilters + tz → PrepReport)
+ *   - GET/PUT/DELETE /api/prep/:id (PrepSet / UpdatePrepRequest → PrepSet / OkResponse)
+ *   - GET /api/prep/:id/report (PrepReportQuery → PrepReport)
  *
- * Every route: { preHandler: requireUser }. Reuse src/stats/ queries for the report.
+ * Every route: { preHandler: requireUser }. Reuse src/stats/ for the report: playerGamesWhere for the filters,
+ * GAME_ROW_SELECT/toGameRow for recent games; loadProfileForViewer for each opponent.
  *
  * TODO(profiles): implement. Keep this file thin: validate with src/http/validate.ts, check access
  * with the preHandlers in src/auth/session.ts, call into the module, return contract types, and

@@ -20,9 +20,31 @@ Read `docs/PLAN.md` first; this page is the "how" for code that lands in the sca
 | jobs (sync + jobs) | `routes/jobs.ts`, `jobs/*`, `sync/*`, `chess/*` | — | 200–299 |
 | stats | `routes/stats.ts`, `routes/games.ts`, `stats/*` | — | 300–399 |
 | explorer | `routes/explorer.ts`, `routes/assets.ts`, `explorer/*` | — | 400–499 |
-| profiles | `routes/{search,profiles,databases,files,prep}.ts` (+ helper folders of the same names) | — | 500–599, 700–799 |
+| profiles | `routes/{search,profiles,databases,files,prep}.ts`, `profiles/*` (+ helper folders of the same names) | — | 500–599, 700–799 |
 | reference | `routes/{reference,broadcasts}.ts`, `reference/*`, `broadcasts/*` | — | 600–699 |
-| studio | — | `src/studio/*`, `studio.html`, `vite.config.ts` (Studio glue), `web/vendor` via `scripts/lila-patches/` | — |
+| studio | — | `src/studio/*`, `studio.html`, `tsconfig.studio.json`, `vite.config.ts` (Studio glue), `web/vendor` via `scripts/lila-patches/` | — |
+
+Tests follow the same ownership: name server test files after your module (`server/test/<module>-*.test.ts`)
+and only edit your own. The scaffold's own tests (`app`, `config`, `db`, `jobs-queue`, `upstream`, `chess-store`,
+`filter-sql`, `access`) cover the cross-module API below; the owning module may extend them.
+
+## Cross-module server API (use it, don't re-implement it)
+
+These already exist with final signatures (and working bodies) so parallel branches agree. The owner may
+optimise a body but not change a signature or its semantics without updating every caller.
+
+| Need | Call | Owner |
+|---|---|---|
+| Any Lichess / Chess.com / other upstream request | `app.upstream.fetch/json(url, {auth, signal, allowStatuses})` (`src/http/upstream.ts`); in a job `ctx.upstream`. Map failures with `upstreamHttpError(e)`. | shared kit |
+| Enqueue work, show it | `enqueueJob`, `enqueueSync`, `getJob`, `toJobInfo`, `queuePosition`, `sourceSyncStatus` (`src/jobs/`) | jobs |
+| Run your job kind | `registerJobHandler(kind, handler)` from your route plugin (`src/jobs/handlers.ts`) | jobs |
+| Store games | `NormalizedGame` + `insertGame` (only writer of `games`/`positions`/`player_games`), `rebuildPlayerGames` (`src/chess/store.ts`) | jobs |
+| Read PGN | `parsePgnGames` (stream), `pgnToNormalizedGame` (`src/chess/pgn.ts`) | jobs |
+| Opening names, positions | `getOpeningBook` + `classifyOpening` / `openingAt`, `posKey`, `posKeyAfterLine` (`src/chess/`) | jobs |
+| Filters → SQL | `playerGamesWhere(filters, { sourceIds })` (`src/stats/filterSql.ts`) | stats |
+| Game lists | `GAME_ROW_SELECT` + `toGameRow`, `DB_GAME_ROW_COLUMNS` + `toDbGameRow` (`src/stats/gameRows.ts`) | stats |
+| Read a profile / database | `loadProfileForViewer(db, slug, req.user)`, `loadDatabaseForViewer` (`src/profiles/access.ts`) | profiles |
+| Reference players in search | `searchReferencePlayers` (`src/reference/index.ts`; returns `[]` until reference implements it) | reference |
 | web-profile | — | `src/app/pages/profile/*` (+ a filters bar under `src/app/pages/profile/`) | — |
 | web-other | — | every other file in `src/app/pages/` | — |
 
@@ -42,10 +64,14 @@ Read `docs/PLAN.md` first; this page is the "how" for code that lands in the sca
 - Rate limits: `@fastify/rate-limit` is registered with `global: false`; opt in per route with
   `config: { rateLimit: { max, timeWindow } }`.
 - Background work (workers, schedulers, setup-token logging) starts in your plugin with
-  `app.addHook('onReady', …)` and stops in `app.addHook('onClose', …)`.
+  `app.addHook('onReady', …)` and stops in `app.addHook('onClose', …)`. Anything that runs jobs or calls
+  upstream on a timer starts **only when `app.config.startWorkers`** (env `OUTPOST_WORKERS`, off under
+  `NODE_ENV=test`), so tests that enqueue jobs never reach Lichess or Chess.com.
+- Upstream: **never call `fetch()` directly**. Use `app.upstream` (jobs: `ctx.upstream`): it sends the
+  User-Agent, adds the Lichess token only for Lichess hosts and only with `auth: 'optional' | 'required'`,
+  shares one per-host 429 cool-down between all modules (Lichess limits per token and IP) and times out.
+  The Lichess token never reaches the browser.
 - Settings: `readSettings(app.db, app.config)` (env wins for the Lichess token and Chess.com contact).
-  Upstream requests send `userAgent(config.version, settings.chesscomContact)`. The Lichess token never
-  reaches the browser.
 
 ## Database (`node:sqlite`)
 
@@ -62,6 +88,8 @@ Read `docs/PLAN.md` first; this page is the "how" for code that lands in the sca
 
 - Data: `api` from `src/app/api/client.ts` (adds `X-Outpost: 1`, throws `ApiError`) and hooks in
   `src/app/api/hooks.ts`; add page-specific hooks next to your pages with keys under `queryKeys`.
+  Stats hooks take `filters` plus the endpoint's own params (`OpeningsParams`, …), which never reuse a
+  filter key (`statsQuery` throws if they do); the rating chart narrows `filters.src`/`filters.tc`.
 - Links: `paths` in `src/app/paths.ts`. The Studio is a separate page — use `<a href>` or
   `ButtonLink reloadDocument`, never an SPA `<Link>`.
 - Filters live in the URL: `useUrlFilters()`; serialise with `@outpost/shared/filters`.
@@ -76,4 +104,7 @@ Read `docs/PLAN.md` first; this page is the "how" for code that lands in the sca
 
 - Vitest per workspace (`*/test/**/*.test.ts[x]`); `npm test` runs them all.
 - Server: `makeTestApp()`, `createUserSession()` and `mutationHeaders` in `server/test/helpers.ts`.
+  Tests have no network: `makeTestApp({ fetch })` injects a fake fetch for `app.upstream` (the default one
+  throws). Workers don't run in tests; call your job handler directly with `makeJobContext(t, kind, payload)`.
+  Seed games with `insertGame(t.db, testGame({...}))` so rows look like production ones.
   Fixtures go in `server/test/fixtures/` and are synthetic or hikaru-only (no private individuals' data).

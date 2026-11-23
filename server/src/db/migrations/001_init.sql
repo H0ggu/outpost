@@ -218,6 +218,8 @@ CREATE INDEX player_games_opp ON player_games (opp_source_kind, opp_key);
 -- ply = half-moves played before this position (0 = initial position, up to 50).
 -- pos_key = first 53 bits of SHA-1(chessops EPD) (src/chess/posKey.ts), so transpositions merge.
 -- next_uci = the move played from here in standard castling notation (e1g1); NULL when none.
+-- A game that repeats a position has several rows with the same pos_key: explorer queries count
+-- each game at most once per position (its first occurrence, lowest ply).
 CREATE TABLE positions (
   game_id  INTEGER NOT NULL REFERENCES games (id) ON DELETE CASCADE,
   ply      INTEGER NOT NULL CHECK (ply BETWEEN 0 AND 50),
@@ -225,7 +227,8 @@ CREATE TABLE positions (
   next_uci TEXT,
   PRIMARY KEY (game_id, ply)
 ) STRICT, WITHOUT ROWID;
-CREATE INDEX positions_key ON positions (pos_key, game_id);
+-- Covering for explorer lookups (the WITHOUT ROWID primary key adds ply): no table access per row.
+CREATE INDEX positions_key ON positions (pos_key, game_id, next_uci);
 
 -- Opponent country / title for the world map and opponent badges.
 -- fetched_at NULL = queued for lookup.

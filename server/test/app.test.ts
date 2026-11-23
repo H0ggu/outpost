@@ -89,6 +89,16 @@ describe('app (no web build)', () => {
     expect(body.user?.prefs.theme).toBe('black');
   });
 
+  it('keeps setup closed while any admin row exists, even a disabled one', async () => {
+    const t2 = await makeTestApp();
+    try {
+      createUserSession(t2.db, { username: 'gone', role: 'admin', disabled: true });
+      expect((await t2.app.inject({ url: '/api/session' })).json<SessionInfo>().setupRequired).toBe(false);
+    } finally {
+      await t2.close();
+    }
+  });
+
   it('ignores sessions of disabled users and unknown cookies', async () => {
     const { cookie } = createUserSession(t.db, { username: 'bob', disabled: true });
     expect((await t.app.inject({ url: '/api/session', headers: { cookie } })).json<SessionInfo>().user).toBeNull();

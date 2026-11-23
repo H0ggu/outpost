@@ -10,6 +10,11 @@
  * - Booleans are real booleans in JSON (SQLite stores 0/1; convert at the boundary).
  * - `null` means "known to be absent"; optional (`?`) fields may be omitted.
  * - Errors are `ApiErrorBody` with the matching HTTP status (PLAN §6).
+ * - Every endpoint's response type is named in a doc comment here; mutations without a richer
+ *   result answer `OkResponse` (`{ok:true}`, status 200). The full list is `MUTATION_RESPONSES`
+ *   at the end of this file.
+ * - Every stats-style query type is `ProfileFilters & <endpoint params>`; the endpoint params
+ *   never reuse a filter key (`tc`, `src`, …), so `statsQuery(filters, params)` can't clash.
  * - String-literal unions only, never enums (Node type stripping, PLAN §1).
  */
 import type {
@@ -282,12 +287,13 @@ export interface MaskedSecret {
   fromEnv: boolean;
 }
 
-/** `GET /api/admin/settings`. */
+/** `GET /api/admin/settings`; also the response of `PUT`. */
 export interface AdminSettings {
   signupMode: SignupMode;
   anonymousBrowsing: boolean;
   lichessToken: MaskedSecret;
-  chesscomContact: string;
+  /** Effective contact for the upstream User-Agent (env wins), or null when unset. */
+  chesscomContact: string | null;
   /** True when `CHESSCOM_CONTACT` is set in env (env wins). */
   chesscomContactFromEnv: boolean;
   /** Hour (0–23, UTC) of the daily auto refresh. */
@@ -299,12 +305,15 @@ export interface AdminSettings {
   mastersSource: MastersSource;
 }
 
-/** `PUT /api/admin/settings` body: any subset. `lichessToken: null` clears the UI-set token. */
+/**
+ * `PUT /api/admin/settings` body: any subset. Returns `AdminSettings`. `null` clears the UI-set
+ * `lichessToken` / `chesscomContact` (an env value still wins).
+ */
 export interface UpdateAdminSettingsRequest {
   signupMode?: SignupMode;
   anonymousBrowsing?: boolean;
   lichessToken?: string | null;
-  chesscomContact?: string;
+  chesscomContact?: string | null;
   autoRefreshHourUtc?: number;
   updateCooldownMinutes?: number;
   initialSyncMonths?: number;
@@ -329,7 +338,7 @@ export interface AdminUsersResponse {
   users: AdminUser[];
 }
 
-/** `PATCH /api/admin/users/:id`. `password` resets it and signs the user out everywhere. */
+/** `PATCH /api/admin/users/:id` → `AdminUser`. `password` resets it and signs the user out everywhere. */
 export interface UpdateAdminUserRequest {
   role?: UserRole;
   disabled?: boolean;
@@ -626,6 +635,11 @@ export interface ProfileHeader {
   createdAt: EpochMs;
 }
 
+/** `PUT` / `DELETE /api/profiles/:slug/bookmark`: the new state. */
+export interface BookmarkResponse {
+  bookmarked: boolean;
+}
+
 /** `POST /api/profiles/:slug/update` → enqueued sync jobs (fails with `cooldown` when too soon). */
 export interface ProfileUpdateResponse {
   jobs: JobInfo[];
@@ -717,7 +731,10 @@ export interface GameRow {
   event: string | null;
 }
 
-/** `GET /api/profiles/:slug/games` query (pageSize defaults to 20). */
+/** `GET /api/profiles/:slug/overview` query. */
+export type OverviewQuery = ProfileFilters;
+
+/** `GET /api/profiles/:slug/games` and `games.pgn` query (pageSize defaults to 20; `.pgn` ignores paging). */
 export type GamesQuery = ProfileFilters & PageQuery;
 
 /** `GET /api/profiles/:slug/games`. */
@@ -774,14 +791,17 @@ export interface OverviewStats {
   ratingSparkline: RatingSeries[];
 }
 
-/** `GET /api/profiles/:slug/openings` query. Move bounds are full moves (1–5 in the UI). */
-export interface OpeningsQuery {
+/** Endpoint params of `GET /api/profiles/:slug/openings`. Move bounds are full moves (1–5 in the UI). */
+export interface OpeningsParams {
   side?: 'white' | 'black' | 'both';
   order?: 'most' | 'best' | 'worst';
   minGames?: number;
   minMoves?: number;
   maxMoves?: number;
 }
+
+/** `GET /api/profiles/:slug/openings` query. */
+export type OpeningsQuery = ProfileFilters & OpeningsParams;
 
 /** One opening line in the openings table. */
 export interface OpeningRow extends Wdl {
@@ -801,10 +821,13 @@ export interface OpeningsResponse {
   black: OpeningRow[];
 }
 
-/** `GET /api/profiles/:slug/opponents` query (pageSize defaults to 20). */
-export interface OpponentsQuery extends PageQuery {
+/** Endpoint params of `GET /api/profiles/:slug/opponents` (pageSize defaults to 20). */
+export interface OpponentsParams extends PageQuery {
   view?: 'most' | 'titled';
 }
+
+/** `GET /api/profiles/:slug/opponents` query. */
+export type OpponentsQuery = ProfileFilters & OpponentsParams;
 
 /** One opponent row. */
 export interface OpponentRow extends Wdl {
@@ -835,6 +858,9 @@ export interface BehaviourRow {
   avgMoves: number;
 }
 
+/** `GET /api/profiles/:slug/behaviour` query. */
+export type BehaviourQuery = ProfileFilters;
+
 /** `GET /api/profiles/:slug/behaviour`: termination breakdown for wins, draws and losses. */
 export interface BehaviourStats {
   w: BehaviourRow[];
@@ -850,6 +876,9 @@ export interface WorldMapCountry extends Wdl {
   opponents: number;
 }
 
+/** `GET /api/profiles/:slug/worldmap` query. */
+export type WorldMapQuery = ProfileFilters;
+
 /** `GET /api/profiles/:slug/worldmap`. */
 export interface WorldMapStats {
   countries: WorldMapCountry[];
@@ -859,10 +888,13 @@ export interface WorldMapStats {
   pendingLookups: number;
 }
 
-/** `GET /api/profiles/:slug/activity` query: IANA zone for bucketing (default UTC). */
-export interface ActivityQuery {
+/** Endpoint params of `GET /api/profiles/:slug/activity`: IANA zone for bucketing (default UTC). */
+export interface ActivityParams {
   tz?: string;
 }
+
+/** `GET /api/profiles/:slug/activity` query. */
+export type ActivityQuery = ProfileFilters & ActivityParams;
 
 /** `GET /api/profiles/:slug/activity`. */
 export interface ActivityStats {
@@ -877,11 +909,12 @@ export interface ActivityStats {
   grid: ActivityCell[][];
 }
 
-/** `GET /api/profiles/:slug/rating` query: restrict to one source and/or time class. */
-export interface RatingQuery {
-  source?: Id;
-  tc?: TimeClass;
-}
+/**
+ * `GET /api/profiles/:slug/rating` query: just the filters. To chart one source or one time
+ * class, narrow the filter's own `src` / `tc` (there are no separate `source`/`tc` params, which
+ * would collide with the filter keys).
+ */
+export type RatingQuery = ProfileFilters;
 
 /** Average ratings over the last `n` games (null `n` = all games). */
 export interface RatingAverage {
@@ -1105,6 +1138,12 @@ export type ExplorerGamesQuery = ProfileFilters &
  */
 export type ExplorerGamesPage = Paged &
   ({ perspective: 'player'; games: GameRow[] } | { perspective: 'neutral'; games: DbGameRow[] });
+
+/**
+ * `GET /api/tablebase/:variant` response: tablebase.lichess.ovh's JSON, passed through unchanged
+ * (lila parses it). Unauthenticated (lila sends no cookie); query keys as lila sends them.
+ */
+export type TablebaseResponse = Record<string, unknown>;
 
 /** `GET /api/cloud-eval` query (proxied to lichess.org/api/cloud-eval). */
 export interface CloudEvalQuery {
@@ -1477,7 +1516,15 @@ export interface PrepOpponentReport {
   ratings: Array<{ sourceId: Id; kind: SourceKind; ratings: CurrentRating[] }>;
 }
 
-/** `GET /api/prep/:id/report` (takes ProfileFilters plus `tz`). */
+/** Endpoint params of `GET /api/prep/:id/report`: IANA zone for the activity buckets (default UTC). */
+export interface PrepReportParams {
+  tz?: string;
+}
+
+/** `GET /api/prep/:id/report` query: the filters apply to every opponent. */
+export type PrepReportQuery = ProfileFilters & PrepReportParams;
+
+/** `GET /api/prep/:id/report`. */
 export interface PrepReport {
   prep: { id: Id; name: string };
   generatedAt: EpochMs;
@@ -1648,6 +1695,55 @@ export const API_ROUTES = {
   prep: '/api/prep',
   prepSet: (id: Id | string) => `/api/prep/${seg(id)}`,
   prepReport: (id: Id | string) => `/api/prep/${seg(id)}/report`,
+} as const;
+
+/**
+ * Response of every state-changing endpoint (documentation; the server must match it).
+ * `OkResponse` is `{ok:true}` with status 200. Non-JSON GETs: `games.pgn`, `export.pgn`,
+ * `masters/pgn/:id` and `round/:roundId.pgn` stream `application/x-chess-pgn`; the player
+ * explorer answers NDJSON (`ExplorerPlayerResponse`, one line).
+ */
+export const MUTATION_RESPONSES = {
+  'POST /api/setup': 'LoginResponse',
+  'POST /api/login': 'LoginResponse',
+  'POST /api/logout': 'OkResponse',
+  'POST /api/signup': 'LoginResponse',
+  'PUT /api/me/prefs': 'UserPrefs',
+  'POST /api/me/password': 'OkResponse',
+  'POST /api/me/totp/setup': 'TotpSetupResponse',
+  'POST /api/me/totp/enable': 'OkResponse',
+  'POST /api/me/totp/disable': 'OkResponse',
+  'DELETE /api/me/sessions/:id': 'OkResponse',
+  'PUT /api/admin/settings': 'AdminSettings',
+  'PATCH /api/admin/users/:id': 'AdminUser',
+  'DELETE /api/admin/users/:id': 'OkResponse',
+  'POST /api/admin/invites': 'Invite',
+  'DELETE /api/admin/invites/:code': 'OkResponse',
+  'POST /api/admin/jobs/:id/retry': 'JobInfo',
+  'POST /api/admin/jobs/:id/cancel': 'JobInfo',
+  'POST /api/admin/reference/broadcast-months': 'ImportJobsResponse',
+  'POST /api/admin/reference/import': 'ImportResponse',
+  'POST /api/profiles': 'ProfileHeader',
+  'PATCH /api/profiles/:slug': 'ProfileHeader',
+  'DELETE /api/profiles/:slug': 'OkResponse',
+  'POST /api/profiles/:slug/sources': 'ProfileHeader',
+  'DELETE /api/profiles/:slug/sources/:sourceId': 'ProfileHeader',
+  'POST /api/profiles/:slug/update': 'ProfileUpdateResponse',
+  'PUT /api/profiles/:slug/bookmark': 'BookmarkResponse',
+  'DELETE /api/profiles/:slug/bookmark': 'BookmarkResponse',
+  'POST /api/databases': 'DatabaseInfo',
+  'PATCH /api/databases/:id': 'DatabaseInfo',
+  'DELETE /api/databases/:id': 'OkResponse',
+  'POST /api/databases/:id/import': 'ImportResponse',
+  'DELETE /api/databases/:id/games/:gameId': 'OkResponse',
+  'POST /api/files': 'StudioFile',
+  'PUT /api/files/:id': 'StudioFile',
+  /** Moves the file to the recycle bin; on a file already in the bin, deletes it for good. */
+  'DELETE /api/files/:id': 'OkResponse',
+  'POST /api/files/:id/restore': 'StudioFile',
+  'POST /api/prep': 'PrepSet',
+  'PUT /api/prep/:id': 'PrepSet',
+  'DELETE /api/prep/:id': 'OkResponse',
 } as const;
 
 /** Custom header every non-GET request must carry (CSRF defence, PLAN §6). */

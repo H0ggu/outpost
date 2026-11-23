@@ -1,8 +1,9 @@
 {
   "extends": "../tsconfig.base.json",
-  "//": "Shared code must run in both Node and the browser: use only ES built-ins plus globals that exist in both (TextEncoder, btoa/atob, URLSearchParams).",
+  "//": "Shared sources run in Node and in the browser, so this program has no Node types: a Node-only global (Buffer, process, require) fails the typecheck. Use ES built-ins plus globals both runtimes have (TextEncoder/TextDecoder, btoa/atob, URLSearchParams). Tests: tsconfig.test.json.",
   "compilerOptions": {
-    "types": ["node"]
+    "lib": ["es2024", "dom"],
+    "types": []
   },
-  "include": ["src", "test", "vitest.config.ts"]
+  "include": ["src"]
 }

@@ -6,10 +6,19 @@ services:
     build: .
     image: outpost:local
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
+    # Pinned for the container whatever .env says: it always runs in production, binds every
+    # interface inside its own network namespace (the published port and the healthcheck need
+    # that) and keeps its data in the /data volume.
     environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
       DATA_DIR: /data
     volumes:
       - ./data:/data
+    # To reach Outpost only from this host (e.g. a reverse proxy on the same machine), publish it
+    # on loopback instead: "127.0.0.1:${PORT:-8080}:${PORT:-8080}".
     ports:
       - "${PORT:-8080}:${PORT:-8080}"

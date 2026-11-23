@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "//": "Studio entry (src/studio) only. Owned by the Studio module, which may relax options here for the vendored lila code its imports pull in (web/vendor/lila is type-checked through those imports). The SPA program (tsconfig.json) excludes src/studio.",
+  "compilerOptions": {
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["vite/client"]
+  },
+  "include": ["src/studio", "src/vite-env.d.ts"],
+  "exclude": ["dist", "node_modules"]
+}

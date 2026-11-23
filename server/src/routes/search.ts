@@ -6,7 +6,8 @@ import type { FastifyPluginAsync } from 'fastify';
  * Endpoints (request/response types in @outpost/shared/api):
  *   - GET /api/search?q= (SearchResults: local profiles, Lichess autocomplete, Chess.com exact-username check, known usernames, reference players)
  *
- * Use { preHandler: requireViewer }. Upstream calls go through the server only (the Lichess token never reaches the browser).
+ * Use { preHandler: requireViewer }. Upstream calls go through app.upstream only (src/http/upstream.ts; the Lichess token never reaches the browser).
+ * Reference players: searchReferencePlayers (src/reference/index.ts, owned by reference).
  *
  * TODO(profiles): implement. Keep this file thin: validate with src/http/validate.ts, check access
  * with the preHandlers in src/auth/session.ts, call into the module, return contract types, and
