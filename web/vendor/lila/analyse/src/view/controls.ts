@@ -82,11 +82,19 @@ function renderMobileCevalTab(ctrl: AnalyseCtrl): LooseVNode {
   const active = ctrl.activeControlMode() && !ctrl.activeControlBarTool();
   const latent = ctrl.activeControlMode() && !!ctrl.activeControlBarTool();
 
+  // outpost: named after the mode it opens (its content is a bar, a switch and maybe an eval)
+  const label =
+    engineMode === 'practice'
+      ? i18n.site.practiceWithComputer
+      : engineMode === 'retro'
+        ? i18n.site.learnFromYourMistakes
+        : i18n.site.computerAnalysis;
+
   return hl(
     'button.fbt',
     {
       key: 'engine-mode',
-      attrs: { 'data-act': 'engine-mode', 'data-mode': engineMode },
+      attrs: { 'data-act': 'engine-mode', 'data-mode': engineMode, title: label, 'aria-label': label },
       class: { active, latent, computing: ctrl.ceval.isComputing },
     },
     [
@@ -138,7 +146,23 @@ function clickControl(ctrl: AnalyseCtrl, e: PointerEvent) {
   ctrl.redraw();
 }
 
+// outpost: the jump buttons are icons only, so they get a name (title and aria-label) like the others
+const jumpLabels: Record<string, string> = {
+  first: 'First move',
+  prev: 'Previous move',
+  next: 'Next move',
+  last: 'Last move',
+};
+
 const jumpButton = (icon: LiconValue, effect: string, enabled: boolean): VNode =>
-  hl('button.fbt.move', { attrs: { disabled: !enabled, 'data-act': effect, 'data-icon': icon } });
+  hl('button.fbt.move', {
+    attrs: {
+      disabled: !enabled,
+      'data-act': effect,
+      'data-icon': icon,
+      title: jumpLabels[effect]!,
+      'aria-label': jumpLabels[effect]!,
+    },
+  });
 
 const isMobileUi = (): boolean => displayColumns() === 1 && isTouchDevice();

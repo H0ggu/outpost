@@ -3,8 +3,9 @@
 `web/vendor/lila` is a copy of lila at the pinned commit plus the patches in this folder.
 `scripts/vendor-lichess.sh` re-applies every patch in name order after copying, so re-vendoring never
 loses them. Paths in a patch are relative to `web/vendor/lila` (e.g. `a/analyse/src/ctrl.ts`), and
-each vendored file belongs to exactly one patch. Every change is guarded by the `outpost` options
-the Studio passes (`opts.outpost`, `opts.explorer.outpost`), so without them lila behaves as upstream.
+each vendored file belongs to exactly one patch. Every behaviour change is guarded by the `outpost`
+options the Studio passes (`opts.outpost`, `opts.explorer.outpost`), so without them lila behaves as
+upstream; 006 (a breakpoint) and 007 (accessible names) change no behaviour and apply as they are.
 
 | Patch | What it changes, and why |
 |---|---|
@@ -14,6 +15,7 @@ the Studio passes (`opts.outpost`, `opts.explorer.outpost`), so without them lil
 | `004-ceval-shipped-engines.patch` | The engine list offers only engines whose files Outpost ships: stockfish-web (SF 19, SF 19 smallnet, Fairy-Stockfish HCE) when the page is cross-origin isolated, and stockfish.js otherwise. Drops the stockfish-nnue.wasm, stockfish.wasm and multi-variant builds and the per-variant NNUE nets. |
 | `005-tsconfig-vendored-references.patch` | Removes project references to lila packages that are not vendored (`bits`, `chart`, `dasher`): Vite's TypeScript transform follows them and fails on the missing folders. |
 | `006-header-breakpoint.patch` | `$topnav-visible` 1020px → 1180px: the site header's nav folds into the hamburger where the SPA's does. Outpost's header (nav, player search, user name) doesn't fit on one line below that; at 1020–1032 px the user's name wrapped onto the Studio bar and caught its clicks. A SCSS value can't be guarded by `outpost` options; it only moves a breakpoint. |
+| `007-accessible-controls.patch` | Accessible names lila leaves out: the move jump buttons ("First move" … "Last move", title and `aria-label`), the phone engine tab (named after its mode), the FEN input and PGN textarea, and `cmnToggle`'s checkbox (its `title`, which lila ignored, now names the checkbox and shows as a tooltip; the `role="button"` span around it, an unnamed button that hid the checkbox's state, is a plain span). studio.css keeps lila's icon glyphs out of accessible names (`content: attr(data-icon) / ''`), so titled icon buttons are named by their title. |
 
 Edit the vendored files, then regenerate the patch the file belongs to against a commit that holds
 the unpatched copy (`<base>`, e.g. the scaffold commit, or a fresh `npm run vendor` with this folder empty):

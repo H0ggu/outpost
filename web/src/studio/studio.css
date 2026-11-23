@@ -11,6 +11,13 @@
   src: url('/lichess/font/lichess.woff2') format('woff2');
 }
 
+/* lila's icon font glyph (a private-use character in ::before) stays out of accessible names, as in
+   the SPA (src/styles/lichess-theme.css): otherwise an icon button's name is that character and its
+   title is only a description. Browsers without CSS alt text keep lila's plain declaration. */
+[data-icon]::before {
+  content: attr(data-icon) / '';
+}
+
 /* -------------------------------------------------------------------------
  * True black (Outpost default, for OLED screens): lila's dark theme with black surfaces.
  * Font, primary and accent colours stay lila's. Boxes get a hairline instead of a lighter fill.

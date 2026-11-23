@@ -1,0 +1,96 @@
+diff --git a/analyse/src/view/components.ts b/analyse/src/view/components.ts
+index 0b61a2b..91dc57e 100644
+--- a/analyse/src/view/components.ts
++++ b/analyse/src/view/components.ts
+@@ -171,7 +171,7 @@ export function renderInputs(ctrl: AnalyseCtrl): VNode | undefined {
+     hl('div.pair', [
+       hl('label.name', 'FEN'),
+       hl('input.copyable', {
+-        attrs: { spellcheck: 'false', enterkeyhint: 'done' },
++        attrs: { spellcheck: 'false', enterkeyhint: 'done', 'aria-label': 'FEN' }, // outpost: named like its label
+         hook: {
+           ...onInsert<HTMLInputElement>(el => {
+             el.value = defined(ctrl.fenInput) ? ctrl.fenInput : ctrl.node.fen;
+@@ -197,7 +197,7 @@ export function renderInputs(ctrl: AnalyseCtrl): VNode | undefined {
+       hl('div.pair', [
+         hl('label.name', 'PGN'),
+         hl('textarea.copyable', {
+-          attrs: { spellcheck: 'false' },
++          attrs: { spellcheck: 'false', 'aria-label': 'PGN' }, // outpost: named like its label
+           class: { 'is-error': !!ctrl.pgnError },
+           hook: {
+             ...onInsert<HTMLTextAreaElement>(el => {
+diff --git a/analyse/src/view/controls.ts b/analyse/src/view/controls.ts
+index c80d493..2c6ca0f 100644
+--- a/analyse/src/view/controls.ts
++++ b/analyse/src/view/controls.ts
+@@ -82,11 +82,19 @@ function renderMobileCevalTab(ctrl: AnalyseCtrl): LooseVNode {
+   const active = ctrl.activeControlMode() && !ctrl.activeControlBarTool();
+   const latent = ctrl.activeControlMode() && !!ctrl.activeControlBarTool();
+ 
++  // outpost: named after the mode it opens (its content is a bar, a switch and maybe an eval)
++  const label =
++    engineMode === 'practice'
++      ? i18n.site.practiceWithComputer
++      : engineMode === 'retro'
++        ? i18n.site.learnFromYourMistakes
++        : i18n.site.computerAnalysis;
++
+   return hl(
+     'button.fbt',
+     {
+       key: 'engine-mode',
+-      attrs: { 'data-act': 'engine-mode', 'data-mode': engineMode },
++      attrs: { 'data-act': 'engine-mode', 'data-mode': engineMode, title: label, 'aria-label': label },
+       class: { active, latent, computing: ctrl.ceval.isComputing },
+     },
+     [
+@@ -138,7 +146,23 @@ function clickControl(ctrl: AnalyseCtrl, e: PointerEvent) {
+   ctrl.redraw();
+ }
+ 
++// outpost: the jump buttons are icons only, so they get a name (title and aria-label) like the others
++const jumpLabels: Record<string, string> = {
++  first: 'First move',
++  prev: 'Previous move',
++  next: 'Next move',
++  last: 'Last move',
++};
++
+ const jumpButton = (icon: LiconValue, effect: string, enabled: boolean): VNode =>
+-  hl('button.fbt.move', { attrs: { disabled: !enabled, 'data-act': effect, 'data-icon': icon } });
++  hl('button.fbt.move', {
++    attrs: {
++      disabled: !enabled,
++      'data-act': effect,
++      'data-icon': icon,
++      title: jumpLabels[effect]!,
++      'aria-label': jumpLabels[effect]!,
++    },
++  });
+ 
+ const isMobileUi = (): boolean => displayColumns() === 1 && isTouchDevice();
+diff --git a/lib/src/view/cmn-toggle.ts b/lib/src/view/cmn-toggle.ts
+index 42fdc04..0e05e83 100644
+--- a/lib/src/view/cmn-toggle.ts
++++ b/lib/src/view/cmn-toggle.ts
+@@ -35,10 +35,17 @@ export const cmnToggleProp = (opts: CmnToggleProp): VNode =>
+     change: v => opts.prop(v),
+   });
+ 
++// outpost: the checkbox is the control, named by the title (its <label> is empty); a role=button span
++// around it was an unnamed button that hid the checkbox's state from screen readers
+ export const cmnToggle = (opts: CmnToggle): VNode =>
+-  h('span.cmn-toggle', { attrs: { role: 'button' } }, [
++  h('span.cmn-toggle', opts.title ? { attrs: { title: opts.title } } : {}, [
+     h(`input#cmn-tg-${opts.id}`, {
+-      attrs: { type: 'checkbox', checked: opts.checked, disabled: !!opts.disabled },
++      attrs: {
++        type: 'checkbox',
++        checked: opts.checked,
++        disabled: !!opts.disabled,
++        ...(opts.title ? { 'aria-label': opts.title } : {}),
++      },
+       on: {
+         click: blurIfPrimaryClick,
+       },

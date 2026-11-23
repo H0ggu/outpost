@@ -35,10 +35,17 @@ export const cmnToggleProp = (opts: CmnToggleProp): VNode =>
     change: v => opts.prop(v),
   });
 
+// outpost: the checkbox is the control, named by the title (its <label> is empty); a role=button span
+// around it was an unnamed button that hid the checkbox's state from screen readers
 export const cmnToggle = (opts: CmnToggle): VNode =>
-  h('span.cmn-toggle', { attrs: { role: 'button' } }, [
+  h('span.cmn-toggle', opts.title ? { attrs: { title: opts.title } } : {}, [
     h(`input#cmn-tg-${opts.id}`, {
-      attrs: { type: 'checkbox', checked: opts.checked, disabled: !!opts.disabled },
+      attrs: {
+        type: 'checkbox',
+        checked: opts.checked,
+        disabled: !!opts.disabled,
+        ...(opts.title ? { 'aria-label': opts.title } : {}),
+      },
       on: {
         click: blurIfPrimaryClick,
       },

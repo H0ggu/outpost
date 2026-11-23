@@ -251,5 +251,8 @@ describe('vendored lila tree', () => {
     expect(files.get('analyse/src/pgnImport.ts')).toContain('export const glyphOfNag');
     expect(files.get('analyse/src/view/actionMenu.ts')).toContain('!ctrl.opts.outpost');
     expect(files.get('lib/src/ceval/engines/engines.ts')).not.toContain('ThreadedEngine(');
+    expect(files.get('analyse/src/view/controls.ts')).toContain("'aria-label': jumpLabels[effect]!");
+    expect(files.get('analyse/src/view/components.ts')).toContain("'aria-label': 'FEN'");
+    expect(files.get('lib/src/view/cmn-toggle.ts')).not.toContain("role: 'button'");
   });
 });
