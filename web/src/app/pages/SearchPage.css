@@ -1,0 +1,59 @@
+/* Search page (`/search`). Hit rows (.lib-hit) live in library.css. */
+
+.lib-manual {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--c-border);
+}
+
+/* Sticky bar while accounts are picked for a merged profile. */
+.lib-pickbar {
+  position: sticky;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 50;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--box-radius);
+  border: 1px solid color-mix(in oklab, var(--c-primary) 50%, var(--c-bg));
+  background: color-mix(in oklab, var(--c-primary) 14%, var(--c-bg-popup));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+.lib-pickbar__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
+.lib-pickbar__text strong {
+  color: var(--c-font-clear);
+}
+
+.lib-pickbar__names {
+  color: var(--c-font-dim);
+  font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-pick {
+  font-size: 0.85em;
+  color: var(--c-font-dim);
+}
+
+@media (max-width: 420px) {
+  .lib-pick__text {
+    display: none;
+  }
+}

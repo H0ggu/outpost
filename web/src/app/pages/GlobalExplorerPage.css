@@ -1,0 +1,97 @@
+/* Global explorer hand-off (`/explorer`). */
+
+.lib-explorer-dbs {
+  list-style: none;
+  margin: 1rem 0 1.75rem;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.lib-explorer-db {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: var(--box-radius);
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-zebra);
+  color: var(--c-font);
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.lib-explorer-db:hover,
+.lib-explorer-db:focus-visible {
+  color: var(--c-font);
+  border-color: color-mix(in oklab, var(--c-primary) 50%, var(--c-bg));
+  background: color-mix(in oklab, var(--c-primary) 12%, var(--c-bg));
+}
+
+.lib-explorer-db > i:first-child {
+  font-size: 2rem;
+  color: var(--c-accent);
+}
+
+.lib-explorer-db > i::before {
+  margin: 0;
+}
+
+.lib-explorer-db__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.lib-explorer-db__text strong {
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: var(--c-font-clear);
+}
+
+.lib-explorer-db__text span {
+  color: var(--c-font-dim);
+}
+
+.lib-explorer-db__count {
+  color: var(--c-font) !important;
+  font-size: 0.9em;
+}
+
+.lib-explorer-db__note {
+  font-size: 0.85em;
+  color: var(--c-font-dimmer) !important;
+}
+
+.lib-explorer-db__go {
+  color: var(--c-font-dimmer);
+}
+
+.lib-explorer-db--empty > i:first-child {
+  color: var(--c-font-dimmer);
+}
+
+.lib-explorer-fen input {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.lib-explorer-fen input[aria-invalid='true'] {
+  border-color: var(--c-bad);
+}
+
+.lib-explorer-attr {
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 480px) {
+  .lib-explorer-db {
+    gap: 0.75rem;
+    padding: 0.85rem;
+  }
+
+  .lib-explorer-db > i:first-child {
+    font-size: 1.5rem;
+  }
+}
