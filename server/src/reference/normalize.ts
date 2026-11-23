@@ -4,7 +4,11 @@
  * - `BroadcastName` is the event (the `Event` tag is sometimes the chapter name, "Round 6: A - B");
  * - `GameURL` is the game link and gives the study chapter id used to deduplicate across round
  *   imports and monthly dumps;
- * - TimeControl is the organiser's text (`90+30` minutes, free text…), see ./timeControl.ts;
+ * - TimeControl is the organiser's text (`90+30` minutes, free text…), see ./timeControl.ts. Round
+ *   imports also know the tour's FIDE time control (`tour.info.fideTC`); monthly dumps do not (no
+ *   tour data, and looking up every tour would cost hundreds of token requests per month), so a
+ *   dump game without a usable TimeControl tag or telling event name stays `unknown` (about half
+ *   of a month in the 2026-10 dump);
  * - engine games (`BOT` titles, e.g. TCEC) and unplayed/forfeited boards are skipped;
  * - amateur boards sometimes carry the rating inside the name ("2162 Some Player").
  */

@@ -1,9 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { Agent, request as httpRequest, type IncomingHttpHeaders } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import type { ImportJobsResponse, ImportResponse, ReferenceInfo, ReferencePlayersResponse } from '@outpost/shared/api';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { getJobHandler } from '../src/jobs/index.ts';
-import { ensureBroadcastDatabase, LICHESS_BROADCAST_ATTRIBUTION } from '../src/reference/databases.ts';
+import { enqueueJob, getJobHandler } from '../src/jobs/index.ts';
+import { ensureBroadcastDatabase, findOrCreateReferenceDatabase, LICHESS_BROADCAST_ATTRIBUTION } from '../src/reference/databases.ts';
+import { indexReferencePlayer } from '../src/reference/players.ts';
 import { addMonths, monthOf } from '../src/reference/months.ts';
 import { REFERENCE_LIMITS } from '../src/reference/stream.ts';
 import { writeSettings } from '../src/settings.ts';
@@ -264,6 +267,8 @@ describe('reference routes', () => {
     ]);
     expect(tooBig.statusCode).toBe(413);
     expect(tooBig.json().error.code).toBe('payload_too_large');
+    // The unread rest of the body must not stay on a keep-alive connection.
+    expect(tooBig.headers.connection).toBe('close');
     expect(readdirSync(t.config.uploadsDir).length).toBe(before);
     expect(t.db.value("SELECT COUNT(*) FROM databases WHERE name = 'X'")).toBe(0);
   });
@@ -303,6 +308,68 @@ describe('reference routes', () => {
       expect(dup.job.id).toBe(ok.job.id);
     } finally {
       writeSettings(t.db, { lichessToken: null });
+    }
+  });
+
+  it('hides private reference databases, their name-only players and import jobs from non-admins', async () => {
+    const id = findOrCreateReferenceDatabase(t.db, { name: 'Secret OTB', licence: 'Licensed, not for redistribution' });
+    t.db.run("UPDATE databases SET visibility = 'private' WHERE id = ?", [id]);
+    t.db.tx(() =>
+      indexReferencePlayer(t.db, id, { name: 'Hidden Player', fideId: null, title: null, rating: 2000, federation: null }, Date.UTC(2026, 0, 1)),
+    );
+    const job = enqueueJob(t.db, 'referenceImport', { databaseId: id, url: 'https://files.example.org/x.pgn' }, { userId: 1 });
+    t.db.run("UPDATE jobs SET status = 'error', error = 'boom' WHERE id = ?", [job.id]);
+
+    const info = async (cookie: string) => (await t.app.inject({ url: '/api/reference', headers: { cookie } })).json<ReferenceInfo>();
+    const asUser = await info(user);
+    expect(asUser.databases.map(d => d.name)).not.toContain('Secret OTB');
+    expect(asUser.databases.every(d => d.importJob === null && !d.canEdit)).toBe(true);
+    expect(asUser.attribution.join('\n')).not.toMatch(/Secret/);
+    expect(asUser.totalGames).toBe(asUser.databases.reduce((n, d) => n + d.gameCount, 0));
+    const asAdmin = await info(admin);
+    const secret = asAdmin.databases.find(d => d.name === 'Secret OTB');
+    expect(secret).toMatchObject({ visibility: 'private', canEdit: true, importJob: { id: job.id, status: 'error' } });
+    expect(asAdmin.attribution).toContain('Secret OTB: Licensed, not for redistribution');
+
+    const players = async (cookie: string) =>
+      (await t.app.inject({ url: '/api/reference/players?q=hidden', headers: { cookie } })).json<ReferencePlayersResponse>().players.map(p => p.name);
+    expect(await players(user)).toEqual([]);
+    expect(await players(admin)).toEqual(['Hidden Player']);
+  });
+
+  it('closes the connection after a failed upload, so a keep-alive client does not hang', async () => {
+    const srv = await makeTestApp();
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const cookie = createUserSession(srv.db, { username: 'root', role: 'admin' }).cookie;
+      await srv.app.listen({ host: '127.0.0.1', port: 0 });
+      const { port } = srv.app.server.address() as AddressInfo;
+      const send = (method: string, path: string, headers: Record<string, string | number>, body?: Buffer) =>
+        new Promise<{ status: number; headers: IncomingHttpHeaders }>((resolve, reject) => {
+          const req = httpRequest({ host: '127.0.0.1', port, method, path, headers, agent, timeout: 3_000 }, res => {
+            res.resume();
+            res.on('end', () => resolve({ status: res.statusCode!, headers: res.headers }));
+          });
+          req.on('timeout', () => req.destroy(new Error(`${method} ${path} timed out`)));
+          req.on('error', reject);
+          req.end(body);
+        });
+      REFERENCE_LIMITS.uploadBytes = 1024 * 1024;
+      const { payload, headers } = multipart([
+        { name: 'databaseName', value: 'X' },
+        { name: 'file', filename: 'big.pgn', content: Buffer.alloc(3 * 1024 * 1024, 'a') },
+      ]);
+      const first = await send('POST', '/api/admin/reference/import', { ...headers, cookie, 'content-length': payload.length }, payload).catch(
+        (e: NodeJS.ErrnoException) => ({ status: e.code ?? e.message, headers: {} }),
+      );
+      // The server answers 413 (the client may also see the reset of the rest of its upload).
+      expect([413, 'EPIPE', 'ECONNRESET']).toContain(first.status);
+      for (let i = 0; i < 3; i++) {
+        expect((await send('GET', '/api/reference', { cookie })).status).toBe(200);
+      }
+    } finally {
+      agent.destroy();
+      await srv.close();
     }
   });
 });
