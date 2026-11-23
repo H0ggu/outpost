@@ -15,8 +15,12 @@
  * A handler is a plain async function of its `JobContext`: it must not capture an app instance
  * (the registry is process-wide, tests build many apps). Contract with the workers (jobs module):
  * - return normally → `done`; throw → the worker records the error. An `UpstreamError` with
- *   reason `rate_limited` re-queues the job at `retryAt`; network errors and 5xx are retried with
- *   exponential backoff; anything else marks the job `error`.
+ *   reason `rate_limited` re-queues the job at `retryAt` (not counted as a failure); network
+ *   errors, timeouts and 5xx are retried with exponential backoff (30 s × 2^n, capped at 30 min,
+ *   `MAX_JOB_ATTEMPTS` runs in all); anything else marks the job `error`;
+ * - throw `RequeueJob` to stop early and run again later without counting a failure (a long
+ *   background job yielding its lane to higher-priority work); keep the cursor to resume from in
+ *   a checkpoint (`saveJobCheckpoint`, checkpoint.ts) saved with the work it covers;
  * - honour `ctx.signal` (cancel, shutdown) and pass it to `ctx.upstream` calls;
  * - write in short `ctx.db.tx()` batches (the API stays responsive); very heavy parsing may move to
  *   a worker thread with its own `openDb(ctx.config.dbPath)`.
@@ -24,7 +28,7 @@
  * Tests call a handler directly with `makeJobContext()` from server/test/helpers.ts.
  */
 import type { FastifyBaseLogger } from 'fastify';
-import type { Id, JobKind, JobLane, JobPayloads, JobProgress } from '@outpost/shared/api';
+import type { EpochMs, Id, JobKind, JobLane, JobPayloads, JobProgress } from '@outpost/shared/api';
 import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
 import type { Upstream } from '../http/upstream.ts';
@@ -64,4 +68,19 @@ export function registerJobHandler<K extends JobKind>(kind: K, handler: JobHandl
 /** The handler for a kind, or undefined when its module hasn't registered one. */
 export function getJobHandler<K extends JobKind>(kind: K): JobHandler<K> | undefined {
   return handlers.get(kind) as JobHandler<K> | undefined;
+}
+
+/**
+ * Thrown by a handler to stop now and run again later without counting a failure. The job goes
+ * back to `queued` (its place is still decided by priority and age), to run at `runAfter`
+ * (null = as soon as its lane is free). Progress written so far stays.
+ */
+export class RequeueJob extends Error {
+  override name = 'RequeueJob';
+  readonly runAfter: EpochMs | null;
+
+  constructor(message = 'Yielding to other jobs', runAfter: EpochMs | null = null) {
+    super(message);
+    this.runAfter = runAfter;
+  }
 }

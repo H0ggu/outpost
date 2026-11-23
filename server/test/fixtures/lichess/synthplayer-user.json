@@ -1,0 +1,67 @@
+{
+ "id": "synthplayer",
+ "username": "SynthPlayer",
+ "title": "FM",
+ "createdAt": 1600000000000,
+ "seenAt": 1795000000000,
+ "url": "https://lichess.org/@/SynthPlayer",
+ "perfs": {
+  "bullet": {
+   "games": 120,
+   "rating": 2044,
+   "rd": 60,
+   "prog": 5
+  },
+  "blitz": {
+   "games": 300,
+   "rating": 2108,
+   "rd": 45,
+   "prog": -3
+  },
+  "rapid": {
+   "games": 0,
+   "rating": 1500,
+   "rd": 500,
+   "prog": 0,
+   "prov": true
+  },
+  "classical": {
+   "games": 4,
+   "rating": 1912,
+   "rd": 150,
+   "prog": 0,
+   "prov": true
+  },
+  "correspondence": {
+   "games": 12,
+   "rating": 1807,
+   "rd": 120,
+   "prog": 0
+  },
+  "ultraBullet": {
+   "games": 30,
+   "rating": 1705,
+   "rd": 110,
+   "prog": 0
+  },
+  "puzzle": {
+   "games": 500,
+   "rating": 2200,
+   "rd": 80,
+   "prog": 0
+  },
+  "storm": {
+   "runs": 3,
+   "score": 40
+  }
+ },
+ "profile": {
+  "flag": "GB-SCT",
+  "fideRating": 2050,
+  "bio": "Synthetic test account."
+ },
+ "count": {
+  "all": 480,
+  "rated": 460
+ }
+}

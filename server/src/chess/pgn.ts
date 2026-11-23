@@ -25,6 +25,7 @@ import {
   type Termination,
   type TimeClass,
 } from '@outpost/shared/chess';
+import { drawKindOf, type Replay } from './replay.ts';
 import type { NormalizedGame, NormalizedPlayer } from './store.ts';
 
 /** A parsed PGN game (chessops). */
@@ -112,24 +113,61 @@ export function pgnTimeClass(tc: string | null): TimeClass {
   return 'unknown';
 }
 
-function termination(game: PgnGame, result: GameResult, finalPos: Chess): Termination {
-  if (finalPos.isCheckmate()) return 'mate';
-  if (finalPos.isStalemate()) return 'stalemate';
-  const draw = result === '1/2-1/2';
-  if (draw && finalPos.isInsufficientMaterial()) return 'insufficient';
-  const t = (header(game, 'Termination') ?? '').toLowerCase();
-  if (t.includes('time')) return draw ? 'timeout_vs_insufficient' : 'timeout';
-  if (t.includes('abandon')) return 'abandon';
-  if (t.includes('rules') || t.includes('unterminated')) return 'other';
-  return draw ? 'agreement' : 'resign';
+/**
+ * Termination named by a PGN `Termination` tag, or null when the tag doesn't say (Lichess "Normal",
+ * unknown wording): the caller then judges from the final position.
+ * - Chess.com: "<user> won by resignation | on time | by checkmate | - game abandoned",
+ *   "Game drawn by repetition | agreement | stalemate | insufficient material |
+ *   timeout vs insufficient material | 50-move rule".
+ * - Lichess: "Normal", "Time forfeit", "Abandoned", "Rules infraction", "Unterminated".
+ * - Other PGN: "time forfeit", "adjudication", "emergency", "death", … (anything unknown → null).
+ */
+export function terminationFromTag(tag: string | null, draw: boolean): Termination | null {
+  if (!tag) return null;
+  const t = tag.trim().toLowerCase();
+  // Chess.com puts the winner's username first; only look at the words after " won ".
+  const won = t.lastIndexOf(' won ');
+  const drawnBy = /^game drawn by (.+)$/.exec(t);
+  const reason = won >= 0 ? t.slice(won + 5) : drawnBy ? drawnBy[1]! : t;
+  if (/\btimeout vs\.? insufficient|\btime\b.*\binsufficient/.test(reason)) return 'timeout_vs_insufficient';
+  if (/\babandon/.test(reason)) return 'abandon';
+  if (/\bresign/.test(reason)) return draw ? null : 'resign';
+  if (/\bcheckmate|\bmate\b/.test(reason)) return draw ? null : 'mate';
+  if (/\b(on time|time forfeit|time|flag)/.test(reason)) return draw ? 'timeout_vs_insufficient' : 'timeout';
+  if (/\brepetition/.test(reason)) return draw ? 'repetition' : null;
+  if (/\bagree/.test(reason)) return draw ? 'agreement' : null;
+  if (/\bstalemate/.test(reason)) return draw ? 'stalemate' : null;
+  if (/\binsufficient/.test(reason)) return draw ? 'insufficient' : null;
+  if (/\b(50|fifty)[- ]move/.test(reason)) return draw ? 'fifty' : null;
+  if (/\b(rules infraction|unterminated|adjudicat|emergency|death)/.test(reason)) return 'other';
+  return null;
 }
+
+function termination(game: PgnGame, result: GameResult, final: Replay): Termination {
+  if (final.pos.isCheckmate()) return 'mate';
+  if (final.pos.isStalemate()) return 'stalemate';
+  const draw = result === '1/2-1/2';
+  const fromTag = terminationFromTag(header(game, 'Termination'), draw);
+  if (fromTag) return fromTag;
+  if (draw) return drawKindOf(final) ?? 'agreement';
+  return 'resign';
+}
+
+/** A rating diff tag (`+8`, `-12`, `0`) → number, or null. */
+const ratingDiff = (s: string | null): number | null => (s && /^[+-]?\d{1,4}$/.test(s) ? Number(s) : null);
 
 /**
  * Maps a parsed PGN game to a `NormalizedGame` (origin `pgn` for user databases, `reference` for
  * reference/broadcast databases), or says why it is skipped: variants, games from a set-up
  * position, unfinished games (`*`), games without moves (forfeits) and illegal moves.
- * `rated` is true for Lichess-style "Rated …" events, false for "Casual …", otherwise true when
- * both players have a rating.
+ * - `rated`: true for Lichess-style "Rated …" events, false for "Casual …"; otherwise true when the
+ *   game carries a rating diff (Lichess exports) or both players have a rating.
+ * - `termination`: checkmate/stalemate from the final position, then the `Termination` tag
+ *   (Chess.com and Lichess wording), then the final position for draws (dead position, threefold
+ *   repetition, 50-move rule, else agreement); decisive games default to resignation.
+ * - ratings are as written (`WhiteElo`); `ratingAfter` = Elo + `WhiteRatingDiff` when present.
+ * - `startedAt` from `UTCDate`/`UTCTime` (else `Date`), `endedAt` from Chess.com's
+ *   `EndDate`/`EndTime` when present, else the start.
  */
 export function pgnToNormalizedGame(
   game: PgnGame,
@@ -141,24 +179,33 @@ export function pgnToNormalizedGame(
   const result = parseResult(game.headers.get('Result'));
   if (!result) return { skip: 'noResult' };
 
+  const draw = result === '1/2-1/2';
   const pos = Chess.default();
   const moves: string[] = [];
+  const seen = draw ? new Map<string, number>([[epdOf(pos), 1]]) : null;
   let dedupeEpd: string | null = null;
   for (const node of game.moves.mainline()) {
     const move = parseSan(pos, node.san);
     if (!move) return { skip: 'illegalMove', detail: `${node.san} at ply ${moves.length + 1}` };
     moves.push(makeSanAndPlay(pos, move));
-    if (moves.length === DEDUPE_PLY) dedupeEpd = epdOf(pos);
+    if (moves.length === DEDUPE_PLY || seen) {
+      const epd = epdOf(pos);
+      if (moves.length === DEDUPE_PLY) dedupeEpd = epd;
+      seen?.set(epd, (seen.get(epd) ?? 0) + 1);
+    }
   }
   if (moves.length === 0) return { skip: 'noMoves' };
+  const final: Replay = { pos, sans: moves, threefold: seen !== null && (seen.get(epdOf(pos)) ?? 0) >= 3 };
 
   const player = (color: 'White' | 'Black'): NormalizedPlayer => {
     const title = header(game, `${color}Title`);
     const fideId = header(game, `${color}FideId`);
+    const elo = rating(header(game, `${color}Elo`));
+    const diff = ratingDiff(header(game, `${color}RatingDiff`));
     return {
       name: header(game, color) ?? '?',
-      rating: rating(header(game, `${color}Elo`)),
-      ratingAfter: null,
+      rating: elo,
+      ratingAfter: elo !== null && diff !== null ? elo + diff : null,
       title: isTitle(title) ? title : null,
       fideId: fideId && /^[1-9]\d{0,11}$/.test(fideId) ? fideId : null,
       accuracy: null,
@@ -168,10 +215,17 @@ export function pgnToNormalizedGame(
   const black = player('Black');
   const date = header(game, 'UTCDate') ?? header(game, 'Date');
   const at = pgnDateTime(date, header(game, 'UTCTime'));
+  const end = pgnDateTime(header(game, 'EndDate'), header(game, 'EndTime'));
   const event = header(game, 'Event');
   const site = header(game, 'Site');
   const timeControl = header(game, 'TimeControl');
-  const rated = event && /^rated\b/i.test(event) ? true : event && /^casual\b/i.test(event) ? false : white.rating !== null && black.rating !== null;
+  const hasDiff = header(game, 'WhiteRatingDiff') !== null || header(game, 'BlackRatingDiff') !== null;
+  const rated =
+    event && /^rated\b/i.test(event)
+      ? true
+      : event && /^casual\b/i.test(event)
+        ? false
+        : hasDiff || (white.rating !== null && black.rating !== null);
 
   return {
     origin: ctx.origin,
@@ -181,14 +235,14 @@ export function pgnToNormalizedGame(
     white,
     black,
     result,
-    termination: termination(game, result, pos),
+    termination: termination(game, result, final),
     timeClass: pgnTimeClass(timeControl),
     timeControl,
     rated,
     event,
     round: header(game, 'Round'),
     startedAt: at,
-    endedAt: at,
+    endedAt: end !== null && (at === null || end >= at) ? end : at,
     moves,
     headers: Object.fromEntries(game.headers),
   };

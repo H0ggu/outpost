@@ -5,6 +5,8 @@ import {
   getJob,
   getJobHandler,
   JOB_PRIORITY,
+  jobWaitingAhead,
+  onJobsQueued,
   queuePosition,
   registerJobHandler,
   sourceSyncStatus,
@@ -87,5 +89,77 @@ describe('job queue', () => {
     await handler(ctx);
     expect(updates).toEqual([{ done: 1, total: 1, message: '2026-10' }]);
     expect(ctx.job.lane).toBe('local');
+  });
+});
+
+describe('job queue notifications and labels', () => {
+  let t: TestApp;
+  let other: TestApp;
+  beforeAll(async () => {
+    t = await makeTestApp();
+    other = await makeTestApp();
+  });
+  afterAll(async () => {
+    await t.close();
+    await other.close();
+  });
+
+  it('wakes the workers of the same database only, for new or re-prioritised work', () => {
+    const seen: string[] = [];
+    const elsewhere: string[] = [];
+    const off = onJobsQueued(t.db, lane => seen.push(lane));
+    const offOther = onJobsQueued(other.db, lane => elsewhere.push(lane));
+    const src = createSource(t.db, { kind: 'chesscom', key: 'notify-me' });
+    enqueueSync(t.db, src);
+    enqueueSync(t.db, src);
+    enqueueJob(t.db, 'pgnImport', { databaseId: 1, file: '/tmp/a.pgn', originalName: null });
+    expect(seen).toEqual(['chesscom', 'chesscom', 'local']);
+    expect(elsewhere).toEqual([]);
+    off();
+    enqueueJob(t.db, 'rebuild', { sourceId: src });
+    expect(seen).toHaveLength(3);
+    offOther();
+  });
+
+  it('labels geo jobs and lets a user adopt a system job', () => {
+    expect(enqueueJob(t.db, 'geo', { kind: 'chesscom', keys: [] }).label).toBe('Look up chesscom opponents (country, title)');
+    expect(enqueueJob(t.db, 'geo', { kind: 'lichess', keys: ['a', 'b'] }).label).toBe('Look up 2 lichess players');
+    const src = createSource(t.db, { kind: 'lichess', key: 'adopt-me' });
+    const system = enqueueSync(t.db, src);
+    const { userId } = createUserSession(t.db, { username: 'adopter' });
+    const mine = enqueueSync(t.db, src, { userId });
+    expect(mine).toMatchObject({ id: system.id, userId, priority: JOB_PRIORITY.manual });
+  });
+});
+
+describe('queue order with run_after', () => {
+  let t: TestApp;
+  beforeAll(async () => {
+    t = await makeTestApp();
+  });
+  afterAll(async () => t.close());
+
+  const job = (priority: number, runAfter: number | null = null) =>
+    enqueueJob(t.db, 'broadcastMonth', { databaseId: 1, month: '2026-10' }, { priority, runAfter });
+
+  it('puts waiting jobs after the runnable ones and tells a long job when to yield', () => {
+    const now = Date.now();
+    const rebuild = job(JOB_PRIORITY.scheduled);
+    expect(jobWaitingAhead(t.db, rebuild.id)).toBe(false);
+    const waitingHigh = job(JOB_PRIORITY.high, now + 60_000);
+    const waitingSoon = job(JOB_PRIORITY.background, now + 30_000);
+    expect(jobWaitingAhead(t.db, rebuild.id)).toBe(false); // nothing that can run now
+    const lower = job(JOB_PRIORITY.background);
+    expect(jobWaitingAhead(t.db, rebuild.id)).toBe(false); // runs after it anyway
+    expect([rebuild, lower, waitingSoon, waitingHigh].map(j => queuePosition(t.db, j.id))).toEqual([1, 2, 3, 4]);
+
+    const manual = job(JOB_PRIORITY.manual);
+    expect(jobWaitingAhead(t.db, rebuild.id)).toBe(true);
+    expect(jobWaitingAhead(t.db, manual.id)).toBe(false);
+    expect(queuePosition(t.db, manual.id)).toBe(1);
+    expect(queuePosition(t.db, waitingHigh.id)).toBe(5);
+    // When its time comes, the high-priority job is next again.
+    expect(jobWaitingAhead(t.db, rebuild.id, now + 61_000)).toBe(true);
+    expect(jobWaitingAhead(t.db, 999_999)).toBe(false);
   });
 });

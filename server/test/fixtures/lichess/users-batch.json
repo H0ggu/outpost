@@ -1,0 +1,22 @@
+[
+ {
+  "id": "synthrival",
+  "username": "SynthRival",
+  "title": "IM",
+  "profile": {
+   "flag": "NO"
+  }
+ },
+ {
+  "id": "examplefoe",
+  "username": "ExampleFoe",
+  "profile": {
+   "flag": "_earth"
+  }
+ },
+ {
+  "id": "samplepal",
+  "username": "SamplePal",
+  "disabled": true
+ }
+]
