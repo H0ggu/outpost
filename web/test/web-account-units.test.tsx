@@ -213,6 +213,10 @@ describe('invites, jobs and months', () => {
     expect(progressPercent(job().progress)).toBe(30);
     expect(progressPercent({ done: 5, total: null, message: null })).toBeNull();
     expect(progressCounts({ done: 0, total: null, message: null, counts: { imported: 1200, duplicates: 0, 'skip:variant': 3 } })).toBe('imported 1,200');
+    // Reference imports name each skip reason (and corrections) next to the totals.
+    expect(progressCounts({ done: 0, total: null, message: null, counts: { imported: 5, skipped: 3, tooComplex: 2, noMoves: 1, corrected: 4 } })).toBe(
+      'imported 5 · skipped 3 · too complex 2 · no moves 1 · corrected 4',
+    );
     expect(progressText(job())).toBe('2026-09 · 3 / 10 · imported 120');
     expect(progressText(job({ progress: null }))).toBeNull();
   });

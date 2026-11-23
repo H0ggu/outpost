@@ -61,12 +61,28 @@ export function progressPercent(p: Progress | null | undefined): number | null {
   return Math.max(0, Math.min(100, Math.round((p.done / p.total) * 100)));
 }
 
-/** `imported 1,234 · duplicates 5`. */
+/**
+ * Words for job counters the importers send (reference imports put each skip reason next to
+ * `skipped`: `noMoves`, `tooComplex`, … and `corrected` when a later dump replaced games).
+ */
+const COUNT_LABELS: Readonly<Record<string, string>> = {
+  fromPosition: 'from a set-up position',
+  noResult: 'unfinished',
+  noMoves: 'no moves',
+  illegalMove: 'illegal moves',
+  tooLarge: 'too large',
+  tooComplex: 'too complex',
+};
+
+/** A counter's name in words: the table above, else the camelCase split (`fooBar` → `foo bar`). */
+export const countLabel = (key: string): string => COUNT_LABELS[key] ?? key.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+
+/** `imported 1,234 · duplicates 5 · too complex 2`. */
 export function progressCounts(p: Progress | null | undefined): string | null {
   if (!p?.counts) return null;
   const parts = Object.entries(p.counts)
     .filter(([k, v]) => v > 0 && !k.startsWith('skip:'))
-    .map(([k, v]) => `${k} ${formatCount(v)}`);
+    .map(([k, v]) => `${countLabel(k)} ${formatCount(v)}`);
   return parts.length ? parts.join(' · ') : null;
 }
 
