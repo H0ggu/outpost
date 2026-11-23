@@ -4,7 +4,8 @@
 //
 //   - local.ts: createLocalExplorer — player explorer (NDJSON line), reference explorer (masters
 //     shape), /api/explorer/games; built on gameSet.ts (player specs → row sources), query.ts
-//     (filters + lila restrictions → SQL, hits at a position), responses.ts (Lichess shapes).
+//     (filters + lila restrictions → SQL; sliced, SQL-aggregated scans of a position),
+//     responses.ts (Lichess shapes). Migration 401 keeps per-database stats and a covering index.
 //   - proxy.ts: createExplorerProxy — explorer.lichess.org, tablebase.lichess.ovh and
 //     lichess.org/api/cloud-eval through app.upstream, with cache.ts (http_cache) and budget.ts
 //     (per-minute FIFO request budgets).
@@ -17,5 +18,5 @@ export { createNnueStore, NNUE_NAME_RE, NnueError, parseRange, type NnueStore } 
 export { gamePgn, loadPgnGame } from './pgn.ts';
 export { resolvePosition, type ExplorerPosition } from './position.ts';
 export { createExplorerProxy, DEFAULT_BUDGETS, proxyHttpError, type ExplorerProxy, type ProxyResult } from './proxy.ts';
-export { collectHits, gamesAtPosition, hitsQuery, setConditions, type Hit } from './query.ts';
+export { choosePlan, gamesPageDirect, hitsSql, scanPosition, setConditions, type ListedHit, type MoveAgg, type ScanResult } from './query.ts';
 export { EXPLORER_LIMITS, fideDp, mastersResponse, performanceRating, playerResponse } from './responses.ts';

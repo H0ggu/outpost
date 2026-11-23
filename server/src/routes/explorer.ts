@@ -104,7 +104,7 @@ const explorerRoutes: FastifyPluginAsync = async app => {
   const player = async (req: FastifyRequest, reply: FastifyReply) => {
     const q = parseQuery(playerQuerySchema, req.query);
     const filters = segmentFilters(req);
-    const res = local.player({ ...q, filters, viewer: req.user });
+    const res = await local.player({ ...q, filters, viewer: req.user, signal: clientSignal(reply) });
     return reply
       .header('cache-control', 'private, no-cache')
       .type('application/x-ndjson; charset=utf-8')
@@ -117,7 +117,7 @@ const explorerRoutes: FastifyPluginAsync = async app => {
   // --- Reference explorer (masters shape) -----------------------------------------------------
   const reference = async (req: FastifyRequest, reply: FastifyReply) => {
     const q = parseQuery(referenceQuerySchema, req.query);
-    const res = local.reference({ ...q, databaseId: null, filters: segmentFilters(req) });
+    const res = await local.reference({ ...q, databaseId: null, filters: segmentFilters(req), signal: clientSignal(reply) });
     return reply.header('cache-control', 'private, max-age=60').send(res);
   };
   app.get(E.reference, { preHandler: requireViewer, config: localLimit }, reference);
@@ -128,7 +128,7 @@ const explorerRoutes: FastifyPluginAsync = async app => {
     const q = parseQuery(mastersQuerySchema, req.query);
     const refDb = mastersReferenceDb();
     if (refDb !== null) {
-      const res = local.reference({ ...q, databaseId: refDb, filters: segmentFilters(req) });
+      const res = await local.reference({ ...q, databaseId: refDb, filters: segmentFilters(req), signal: clientSignal(reply) });
       return reply.header('x-outpost-source', 'reference').header('cache-control', 'private, max-age=60').send(res);
     }
     segmentFilters(req); // still validate the segment
@@ -167,7 +167,7 @@ const explorerRoutes: FastifyPluginAsync = async app => {
   app.get(E.games, { preHandler: requireViewer, config: localLimit }, async (req, reply) => {
     const q = parseQuery(gamesQuerySchema, req.query);
     const filters = parseFiltersQuery(req.query);
-    const page = local.games({ ...q, filters, viewer: req.user });
+    const page = await local.games({ ...q, filters, viewer: req.user, signal: clientSignal(reply) });
     return reply.header('cache-control', 'private, no-cache').send(page);
   });
 

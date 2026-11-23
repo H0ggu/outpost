@@ -38,8 +38,19 @@ export interface GameSet {
    * both when `color` is null. Parameters come first in the final query.
    */
   from(color: Color | null): { sql: string; params: SqlValue[] };
-  /** Stable text for result caches (derived sets over large databases are cached). */
+  /** Stable text for result caches. */
   cacheKey: string;
+  /** Rows of the set over both colours (cheap: index counts or `explorer_db_stats`); drives the query plan. */
+  size(db: Db): number;
+  /** Smallest and largest game id of the set (index lookups), or null when it is empty. */
+  idRange(db: Db): { lo: Id; hi: Id } | null;
+  /**
+   * Changes whenever the set's games change (`explorer_db_stats` counters of its databases), so
+   * results can be cached under it; null when not tracked (profile sets: not cached).
+   */
+  version(db: Db): string | null;
+  /** Can one game be several rows of `from(color)` (both sides of an uncoloured query)? */
+  multiRow(color: Color | null): boolean;
 }
 
 /** Player-perspective columns of a derived `pg` row over `games g`, from `side`'s point of view. */
@@ -62,13 +73,88 @@ const playerGamesSet = (spec: PlayerSpec, sourceIds: Id[]): GameSet => ({
   sourceIds,
   from: () => ({ sql: 'player_games pg', params: [] }),
   cacheKey: `${spec.kind}:${sourceIds.join(',')}`,
+  size: db =>
+    sourceIds.length === 0
+      ? 0
+      : (db.value<number>(`SELECT count(*) FROM player_games WHERE source_id IN (${placeholders(sourceIds.length)})`, sourceIds) ?? 0),
+  idRange: db => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const id of sourceIds) {
+      const min = db.value<Id | null>('SELECT min(game_id) FROM player_games WHERE source_id = ?', [id]);
+      const max = db.value<Id | null>('SELECT max(game_id) FROM player_games WHERE source_id = ?', [id]);
+      if (min != null && max != null) {
+        lo = Math.min(lo, min);
+        hi = Math.max(hi, max);
+      }
+    }
+    return lo <= hi ? { lo, hi } : null;
+  },
+  version: () => null,
+  multiRow: color => color === null && sourceIds.length > 1,
+});
+
+const placeholders = (n: number): string => Array.from({ length: n }, () => '?').join(', ');
+
+/** Games and change counter of some databases (`explorer_db_stats`, kept by triggers on `games`). */
+function databaseStats(db: Db, ids: readonly Id[]): { games: number; version: string } {
+  if (ids.length === 0) return { games: 0, version: '-' };
+  const rows = db.all<{ database_id: Id; games: number; changes: number }>(
+    `SELECT database_id, games, changes FROM explorer_db_stats WHERE database_id IN (${placeholders(ids.length)}) ORDER BY database_id`,
+    ids,
+  );
+  const byId = new Map(rows.map(r => [r.database_id, r]));
+  return {
+    games: rows.reduce((s, r) => s + r.games, 0),
+    version: ids.map(id => `${id}.${byId.get(id)?.changes ?? 0}`).join(','),
+  };
+}
+
+/** Smallest and largest game id of some databases (the covering index `games_explorer_db`). */
+function databaseIdRange(db: Db, ids: readonly Id[]): { lo: Id; hi: Id } | null {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const id of ids) {
+    const min = db.value<Id | null>('SELECT min(id) FROM games WHERE database_id = ?', [id]);
+    const max = db.value<Id | null>('SELECT max(id) FROM games WHERE database_id = ?', [id]);
+    if (min != null && max != null) {
+      lo = Math.min(lo, min);
+      hi = Math.max(hi, max);
+    }
+  }
+  return lo <= hi ? { lo, hi } : null;
+}
+
+/** Ids of the reference databases. */
+const referenceDatabaseIds = (db: Db): Id[] =>
+  db.all<{ id: Id }>(`SELECT id FROM databases WHERE kind = 'reference' ORDER BY id`).map(r => r.id);
+
+/** Set statistics of a derived set (see `GameSet`). */
+interface DerivedStats {
+  size(db: Db): number;
+  idRange(db: Db): { lo: Id; hi: Id } | null;
+  version(db: Db): string | null;
+}
+
+/** Stats of a derived set over whole databases. */
+const databasesStats = (ids: (db: Db) => Id[]): DerivedStats => ({
+  size: db => databaseStats(db, ids(db)).games,
+  idRange: db => databaseIdRange(db, ids(db)),
+  version: db => databaseStats(db, ids(db)).version,
 });
 
 /** All games matching `where` (over `games g`), seen from one side, or from both sides (UNION ALL). */
 const derivedSet = (
   spec: GameSet['spec'],
   where: (side: Color) => { sql: string; params: SqlValue[] },
-  opts: { perspective: GameSet['perspective']; cacheKey: string; bothSidesWhenUncoloured: boolean },
+  opts: {
+    perspective: GameSet['perspective'];
+    cacheKey: string;
+    bothSidesWhenUncoloured: boolean;
+    stats: DerivedStats;
+    /** Membership is by `database_id`: read `games_explorer_db`, never the wide rows (SQLite would pick the rowid). */
+    byDatabase: boolean;
+  },
 ): GameSet => ({
   spec,
   source: 'derived',
@@ -77,7 +163,8 @@ const derivedSet = (
   from(color) {
     const arm = (side: Color) => {
       const w = where(side);
-      return { sql: `SELECT ${derivedColumns(side)} FROM games g WHERE ${w.sql}`, params: w.params };
+      const table = opts.byDatabase ? 'games g INDEXED BY games_explorer_db' : 'games g';
+      return { sql: `SELECT ${derivedColumns(side)} FROM ${table} WHERE ${w.sql}`, params: w.params };
     };
     if (color !== null || !opts.bothSidesWhenUncoloured) {
       const a = arm(color ?? 'white');
@@ -88,6 +175,10 @@ const derivedSet = (
     return { sql: `(${w.sql} UNION ALL ${b.sql}) pg`, params: [...w.params, ...b.params] };
   },
   cacheKey: opts.cacheKey,
+  size: opts.stats.size,
+  idRange: opts.stats.idRange,
+  version: opts.stats.version,
+  multiRow: color => color === null && opts.bothSidesWhenUncoloured,
 });
 
 /** Is a lichess/chesscom source visible to `viewer` (attached, not hidden, to a profile they may read)? */
@@ -138,31 +229,59 @@ export function resolveGameSet(db: Db, spec: PlayerSpec, viewer: AuthUser | null
         perspective: 'neutral',
         cacheKey: `db:${database.id}`,
         bothSidesWhenUncoloured: false,
+        stats: databasesStats(() => [database.id]),
+        byDatabase: true,
       });
     }
     case 'ref':
       return derivedSet(
         spec,
         side => ({ sql: `g.origin = 'reference' AND g.${side}_fide_id = ?`, params: [spec.fideId] }),
-        { perspective: 'neutral', cacheKey: `ref:${spec.fideId}`, bothSidesWhenUncoloured: true },
+        { perspective: 'neutral', cacheKey: `ref:${spec.fideId}`, bothSidesWhenUncoloured: true, stats: fideStats(spec.fideId), byDatabase: false },
       );
   }
 }
 
 /**
- * The reference databases as one set (`databaseId` null: every reference database), seen from
- * White's side. For the reference explorer and a reference-backed masters explorer.
+ * The reference databases as one set (`databaseId` null: every reference database, as they are
+ * now), seen from White's side. For the reference explorer and a reference-backed masters
+ * explorer. Membership is by database (`games_explorer_db` covers it), not by `origin`.
  */
-export function referenceGameSet(databaseId: Id | null): GameSet {
+export function referenceGameSet(db: Db, databaseId: Id | null): GameSet {
+  const ids = databaseId === null ? referenceDatabaseIds(db) : [databaseId];
   return derivedSet(
     { kind: 'reference', databaseId },
     () =>
-      databaseId === null
-        ? { sql: `g.origin = 'reference'`, params: [] }
-        : { sql: `g.database_id = ?`, params: [databaseId] },
-    { perspective: 'neutral', cacheKey: `reference:${databaseId ?? 'all'}`, bothSidesWhenUncoloured: false },
+      ids.length === 0
+        ? { sql: '0', params: [] }
+        : { sql: ids.length === 1 ? 'g.database_id = ?' : `g.database_id IN (${placeholders(ids.length)})`, params: ids },
+    {
+      perspective: 'neutral',
+      cacheKey: `reference:${databaseId ?? 'all'}`,
+      bothSidesWhenUncoloured: false,
+      stats: databasesStats(() => ids),
+      byDatabase: ids.length > 0,
+    },
   );
 }
+
+/** Stats of a FIDE player's reference games (small sets; versioned with every reference database). */
+const fideStats = (fideId: string): DerivedStats => ({
+  size: db =>
+    db.value<number>(
+      `SELECT (SELECT count(*) FROM games WHERE white_fide_id = ?1 AND origin = 'reference')
+            + (SELECT count(*) FROM games WHERE black_fide_id = ?1 AND origin = 'reference')`,
+      [fideId],
+    ) ?? 0,
+  idRange: db => {
+    const r = db.get<{ lo: Id | null; hi: Id | null }>(
+      `SELECT min(id) AS lo, max(id) AS hi FROM games WHERE origin = 'reference' AND (white_fide_id = ?1 OR black_fide_id = ?1)`,
+      [fideId],
+    );
+    return r?.lo != null && r.hi != null ? { lo: r.lo, hi: r.hi } : null;
+  },
+  version: db => `ref.${databaseStats(db, referenceDatabaseIds(db)).version}`,
+});
 
 /**
  * Filters that make sense for a set. Derived sets over a whole database (db, reference) have no

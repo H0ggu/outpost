@@ -1,11 +1,21 @@
 /**
- * Performance of the player explorer on a large profile (PLAN: ~50k games; < 300 ms at the start
- * position and a few plies deep). 400 synthetic template games (a skewed random walk, so lines
- * share prefixes like real repertoires) are stored with insertGame; 50,000 profile games and 25,000
- * reference-DB games are then cloned from them in SQL (games, player_games and positions rows
- * shaped exactly like insertGame's).
+ * Performance of the local explorers on large data:
+ * - the player explorer on a ~50k-game profile (PLAN: < 300 ms at the start position and a few
+ *   plies deep);
+ * - the reference-backed explorers (reference, masters from a reference DB, player/games for
+ *   db:<ref>) on a large reference database: time, event-loop responsiveness while a cold query
+ *   runs, and the result cache surviving unrelated writes.
+ *
+ * 400 synthetic template games (a skewed random walk, so lines share prefixes like real
+ * repertoires) are stored with insertGame; the profile and reference games are then cloned from them
+ * in SQL (games, player_games and positions rows shaped exactly like insertGame's; the triggers of
+ * migration 401 keep explorer_db_stats).
+ *
+ * The reference DB has `OUTPOST_PERF_REFERENCE_GAMES` games (default 150,000, about 10 s to seed);
+ * `OUTPOST_PERF_REFERENCE_GAMES=1000000 npx vitest run server/test/explorer-perf.test.ts` runs the
+ * million-game check (several minutes to seed; budgets scale with the size at the shallow plies).
  */
-import type { ExplorerGamesPage, ExplorerPlayerResponse, Id } from '@outpost/shared/api';
+import type { ExplorerGamesPage, ExplorerMastersResponse, ExplorerPlayerResponse, Id } from '@outpost/shared/api';
 import { stdUci } from '@outpost/shared/chess';
 import { encodeFiltersSegment } from '@outpost/shared/filters';
 import { Chess } from 'chessops/chess';
@@ -13,15 +23,24 @@ import { makeSan } from 'chessops/san';
 import type { Move } from 'chessops/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { insertGame } from '../src/chess/store.ts';
-import { resolveGameSet } from '../src/explorer/gameSet.ts';
-import { hitsQuery, setConditions } from '../src/explorer/query.ts';
+import { referenceGameSet, resolveGameSet } from '../src/explorer/gameSet.ts';
+import { choosePlan, hitsSql, setConditions } from '../src/explorer/query.ts';
+import { writeSettings } from '../src/settings.ts';
 import { createDatabase, createProfile, lastNdjsonLine } from './explorer-support.ts';
 import { createSource, createUserSession, makeTestApp, testGame, type TestApp } from './helpers.ts';
 
 const PROFILE_GAMES = 50_000;
-const OTHER_GAMES = 25_000;
+const OTHER_GAMES = Number(process.env.OUTPOST_PERF_REFERENCE_GAMES ?? 150_000);
 const TEMPLATES = 400;
 const BUDGET_MS = 300;
+/**
+ * Uncached reference answers at the first two plies, where most of the DB is read: ~1 µs per game
+ * measured (150 ms for 150k games, 0.9 s for a million), budgeted at 3 µs (other test files share
+ * the CPU). Deeper plies get the profile's 300 ms.
+ */
+const REFERENCE_SHALLOW_BUDGET_MS = Math.max(500, OTHER_GAMES * 0.003);
+/** Longest a cold reference query may hold the event loop (slices target 25 ms). */
+const MAX_EVENT_LOOP_LAG_MS = 150;
 
 /** Deterministic PRNG (mulberry32). */
 const rng = (seed: number) => () => {
@@ -63,7 +82,7 @@ function templateMoves(rand: () => number, plies: number): string[] {
   return sans;
 }
 
-describe('player explorer performance (50k-game profile)', () => {
+describe(`local explorer performance (50k-game profile, ${OTHER_GAMES.toLocaleString('en')}-game reference DB)`, () => {
   let t: TestApp;
   let cookie: string;
   let sourceId: Id;
@@ -93,7 +112,9 @@ describe('player explorer performance (50k-game profile)', () => {
          termination, time_class, time_control, rated, started_at, ended_at, ply_count, moves_san)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'resign', ?, '180+2', ?, ?, ?, ?, ?)`,
     );
-    const copyPositions = db.prepare('INSERT INTO positions (game_id, ply, pos_key, next_uci) SELECT ?, ply, pos_key, next_uci FROM positions WHERE game_id = ?');
+    const copyPositions = db.prepare(
+      'INSERT INTO positions (game_id, ply, pos_key, next_uci) SELECT ?, ply, pos_key, next_uci FROM positions WHERE game_id = ? AND ply <= ?',
+    );
     const insertPlayerGame = db.prepare(
       `INSERT INTO player_games (source_id, game_id, color, outcome, rating, rating_after, opp_name, opp_key, opp_rating,
          opp_title, opp_source_kind, ended_at, time_class, rated)
@@ -102,8 +123,8 @@ describe('player explorer performance (50k-game profile)', () => {
     const results = ['1-0', '0-1', '1/2-1/2'] as const;
     const classes = ['bullet', 'blitz', 'blitz', 'rapid', 'classical'] as const;
     const t0 = Date.UTC(2020, 0, 1);
-    db.tx(() => {
-      for (let i = 0; i < PROFILE_GAMES + OTHER_GAMES; i++) {
+    for (let batch = 0; batch < PROFILE_GAMES + OTHER_GAMES; batch += 50_000) db.tx(() => {
+      for (let i = batch; i < Math.min(PROFILE_GAMES + OTHER_GAMES, batch + 50_000); i++) {
         const mine = i < PROFILE_GAMES;
         // Popular templates more often: index skewed towards 0.
         const tpl = templates[Math.floor(TEMPLATES * rand() ** 2)]!;
@@ -138,7 +159,9 @@ describe('player explorer performance (50k-game profile)', () => {
             tpl.sans,
           ).lastInsertRowid,
         );
-        copyPositions.run(gameId, tpl.id);
+        // Reference games keep their first 24 plies of positions (faster to seed; the explorer
+        // checks stay within them), profile games all 50.
+        copyPositions.run(gameId, tpl.id, mine ? 50 : 24);
         if (mine) {
           const outcome = result === '1/2-1/2' ? 'd' : (result === '1-0') === white ? 'w' : 'l';
           insertPlayerGame.run(sourceId, gameId, white ? 'w' : 'b', outcome, myRating, opp, opp, oppRating, endedAt, tc, rated);
@@ -146,7 +169,8 @@ describe('player explorer performance (50k-game profile)', () => {
       }
     });
     expect(db.value<number>('SELECT count(*) FROM player_games WHERE source_id = ?', [sourceId])).toBe(PROFILE_GAMES);
-  }, 300_000);
+    expect(db.value<number>('SELECT games FROM explorer_db_stats WHERE database_id = ?', [refDb])).toBe(OTHER_GAMES);
+  }, 3_600_000);
 
   afterAll(async () => {
     await t?.close();
@@ -187,16 +211,6 @@ describe('player explorer performance (50k-game profile)', () => {
     const filtered = await timed(`/api/explorer/f/${seg}/player?player=perf&color=white&speeds=blitz,rapid,classical&modes=rated`);
     report.push(`filtered start: ${filtered.ms.toFixed(1)} ms`);
     expect(filtered.ms).toBeLessThan(BUDGET_MS);
-    // The reference explorer over 25k games: first (uncached) answer, then from the result cache.
-    const refStart = performance.now();
-    const ref = await t.app.inject({ url: '/api/explorer/reference', headers: { cookie } });
-    const refMs = performance.now() - refStart;
-    expect(ref.statusCode).toBe(200);
-    expect(ref.json().white + ref.json().draws + ref.json().black).toBe(OTHER_GAMES);
-    report.push(`reference start (25k games, uncached): ${refMs.toFixed(1)} ms`);
-    expect(refMs).toBeLessThan(BUDGET_MS);
-    const refCached = await timed('/api/explorer/reference');
-    report.push(`reference start (cached): ${refCached.ms.toFixed(1)} ms`);
     const games = await timed('/api/explorer/games?player=perf');
     const page = JSON.parse(games.body) as ExplorerGamesPage;
     report.push(`games list (start): ${page.total.toLocaleString('en')} games, ${games.ms.toFixed(1)} ms`);
@@ -205,14 +219,113 @@ describe('player explorer performance (50k-game profile)', () => {
     console.info(`player explorer timings:\n  ${report.join('\n  ')}`);
   }, 120_000);
 
-  it('drives the set plan from player_games and seeks positions by (pos_key, game_id)', () => {
+  it('drives the set plan from player_games and seeks positions by (pos_key, game_id)', async () => {
     const set = resolveGameSet(t.db, { kind: 'profile', slug: 'perf' }, { id: 0, username: 'x', role: 'admin', totpEnabled: false, prefs: {} as never });
     const where = setConditions(set, {}, { timeClasses: null, rated: null, from: null, to: null }, { color: 'white' });
     const start = t.db.value<number>('SELECT pos_key FROM positions WHERE ply = 0 LIMIT 1')!;
-    const q = hitsQuery(t.db, set, where, start, 'white');
-    expect(q.plan).toBe('set');
-    const plan = t.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${q.sql}`, q.params).map(r => r.detail);
+    const q = { set, where, key: start, color: 'white' as const };
+    expect((await choosePlan(t.db, q)).plan).toBe('set');
+    const h = hitsSql(q, 'set', 1, 1_000_000);
+    const plan = t.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${h.sql}`, h.params).map(r => r.detail);
     expect(plan[0]).toMatch(/^SEARCH pg USING (PRIMARY KEY|INDEX)/);
     expect(plan[1]).toMatch(/^SEARCH p USING COVERING INDEX positions_key \(pos_key=\? AND game_id=\?\)/);
+  });
+
+  describe('reference database', () => {
+    /** One uncached request, with the longest event-loop stall seen while it ran. */
+    const cold = async (url: string): Promise<{ ms: number; lag: number; body: string }> => {
+      let lag = 0;
+      let last = performance.now();
+      const timer = setInterval(() => {
+        const now = performance.now();
+        lag = Math.max(lag, now - last);
+        last = now;
+      }, 1);
+      try {
+        const start = performance.now();
+        const res = await t.app.inject({ url, headers: { cookie } });
+        const ms = performance.now() - start;
+        expect(res.statusCode, res.body).toBe(200);
+        return { ms, lag: Math.max(lag, performance.now() - last), body: res.body };
+      } finally {
+        clearInterval(timer);
+      }
+    };
+    const total = (r: { white: number; draws: number; black: number }) => r.white + r.draws + r.black;
+    const report: string[] = [];
+    afterAll(() => console.info(`reference explorer timings (${OTHER_GAMES.toLocaleString('en')} games):\n  ${report.join('\n  ')}`));
+
+    it('answers the reference explorer along the main line without holding the event loop', async () => {
+      let line: string[] = [];
+      for (let depth = 0; depth <= 6; depth++) {
+        const { ms, lag, body } = await cold(`/api/explorer/reference?play=${line.join(',')}`);
+        const r = JSON.parse(body) as ExplorerMastersResponse;
+        report.push(`reference ply ${depth}: ${total(r).toLocaleString('en')} games, ${ms.toFixed(0)} ms (event loop stalled ≤ ${lag.toFixed(0)} ms)`);
+        if (depth === 0) expect(total(r)).toBe(OTHER_GAMES);
+        expect(r.topGames.length).toBeGreaterThan(0);
+        expect(ms, report.at(-1)).toBeLessThan(depth < 2 ? REFERENCE_SHALLOW_BUDGET_MS : BUDGET_MS);
+        expect(lag, report.at(-1)).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
+        if (!r.moves[0]) break;
+        line = [...line, r.moves[0].uci];
+      }
+    }, 600_000);
+
+    it('serves masters from the reference DB, and db:<ref> in the player explorer and games list', async () => {
+      writeSettings(t.db, { mastersSource: `reference:${refDb}` });
+      try {
+        const masters = await cold('/api/explorer/masters?variant=standard&play=');
+        expect(total(JSON.parse(masters.body) as ExplorerMastersResponse)).toBe(OTHER_GAMES);
+        report.push(`masters (reference DB) start: ${masters.ms.toFixed(0)} ms (stall ≤ ${masters.lag.toFixed(0)} ms)`);
+        expect(masters.ms).toBeLessThan(REFERENCE_SHALLOW_BUDGET_MS);
+        expect(masters.lag).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
+      } finally {
+        writeSettings(t.db, { mastersSource: 'lichess' });
+      }
+      const player = await cold(`/api/explorer/player?player=db:${refDb}&color=white`);
+      report.push(`player db:<ref> start: ${player.ms.toFixed(0)} ms (stall ≤ ${player.lag.toFixed(0)} ms)`);
+      expect(total(lastNdjsonLine<ExplorerPlayerResponse>(player.body))).toBe(OTHER_GAMES);
+      expect(player.ms).toBeLessThan(REFERENCE_SHALLOW_BUDGET_MS);
+      expect(player.lag).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
+      const games = await cold(`/api/explorer/games?player=db:${refDb}`);
+      const page = JSON.parse(games.body) as ExplorerGamesPage;
+      report.push(`games db:<ref> start, page 1: ${games.ms.toFixed(0)} ms (stall ≤ ${games.lag.toFixed(0)} ms)`);
+      expect(page.total).toBe(OTHER_GAMES);
+      expect(page.games).toHaveLength(20);
+      expect(games.ms).toBeLessThan(REFERENCE_SHALLOW_BUDGET_MS);
+      expect(games.lag).toBeLessThan(MAX_EVENT_LOOP_LAG_MS);
+      // The next page comes from the same scan.
+      const next = await cold(`/api/explorer/games?player=db:${refDb}&page=2`);
+      report.push(`games db:<ref> start, page 2: ${next.ms.toFixed(0)} ms`);
+      expect(next.ms).toBeLessThan(50);
+    }, 600_000);
+
+    it('keeps cached reference answers when a profile syncs, and refreshes them when the DB changes', async () => {
+      const url = '/api/explorer/reference?play=d2d4';
+      const first = await cold(url);
+      const again = await cold(url);
+      expect(again.ms).toBeLessThan(50);
+      // A profile game (another set) changes nothing.
+      insertGame(t.db, testGame({ originId: 'perf-sync', white: { name: 'perfuser' }, moves: ['d4', 'd5'] }));
+      const afterSync = await cold(url);
+      report.push(`reference after 1. d4: uncached ${first.ms.toFixed(0)} ms, cached ${again.ms.toFixed(1)} ms, after a profile sync ${afterSync.ms.toFixed(1)} ms`);
+      expect(afterSync.ms).toBeLessThan(50);
+      expect(afterSync.body).toBe(first.body);
+      // A game added to the reference DB is counted at once.
+      insertGame(t.db, testGame({ origin: 'reference', originId: `${refDb}:perf-new`, databaseId: refDb, moves: ['d4', 'Nf6'], timeClass: 'classical' }));
+      const fresh = JSON.parse((await cold(url)).body) as ExplorerMastersResponse;
+      expect(total(fresh)).toBe(total(JSON.parse(first.body) as ExplorerMastersResponse) + 1);
+    }, 600_000);
+
+    it('reads the reference DB through its covering index', async () => {
+      const set = referenceGameSet(t.db, refDb);
+      const where = setConditions(set, {}, { timeClasses: null, rated: null, from: null, to: null }, { color: null });
+      const start = t.db.value<number>('SELECT pos_key FROM positions WHERE ply = 0 LIMIT 1')!;
+      for (const plan of ['set', 'position'] as const) {
+        const h = hitsSql({ set, where, key: start, color: null }, plan, 1, 1_000_000);
+        const steps = t.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${h.sql}`, h.params).map(r => r.detail).join('\n');
+        expect(steps).toMatch(/SEARCH g USING COVERING INDEX games_explorer_db/);
+        expect(steps).toMatch(/COVERING INDEX positions_key/);
+      }
+    });
   });
 });

@@ -7,9 +7,10 @@ import { encodeFiltersSegment } from '@outpost/shared/filters';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getOpeningBook } from '../src/chess/openings.ts';
 import { insertGame, pgnSourceKey } from '../src/chess/store.ts';
-import { referenceGameSet, resolveGameSet } from '../src/explorer/gameSet.ts';
+import { referenceGameSet, resolveGameSet, type GameSet } from '../src/explorer/gameSet.ts';
 import { resolvePosition } from '../src/explorer/position.ts';
-import { collectHits, gamesAtPosition, hitsQuery, setConditions } from '../src/explorer/query.ts';
+import { createLocalExplorer } from '../src/explorer/local.ts';
+import { choosePlan, gamesPageDirect, hitsSql, positionRowsUpTo, scanPosition, setConditions, type PositionQuery, type ScanResult } from '../src/explorer/query.ts';
 import { writeSettings } from '../src/settings.ts';
 import { createDatabase, createProfile, expectSameShape, fixtureText, sans } from './explorer-support.ts';
 import { createSource, createUserSession, makeTestApp, testGame, type TestApp } from './helpers.ts';
@@ -286,45 +287,219 @@ describe('local explorers', () => {
     });
   });
 
-  describe('query plans', () => {
+  describe('query plans and scans', () => {
     const book = getOpeningBook();
-    const lines = ['', 'e2e4', 'e2e4,e7e5', 'e2e4,e7e5,g1f3', 'd2d4', 'g1f3,g8f6'];
-    const sorted = <T extends { gameId: Id }>(xs: T[]) => [...xs].sort((a, b) => a.gameId - b.gameId);
+    const lines = ['', 'e2e4', 'e2e4,e7e5', 'e2e4,e7e5,g1f3', 'd2d4', 'g1f3,g8f6', 'e2e4,c7c5'];
+    const viewer = () => ({ id: ownerId, username: 'olga', role: 'user' as const, totpEnabled: false, prefs: {} as never });
+    const sets = () => [
+      { set: resolveGameSet(t.db, { kind: 'profile', slug: 'alice' }, viewer()), colors: ['white', 'black', null] as const },
+      { set: resolveGameSet(t.db, { kind: 'db', databaseId: gamesDb }, viewer()), colors: ['white', 'black'] as const },
+      { set: resolveGameSet(t.db, { kind: 'ref', fideId: '99999902' }, viewer()), colors: ['white', null] as const },
+      { set: referenceGameSet(t.db, null), colors: [null] as const },
+      { set: referenceGameSet(t.db, refB), colors: [null] as const },
+    ];
 
-    it('set-driven and position-driven plans find the same hits', () => {
-      const viewer = { id: ownerId, username: 'olga', role: 'user' as const, totpEnabled: false, prefs: {} as never };
-      const sets = [
-        { set: resolveGameSet(t.db, { kind: 'profile', slug: 'alice' }, viewer), colors: ['white', 'black', null] as const },
-        { set: resolveGameSet(t.db, { kind: 'db', databaseId: gamesDb }, viewer), colors: ['white', 'black'] as const },
-        { set: resolveGameSet(t.db, { kind: 'ref', fideId: '99999902' }, viewer), colors: ['white', null] as const },
-        { set: referenceGameSet(null), colors: [null] as const },
-        { set: referenceGameSet(refB), colors: [null] as const },
-      ];
-      for (const { set, colors } of sets) {
+    /**
+     * The straightforward answer in JS: every (set row, position row) pair, first occurrence per game
+     * (one row per game), then per-move sums and the most recent games.
+     */
+    const naive = (q: PositionQuery) => {
+      const from = q.set.from(q.color);
+      const rows = t.db.all<{ game_id: Id; color: 'w' | 'b'; outcome: 'w' | 'd' | 'l'; rating: number | null; opp_rating: number | null; ended_at: number | null; ply: number; next_uci: string | null }>(
+        `SELECT pg.game_id, pg.color, pg.outcome, pg.rating, pg.opp_rating, pg.ended_at, p.ply, p.next_uci
+           FROM ${from.sql} JOIN positions p ON p.game_id = pg.game_id AND p.pos_key = ? WHERE ${q.where.sql}
+          ORDER BY pg.game_id, p.ply`,
+        [...from.params, q.key, ...q.where.params],
+      );
+      const first = new Map<Id, (typeof rows)[number]>();
+      for (const r of rows) if (!first.has(r.game_id)) first.set(r.game_id, r);
+      const moves = new Map<string, { uci: string; games: number; white: number; draws: number; black: number; oppN: number; oppSum: number }>();
+      let ended = 0;
+      for (const r of first.values()) {
+        if (r.next_uci === null) {
+          ended++;
+          continue;
+        }
+        const m = moves.get(r.next_uci) ?? { uci: r.next_uci, games: 0, white: 0, draws: 0, black: 0, oppN: 0, oppSum: 0 };
+        m.games++;
+        if (r.outcome === 'd') m.draws++;
+        else if ((r.outcome === 'w') === (r.color === 'w')) m.white++;
+        else m.black++;
+        if (r.opp_rating !== null) {
+          m.oppN++;
+          m.oppSum += r.opp_rating;
+        }
+        moves.set(r.next_uci, m);
+      }
+      const recent = [...first.values()]
+        .sort((a, b) => (b.ended_at ?? -1e18) - (a.ended_at ?? -1e18) || b.game_id - a.game_id)
+        .map(r => r.game_id);
+      // A game listed for two of the profile's accounts counts once, from either side: only the
+      // absolute results are comparable then.
+      const sided = !q.set.multiRow(q.color);
+      const shown = [...moves.values()].map(m => (sided ? m : { ...m, oppN: 0, oppSum: 0 }));
+      return { games: first.size, ended, moves: shown.sort((a, b) => (a.uci < b.uci ? -1 : 1)), recent };
+    };
+    const comparable = (r: ScanResult, q: PositionQuery) =>
+      r.moves
+        .map(m => ({ uci: m.uci, games: m.games, white: m.white, draws: m.draws, black: m.black, oppN: m.oppN, oppSum: m.oppSum }))
+        .map(m => (q.set.multiRow(q.color) ? { ...m, oppN: 0, oppSum: 0 } : m))
+        .sort((a, b) => (a.uci < b.uci ? -1 : 1));
+
+    it('scans give the straightforward answer with both plans and any slicing', async () => {
+      for (const { set, colors } of sets()) {
         for (const color of colors) {
-          const where = setConditions(set, {}, NO_RESTRICTIONS, { color: null });
+          // The colour as the explorers pass it: a condition for player_games, an arm for derived sets.
+          const where = setConditions(set, {}, NO_RESTRICTIONS, { color });
           for (const line of lines) {
-            const key = resolvePosition(undefined, line, book).key;
-            const a = sorted(collectHits(t.db, set, where, key, color, 'set'));
-            const b = sorted(collectHits(t.db, set, where, key, color, 'position'));
-            expect(a, `${set.cacheKey} ${color} ${line}`).toEqual(b);
-            const pa = gamesAtPosition(t.db, set, where, key, color, { offset: 0, limit: 50 }, 'set');
-            const pb = gamesAtPosition(t.db, set, where, key, color, { offset: 0, limit: 50 }, 'position');
-            expect(pa, `${set.cacheKey} ${color} ${line}`).toEqual(pb);
+            const q: PositionQuery = { set, where, key: resolvePosition(undefined, line, book).key, color };
+            const want = naive(q);
+            const label = `${set.cacheKey} ${color} ${line}`;
+            for (const plan of ['set', 'position', undefined] as const) {
+              for (const span of [1, 2, 7, undefined]) {
+                const r = await scanPosition(t.db, q, { moves: true, count: true, list: { order: 'recent', limit: 50, withMove: false }, plan, span });
+                expect(comparable(r, q), `${label} ${plan} ${span}`).toEqual(want.moves);
+                expect([r.games, r.ended], label).toEqual([want.games, want.ended]);
+                expect(r.list.map(h => h.gameId), label).toEqual(want.recent);
+                // Count-only and list-only scans (one use of the hits: no scratch table).
+                expect((await scanPosition(t.db, q, { count: true, plan, span })).games, label).toBe(want.games);
+                const listOnly = await scanPosition(t.db, q, { list: { order: 'recent', limit: 2, withMove: false }, plan, span });
+                expect(listOnly.list.map(h => h.gameId), label).toEqual(want.recent.slice(0, 2));
+              }
+              if (plan) {
+                const direct = gamesPageDirect(t.db, q, { offset: 1, limit: 2 }, plan);
+                expect(direct.map(h => h.gameId), `${label} direct ${plan}`).toEqual(want.recent.slice(1, 3));
+              }
+            }
           }
         }
       }
     });
 
-    it('uses the positions index in both plans (EXPLAIN QUERY PLAN)', () => {
-      const set = referenceGameSet(null);
+    it('counts a game once at a position it reaches twice (first occurrence)', async () => {
+      const db = t.db;
+      const repDb = createDatabase(db, { name: 'repetitions', kind: 'games', ownerId });
+      // Nf3 Nf6 Ng1 Ng8 returns to the start: first visit continues 1. Nf3, the second 3. e4.
+      insertGame(db, testGame({ origin: 'pgn', originId: `${repDb}:rep`, databaseId: repDb, moves: sans('Nf3 Nf6 Ng1 Ng8 e4 e5'), timeClass: 'unknown' }));
+      const set = resolveGameSet(db, { kind: 'db', databaseId: repDb }, viewer());
+      const q: PositionQuery = { set, where: setConditions(set, {}, NO_RESTRICTIONS, { color: 'white' }), key: resolvePosition(undefined, '', book).key, color: 'white' };
+      for (const plan of ['set', 'position'] as const) {
+        const r = await scanPosition(db, q, { moves: true, plan });
+        expect(r.moves.map(m => [m.uci, m.games]), plan).toEqual([['g1f3', 1]]);
+      }
+    });
+
+    it('drops moves that are not legal at the position, and their games', async () => {
+      const set = referenceGameSet(t.db, null);
+      const q: PositionQuery = { set, where: setConditions(set, {}, NO_RESTRICTIONS, { color: null }), key: resolvePosition(undefined, '', book).key, color: null };
+      for (const plan of ['set', 'position'] as const) {
+        const r = await scanPosition(t.db, q, { moves: true, list: { order: 'rating', limit: 15, withMove: true }, legal: uci => uci !== 'e2e4', plan });
+        expect(r.moves.map(m => m.uci)).toEqual(['d2d4']);
+        expect(r.list.map(h => h.nextUci)).toEqual(['d2d4']);
+        const listOnly = await scanPosition(t.db, q, { list: { order: 'rating', limit: 15, withMove: true }, legal: uci => uci !== 'e2e4', plan });
+        expect(listOnly.list.map(h => h.nextUci)).toEqual(['d2d4']);
+      }
+    });
+
+    it('yields to the event loop between slices and stops when cancelled', async () => {
+      const set = referenceGameSet(t.db, null);
+      const q: PositionQuery = { set, where: setConditions(set, {}, NO_RESTRICTIONS, { color: null }), key: resolvePosition(undefined, '', book).key, color: null };
+      let ranMeanwhile = false;
+      const scan = scanPosition(t.db, q, { moves: true, span: 1, plan: 'set' });
+      setImmediate(() => {
+        ranMeanwhile = true;
+      });
+      await scan;
+      expect(ranMeanwhile).toBe(true);
+
+      const controller = new AbortController();
+      const cancelled = scanPosition(t.db, q, { moves: true, span: 1, plan: 'set', signal: controller.signal });
+      controller.abort();
+      await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
+    it('lets the smaller side drive (set size vs the position’s rows)', async () => {
+      const start = resolvePosition(undefined, '', book).key;
+      const rare = resolvePosition(undefined, 'e2e4,e7e5,g1f3,b8c6', book).key;
+      const profile = resolveGameSet(t.db, { kind: 'profile', slug: 'alice' }, viewer());
+      const q = (set: GameSet, key: number): PositionQuery => ({ set, where: setConditions(set, {}, NO_RESTRICTIONS, { color: null }), key, color: null });
+      // Every game reaches the start: more position rows than profile rows → walk the profile.
+      expect(await choosePlan(t.db, q(profile, start))).toMatchObject({ plan: 'set' });
+      // One game (r1) reaches 2…Nc6 → walk the position.
+      expect(await choosePlan(t.db, q(referenceGameSet(t.db, null), rare))).toEqual({ plan: 'position', rows: 1 });
+      expect(await positionRowsUpTo(t.db, start, 3)).toBe(3);
+    });
+
+    it('reads reference databases through the covering index in both plans (EXPLAIN QUERY PLAN)', () => {
+      const set = referenceGameSet(t.db, null);
       const where = setConditions(set, {}, NO_RESTRICTIONS, { color: null });
       for (const plan of ['set', 'position'] as const) {
-        const q = hitsQuery(t.db, set, where, 1, null, plan);
-        const steps = t.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${q.sql}`, q.params).map(r => r.detail);
-        expect(steps.join('\n')).toMatch(/positions_key/);
-        expect(steps.some(s => /^SCAN p\b/.test(s))).toBe(false);
+        const h = hitsSql({ set, where, key: 1, color: null }, plan, 1, 1000);
+        const steps = t.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${h.sql}`, h.params).map(r => r.detail);
+        expect(steps.join('\n'), plan).toMatch(/positions_key/);
+        expect(steps.join('\n'), plan).toMatch(/COVERING INDEX games_explorer_db/);
+        expect(steps.some(s => /^SCAN (p|positions|g)\b/.test(s)), steps.join('\n')).toBe(false);
       }
+    });
+  });
+
+  describe('result cache', () => {
+    it('keeps reference results across unrelated writes and drops them when the database changes', async () => {
+      const local = createLocalExplorer({ db: t.db, openingsDir: t.config.openingsDir });
+      const first = await local.reference({ databaseId: refA, filters: {} });
+      expect(await local.reference({ databaseId: refA, filters: {} })).toBe(first);
+      // A profile sync and an import into another database leave it cached.
+      insertGame(t.db, testGame({ originId: 'cache-unrelated', moves: sans('e4 e5') }));
+      insertGame(t.db, testGame({ origin: 'reference', originId: `${refB}:cache-other`, databaseId: refB, moves: sans('e4'), timeClass: 'classical' }));
+      expect(await local.reference({ databaseId: refA, filters: {} })).toBe(first);
+      // A game added to it (or removed) is a new version.
+      const added = insertGame(t.db, testGame({ origin: 'reference', originId: `${refA}:cache-new`, databaseId: refA, moves: sans('d4'), timeClass: 'classical' })).gameId;
+      const second = await local.reference({ databaseId: refA, filters: {} });
+      expect(second).not.toBe(first);
+      expect(second.white + second.draws + second.black).toBe(first.white + first.draws + first.black + 1);
+      t.db.run('DELETE FROM games WHERE id = ?', [added]);
+      const third = await local.reference({ databaseId: refA, filters: {} });
+      expect(third).not.toBe(second);
+      expect(third).toEqual(first);
+      // Profiles are never cached (no version), but identical requests in flight share one scan.
+      const alice = { player: 'alice', color: 'white' as const, filters: {}, viewer: null };
+      const [a, b] = await Promise.all([local.player(alice), local.player(alice)]);
+      expect(a).toBe(b);
+      expect(await local.player(alice)).not.toBe(a);
+      expect(local.stats()).toMatchObject({ inFlight: 0, running: 0, queued: 0 });
+    });
+
+    it('keeps explorer_db_stats in step with the games table', () => {
+      const db = t.db;
+      const stats = (id: Id) => db.get<{ games: number; changes: number }>('SELECT games, changes FROM explorer_db_stats WHERE database_id = ?', [id]);
+      const real = (id: Id) => db.value<number>('SELECT count(*) FROM games WHERE database_id = ?', [id]);
+      for (const id of [refA, refB, gamesDb]) expect(stats(id)?.games, String(id)).toBe(real(id));
+      const tmp = createDatabase(db, { name: 'tmp', kind: 'reference' });
+      const g = insertGame(db, testGame({ origin: 'reference', originId: `${tmp}:x`, databaseId: tmp, moves: sans('c4') })).gameId;
+      expect(stats(tmp)).toEqual({ games: 1, changes: 1 });
+      db.run('UPDATE games SET white_rating = 2000 WHERE id = ?', [g]);
+      expect(stats(tmp)).toEqual({ games: 1, changes: 2 });
+      // Deleting the database cascades to its games; the counter follows.
+      db.run('DELETE FROM databases WHERE id = ?', [tmp]);
+      expect(stats(tmp)).toEqual({ games: 0, changes: 3 });
+    });
+
+    it('queues large scans for a slot and refuses when the queue is full', async () => {
+      const local = createLocalExplorer({ db: t.db, openingsDir: t.config.openingsDir, maxConcurrentScans: 1, smallScanRows: 0 });
+      const requests = ['', 'e2e4', 'd2d4'].map(play => local.reference({ databaseId: null, play, filters: {} }));
+      expect(local.stats()).toMatchObject({ running: 1, queued: 2 });
+      const results = await Promise.all(requests);
+      expect(results.map(r => r.moves.length > 0)).toEqual([true, true, true]);
+      expect(local.stats()).toMatchObject({ running: 0, queued: 0, inFlight: 0 });
+      // A waiting request whose client leaves gives its place up.
+      const controller = new AbortController();
+      const first = local.reference({ databaseId: null, play: 'g1f3', filters: {} });
+      const second = local.reference({ databaseId: null, play: 'c2c4', filters: {}, signal: controller.signal });
+      expect(local.stats().queued).toBe(1);
+      controller.abort();
+      await expect(second).rejects.toMatchObject({ statusCode: 499 });
+      expect(local.stats().queued).toBe(0);
+      await first;
     });
   });
 });
