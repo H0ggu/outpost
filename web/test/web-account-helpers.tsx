@@ -252,5 +252,6 @@ export const referenceDb = (o: Partial<DatabaseInfo> = {}): DatabaseInfo => ({
   gameCount: 120_000,
   canEdit: true,
   importJob: null,
+  builtin: true,
   ...o,
 });

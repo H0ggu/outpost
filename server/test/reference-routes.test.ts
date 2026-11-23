@@ -123,6 +123,7 @@ describe('reference routes', () => {
       canEdit: true,
       gameCount: 0,
       importJob: { kind: 'broadcastMonth', status: 'queued' },
+      builtin: true,
     });
     expect(info.attribution).toEqual([LICHESS_BROADCAST_ATTRIBUTION]);
     const byMonth = new Map(info.broadcastMonths.map(m => [m.month, m.status]));

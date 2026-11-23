@@ -174,6 +174,7 @@ function toDatabaseInfo(db: Db, r: DatabaseRow, isAdmin: boolean): DatabaseInfo 
     canEdit: isAdmin,
     // Jobs name the admin who queued them and carry error text: admins only.
     importJob: isAdmin ? latestImportJob(db, r.id) : null,
+    builtin: r.builtin === BROADCAST_BUILTIN,
   };
 }
 

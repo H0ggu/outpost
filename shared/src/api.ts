@@ -1334,6 +1334,11 @@ export interface DatabaseInfo {
    * (`imported`, `duplicates`, `skipped`, and `skip:<reason>` per skip reason). Null when none.
    */
   lastImport?: JobInfo | null;
+  /**
+   * In `GET /api/reference`: true for the built-in "Lichess broadcasts" database (the default
+   * target of broadcast-month imports), whatever its name or label say now.
+   */
+  builtin?: boolean;
 }
 
 /** `GET /api/databases`. Mine plus visible public ones. */

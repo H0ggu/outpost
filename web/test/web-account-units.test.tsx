@@ -219,8 +219,12 @@ describe('invites, jobs and months', () => {
 
   it('recognises the built-in broadcast database', () => {
     expect(isBuiltinBroadcastDb(referenceDb())).toBe(true);
-    expect(isBuiltinBroadcastDb(referenceDb({ id: 2, name: 'TWIC', sourceLabel: 'theweekinchess.com' }))).toBe(false);
-    expect(isBuiltinBroadcastDb(referenceDb({ id: 3, sourceLabel: null }))).toBe(false);
+    // The server's flag wins over the label (an admin may relabel the built-in database).
+    expect(isBuiltinBroadcastDb(referenceDb({ sourceLabel: 'Broadcasts' }))).toBe(true);
+    expect(isBuiltinBroadcastDb(referenceDb({ id: 2, name: 'TWIC', sourceLabel: 'theweekinchess.com', builtin: false }))).toBe(false);
+    expect(isBuiltinBroadcastDb(referenceDb({ id: 3, sourceLabel: null, builtin: false }))).toBe(false);
+    // Without the flag, the built-in label still identifies it.
+    expect(isBuiltinBroadcastDb(referenceDb({ builtin: undefined }))).toBe(true);
   });
 
   it('lays months out per year, newest first', () => {

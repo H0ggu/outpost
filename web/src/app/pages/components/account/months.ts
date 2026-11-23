@@ -5,10 +5,11 @@ import type { BroadcastMonthStatus, DatabaseInfo, IsoMonth } from '@outpost/shar
 const BUILTIN_BROADCAST_SOURCE = 'Lichess broadcasts (database.lichess.org)';
 
 /**
- * The built-in broadcast database, which broadcast months go into by default. `DatabaseInfo` has
- * no flag for it, but its source label is fixed.
+ * The built-in broadcast database, which broadcast months go into by default: the server's
+ * `DatabaseInfo.builtin`, or (when a response lacks it) its fixed source label.
  */
-export const isBuiltinBroadcastDb = (d: DatabaseInfo): boolean => d.kind === 'reference' && d.sourceLabel === BUILTIN_BROADCAST_SOURCE;
+export const isBuiltinBroadcastDb = (d: DatabaseInfo): boolean =>
+  d.kind === 'reference' && (d.builtin ?? d.sourceLabel === BUILTIN_BROADCAST_SOURCE);
 
 /** Short English month names, January first. */
 export const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;

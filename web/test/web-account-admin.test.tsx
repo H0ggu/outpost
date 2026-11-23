@@ -87,7 +87,7 @@ describe('AdminSettingsPage', () => {
     let current = structuredClone(start);
     asAdmin()
       .on('GET', '/api/admin/settings', () => current)
-      .on('GET', '/api/reference', { databases: [referenceDb({ id: 4, name: 'TWIC' })], totalGames: 1, broadcastMonths: [], attribution: [] })
+      .on('GET', '/api/reference', { databases: [referenceDb({ id: 4, name: 'TWIC', sourceLabel: 'theweekinchess.com', builtin: false })], totalGames: 1, broadcastMonths: [], attribution: [] })
       .on('PUT', '/api/admin/settings', req => {
         const b = req.body as Record<string, unknown>;
         current = { ...current, ...b } as AdminSettings;
@@ -603,7 +603,7 @@ class FakeXhr {
 describe('AdminReferencePage', () => {
   const month = (m: string, status: BroadcastMonthStatus['status'], games = 0): BroadcastMonthStatus => ({ month: m, status, games, importedAt: status === 'imported' ? NOW : null });
   const info = (o: Partial<ReferenceInfo> = {}): ReferenceInfo => ({
-    databases: [referenceDb(), referenceDb({ id: 2, name: 'Club archive', sourceLabel: null, licence: null, visibility: 'private', gameCount: 900 })],
+    databases: [referenceDb(), referenceDb({ id: 2, name: 'Club archive', sourceLabel: null, licence: null, visibility: 'private', gameCount: 900, builtin: false })],
     totalGames: 120_900,
     broadcastMonths: [month('2026-10', 'importing'), month('2026-09', 'available'), month('2026-08', 'imported', 12_345), month('2026-07', 'error'), month('2025-12', 'available')],
     attribution: ['Lichess broadcast games, CC BY-SA 4.0.'],
