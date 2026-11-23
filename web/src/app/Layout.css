@@ -244,6 +244,13 @@
   cursor: progress;
 }
 
+/* The menu item that has keyboard focus looks like the hovered one. */
+.dropdown [role='menuitem']:focus-visible {
+  background: var(--c-primary);
+  color: var(--c-over);
+  outline-offset: -2px;
+}
+
 /* ---------------------------------------------------------------------------
  * Banners above the page
  * ------------------------------------------------------------------------ */

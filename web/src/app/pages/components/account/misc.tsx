@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { Box, Button, ButtonLink, EmptyState, licon, Page, type LiconValue } from '../../../components/index.ts';
 import { paths } from '../../../paths.ts';
+import { focusMenuItem, menuButtonKeyDown, menuKeyDown, type MenuFocus } from './menuKeys.ts';
 import './account.css';
 
 /** Copies `text`; resolves false when the clipboard is unavailable. */
@@ -76,7 +77,14 @@ export function RowMenu({ label, actions }: { label: string; actions: readonly R
   const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const focusOnOpen = useRef<MenuFocus>('first');
   const open = pos !== null;
+
+  // The menu takes focus when it opens (menuKeys.ts).
+  useEffect(() => {
+    if (open) focusMenuItem(menuRef.current, focusOnOpen.current);
+  }, [open]);
 
   const place = () => {
     const el = toggleRef.current;
@@ -113,6 +121,15 @@ export function RowMenu({ label, actions }: { label: string; actions: readonly R
   }, [open]);
 
   const toggle = () => (open ? setPos(null) : place());
+  const openAt = (focus: MenuFocus) => {
+    focusOnOpen.current = focus;
+    if (!open) place();
+    else focusMenuItem(menuRef.current, focus);
+  };
+  const closeToToggle = () => {
+    setPos(null);
+    toggleRef.current?.focus();
+  };
 
   return (
     <div className="acc-rowmenu" ref={ref}>
@@ -125,15 +142,27 @@ export function RowMenu({ label, actions }: { label: string; actions: readonly R
         aria-label={label}
         title={label}
         data-icon={licon.Gear}
-        onClick={toggle}
+        onClick={() => {
+          focusOnOpen.current = 'first';
+          toggle();
+        }}
+        onKeyDown={e => menuButtonKeyDown(e, openAt)}
       />
       {pos && (
-        <div className="dropdown acc-rowmenu__menu" role="menu" style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, right: pos.right }}>
+        <div
+          ref={menuRef}
+          className="dropdown acc-rowmenu__menu"
+          role="menu"
+          aria-label={label}
+          style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, right: pos.right }}
+          onKeyDown={e => menuKeyDown(e, closeToToggle)}
+        >
           {actions.map(a => (
             <button
               key={a.label}
               type="button"
               role="menuitem"
+              tabIndex={-1}
               data-icon={a.icon}
               className={a.danger ? 'acc-danger' : undefined}
               disabled={a.disabled}
