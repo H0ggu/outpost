@@ -156,7 +156,8 @@ describe('ProfileLayout header', () => {
       },
     });
     expect(await screen.findByText('Updating · TestPlayer: 312')).toBeTruthy();
-    expect(screen.getByText(/updating · 312/)).toBeTruthy();
+    // The account chip says what the number counts (it read 'updating · 0' before any game).
+    expect(screen.getByText(/updating · 312 checked/)).toBeTruthy();
   });
 
   it('counts games from the status poll while a sync imports them', async () => {
@@ -175,14 +176,14 @@ describe('ProfileLayout header', () => {
             ? {
                 ...s,
                 gameCount: path.endsWith('/status') ? s.gameCount + 25 : s.gameCount,
-                sync: { ...s.sync, state: 'running', progress: { done: 25, total: null, message: null }, queuePosition: 0 },
+                sync: { ...s.sync, state: 'running', progress: { done: 40, total: null, message: null, counts: { imported: 25 } }, queuePosition: 0 },
               }
             : s,
         ),
       }),
     });
     const n = new Intl.NumberFormat('en-US').format(lichess.gameCount + 25);
-    expect(await screen.findByText(new RegExp(`updating · 25 · ${n} games`))).toBeTruthy();
+    expect(await screen.findByText(new RegExp(`updating · 25 new · ${n} games`))).toBeTruthy();
   });
 
   it('shows a failed sync with its error', async () => {

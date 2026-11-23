@@ -16,6 +16,9 @@ import './NewProfilePage.css';
 /** Longest display name the form accepts. */
 const MAX_NAME = 100;
 
+/** A server message as a sentence (the API's messages carry no full stop). */
+const sentence = (text: string): string => (/[.!?…]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
+
 /**
  * PLAN §9 `/profiles/new`, §6 POST /api/profiles: pick and merge any number of accounts (Lichess,
  * Chess.com, a FIDE id from the reference DB, a player inside a PGN database), name the profile,
@@ -164,7 +167,7 @@ function NewProfileForm() {
               {slugInvalid
                 ? 'Use 2–64 lowercase letters, digits and dashes (not starting with a dash).'
                 : conflict
-                  ? `${create.error?.message ?? 'That address is taken.'} Choose another address.`
+                  ? `${sentence(create.error?.message ?? 'That address is taken')} Choose another address.`
                   : 'Leave empty to use the suggestion; a number is added if it is taken.'}
             </span>
           </div>

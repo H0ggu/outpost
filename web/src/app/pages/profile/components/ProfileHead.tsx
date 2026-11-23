@@ -169,8 +169,15 @@ function syncLabel(sync: SourceSyncStatus, now: number): string {
       return `synced ${fmtRelative(sync.lastSyncedAt, now)}`;
     case 'queued':
       return sync.queuePosition ? `queued · #${sync.queuePosition}` : 'queued';
-    case 'running':
-      return sync.progress ? `updating · ${fmtInt(sync.progress.done)}${sync.progress.total ? `/${fmtInt(sync.progress.total)}` : ''}` : 'updating';
+    case 'running': {
+      // The importers count new games (`counts.imported`); `done` alone is games read (Lichess) or
+      // months (Chess.com, with a total), so a bare number would mean nothing.
+      const p = sync.progress;
+      const imported = p?.counts?.imported;
+      if (imported) return `updating · ${fmtInt(imported)} new`;
+      if (p?.total) return `updating · ${fmtInt(p.done)}/${fmtInt(p.total)}`;
+      return p?.done ? `updating · ${fmtInt(p.done)} checked` : 'updating';
+    }
     default:
       return SYNC_STATE_LABELS[sync.state].toLowerCase();
   }

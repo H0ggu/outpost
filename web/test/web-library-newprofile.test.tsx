@@ -153,6 +153,10 @@ describe('NewProfilePage', () => {
     fireEvent.change(await screen.findByLabelText('Page address'), { target: { value: 'taken' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
     expect(await screen.findByText('That address is already used. Choose another address.')).toBeTruthy();
+    // The server's own wording has no full stop: one is added before the hint.
+    api().on('POST', '/api/profiles', apiError(409, 'conflict', 'The address "taken" is taken', { field: 'slug' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+    expect(await screen.findByText('The address "taken" is taken. Choose another address.')).toBeTruthy();
 
     api().on('POST', '/api/profiles', apiError(502, 'upstream_error', 'Lichess says this account does not exist'));
     fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));

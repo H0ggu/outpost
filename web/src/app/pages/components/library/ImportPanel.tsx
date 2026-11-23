@@ -73,10 +73,10 @@ export function importCountItems(counts: Record<string, number>): Array<{ key: s
     .map(([k, n]) => `${fullNumber(n)} ${SKIP_REASONS[k.slice(5)] ?? k.slice(5)}`);
   for (const [key, n] of Object.entries(counts)) {
     if (key === 'imported' || key.startsWith('skip:')) continue;
-    if (key === 'duplicates') items.push({ key, n, label: 'duplicates skipped' });
+    if (key === 'duplicates') items.push({ key, n, label: n === 1 ? 'duplicate skipped' : 'duplicates skipped' });
     else if (key === 'skipped')
       items.push({ key, n, label: reasons.length ? `skipped (${reasons.join(', ')})` : 'skipped (variants, empty or unreadable)' });
-    else if (key === 'errors') items.push({ key, n, label: 'errors' });
+    else if (key === 'errors') items.push({ key, n, label: n === 1 ? 'error' : 'errors' });
     else items.push({ key, n, label: key });
   }
   return items;

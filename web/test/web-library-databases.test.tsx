@@ -193,7 +193,7 @@ describe('DatabasePage', () => {
     expect(api().find('POST', '/api/databases/5/import')[0]!.body).toEqual({ pgn: '[White "A"]\n[Black "B"]\n\n1. e4 e5 1-0' });
     const summary = await screen.findByText('Import finished: 2 games added', undefined, { timeout: 3000 });
     const box = summary.closest('[role=status]') as HTMLElement;
-    expect(within(box).getByText('duplicates skipped')).toBeTruthy();
+    expect(within(box).getByText('duplicate skipped')).toBeTruthy(); // one: singular
     expect(within(box).getByText('4')).toBeTruthy();
     // The games list was refreshed after the import.
     expect(api().find('GET', '/api/databases/5/games').length).toBeGreaterThan(1);
@@ -226,9 +226,9 @@ describe('DatabasePage', () => {
     const summary = await screen.findByText('Import finished: 9 games added', undefined, { timeout: 3000 });
     const box = summary.closest('[role=status]') as HTMLElement;
     expect(within(box).getByText('skipped (1 variant, 1 unfinished)')).toBeTruthy();
-    expect(within(box).getByText('duplicates skipped')).toBeTruthy();
+    expect(within(box).getByText('duplicate skipped')).toBeTruthy();
     fireEvent.click(within(box).getByRole('button', { name: 'Dismiss' }));
-    expect(screen.getByText(/Last import .*: 9 imported, 1 duplicates skipped, 2 skipped \(1 variant, 1 unfinished\)\./)).toBeTruthy();
+    expect(screen.getByText(/Last import .*: 9 imported, 1 duplicate skipped, 2 skipped \(1 variant, 1 unfinished\)\./)).toBeTruthy();
   });
 
   it('keeps pasted PGN under the server limit and shows the import refusals', async () => {

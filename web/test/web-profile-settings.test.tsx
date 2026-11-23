@@ -62,6 +62,9 @@ describe('Settings tab', () => {
     expect(requests(PROFILE, 'PATCH')[0]!.body).toEqual({ slug: 'the-tester' });
     await waitFor(() => expect(location().pathname).toBe('/u/the-tester/settings'));
     expect(await screen.findByLabelText('Page address')).toBeTruthy();
+    // The old address is not asked for again once it is gone (it would answer 404).
+    const patchAt = requests(PROFILE).findIndex(c => c.method === 'PATCH');
+    expect(requests(PROFILE, 'GET').filter(c => requests(PROFILE).indexOf(c) > patchAt)).toEqual([]);
   });
 
   it('shows a save error such as a taken address', async () => {
