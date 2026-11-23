@@ -15,7 +15,7 @@ $site-header-margin-extra: 1.3em;
 $site-header-outer-height: calc($site-header-height + $site-header-margin + var(---sticky-gap));
 $main-margin: var(---main-margin);
 $main-max-width: 1300px;
-$topnav-visible: 1020px; // where topnav menu & WWWWWWWWWWWWWWWWWWWW both fit at 100%
+$topnav-visible: 1180px; // outpost: where Outpost's nav, search and user fit (the SPA header's breakpoint)
 
 $xxx-small: 400px;
 $xx-small: 500px;

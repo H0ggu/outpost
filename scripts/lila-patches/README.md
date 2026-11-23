@@ -13,6 +13,7 @@ the Studio passes (`opts.outpost`, `opts.explorer.outpost`), so without them lil
 | `003-pgn-import-annotations.patch` | lila only keeps PGN comments, NAGs, `[%cal]`/`[%csl]` shapes, `[%clk]` and `[%eval]` when its server imports a study chapter; the client importer now reads them, plus `ECO`/`Opening` and the game result, so My Files round-trips. Exports `glyphOfNag`/`pgnCommentId` for the Studio's annotation panel. |
 | `004-ceval-shipped-engines.patch` | The engine list offers only engines whose files Outpost ships: stockfish-web (SF 19, SF 19 smallnet, Fairy-Stockfish HCE) when the page is cross-origin isolated, and stockfish.js otherwise. Drops the stockfish-nnue.wasm, stockfish.wasm and multi-variant builds and the per-variant NNUE nets. |
 | `005-tsconfig-vendored-references.patch` | Removes project references to lila packages that are not vendored (`bits`, `chart`, `dasher`): Vite's TypeScript transform follows them and fails on the missing folders. |
+| `006-header-breakpoint.patch` | `$topnav-visible` 1020px → 1180px: the site header's nav folds into the hamburger where the SPA's does. Outpost's header (nav, player search, user name) doesn't fit on one line below that; at 1020–1032 px the user's name wrapped onto the Studio bar and caught its clicks. A SCSS value can't be guarded by `outpost` options; it only moves a breakpoint. |
 
 Edit the vendored files, then regenerate the patch the file belongs to against a commit that holds
 the unpatched copy (`<base>`, e.g. the scaffold commit, or a fresh `npm run vendor` with this folder empty):
