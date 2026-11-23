@@ -365,7 +365,12 @@ export async function syncLichess(ctx: JobContext<'sync'>, src: SourceRow, opts:
     since: typeof saved?.since === 'number' ? saved.since : firstSince,
     pendingIds: [],
   };
-  const pending = new Set<string>();
+  // Games that were still being played last time. They stay in `pending` until Lichess reports
+  // them finished (or forgets them), so a sync interrupted while re-checking them loses none.
+  const recheck = [
+    ...new Set((Array.isArray(saved?.pendingIds) ? saved.pendingIds : []).filter(id => typeof id === 'string' && /^[A-Za-z0-9]{8}$/.test(id))),
+  ].slice(-MAX_PENDING_IDS);
+  const pending = new Set<string>(recheck);
   const remember = (): LichessSyncState => {
     state.pendingIds = [...pending].slice(-MAX_PENDING_IDS);
     return state;
@@ -374,30 +379,40 @@ export async function syncLichess(ctx: JobContext<'sync'>, src: SourceRow, opts:
   const consume = (g: LichessGame): boolean => {
     seen++;
     const mapped = mapLichessGame(g);
-    if (!('skip' in mapped)) return importer.add(mapped);
+    if (!('skip' in mapped)) {
+      pending.delete(g.id);
+      return importer.add(mapped);
+    }
     if (mapped.skip === 'ongoing') {
       pending.add(g.id);
       importer.counts.ongoing!++;
-    } else importer.skip();
+    } else {
+      pending.delete(g.id);
+      importer.skip();
+    }
     return false;
   };
   const report = (): void =>
     importer.report(seen, null, `${importer.counts.imported} new game${importer.counts.imported === 1 ? '' : 's'} imported`);
 
-  // 3. Games that were still being played last time.
-  const recheck = (Array.isArray(saved?.pendingIds) ? saved.pendingIds : []).filter(id => typeof id === 'string' && /^[A-Za-z0-9]{8}$/.test(id));
+  // 3. Re-check the games that were in progress.
   if (recheck.length > 0) {
     importer.report(0, null, `Checking ${recheck.length} game${recheck.length === 1 ? '' : 's'} that were in progress`);
     const r = await upstream.fetch(`${UPSTREAM.lichess}/api/games/export/_ids?${gameParams()}`, {
       method: 'POST',
-      body: recheck.slice(0, MAX_PENDING_IDS).join(','),
+      body: recheck.join(','),
       auth: 'optional',
       signal,
       headers: { accept: 'application/x-ndjson', 'content-type': 'text/plain' },
     });
+    const returned = new Set<string>();
     for await (const g of readNdjson<LichessGame>(r, LICHESS_HOST, signal)) {
+      if (!g || typeof g.id !== 'string') continue;
+      returned.add(g.id);
       if (consume(g)) await importer.flush(() => saveSyncState(db, src.id, remember()));
     }
+    // Ids Lichess no longer knows (deleted games) are dropped.
+    for (const id of recheck) if (!returned.has(id)) pending.delete(id);
     await importer.flush(() => saveSyncState(db, src.id, remember()));
     report();
   }

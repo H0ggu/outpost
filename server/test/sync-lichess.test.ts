@@ -115,11 +115,15 @@ describe('Lichess sync', () => {
   let games: LichessGame[];
   let user: LichessUser | null;
   let streamOpts: { failAfter?: number };
+  let idsExport: LichessGame[];
+  let idsOpts: { failAfter?: number };
 
   beforeEach(async () => {
     games = GAMES;
     user = USER;
     streamOpts = {};
+    idsExport = IDS_EXPORT;
+    idsOpts = {};
     fake = fakeFetch([
       ['lichess.org/api/user/synthplayer', () => (user ? jsonResponse(user) : statusResponse(404))],
       [
@@ -130,7 +134,13 @@ describe('Lichess sync', () => {
           return ndjsonResponse(games.filter(g => (g.createdAt ?? 0) >= since).slice(0, max), streamOpts);
         },
       ],
-      ['lichess.org/api/games/export/_ids', () => ndjsonResponse(IDS_EXPORT)],
+      [
+        'lichess.org/api/games/export/_ids',
+        (_url, call) => {
+          const ids = new Set((call.body ?? '').split(','));
+          return ndjsonResponse(idsExport.filter(g => ids.has(g.id)), idsOpts);
+        },
+      ],
     ]);
     t = await makeTestApp({ fetch: fake.fetch });
   });
@@ -215,6 +225,35 @@ describe('Lichess sync', () => {
       time_class: 'correspondence',
     });
     expect(JSON.parse(t.db.value<string>('SELECT sync_state_json FROM sources WHERE id = ?', [id])!).pendingIds).toEqual([]);
+  });
+
+  it('keeps games still in progress pending until Lichess reports them finished or forgets them', async () => {
+    const id = createSource(t.db, { kind: 'lichess', key: 'synthplayer' });
+    const base = IDS_EXPORT[0]!;
+    const ids = Array.from({ length: 150 }, (_, i) => `pend${String(i).padStart(4, '0')}`);
+    idsExport = ids.map((gid, i) => ({ ...base, id: gid, createdAt: base.createdAt! + i }));
+    games = [];
+    const saveState = (pendingIds: string[]) =>
+      t.db.run('UPDATE sources SET sync_state_json = ? WHERE id = ?', [JSON.stringify({ v: 1, since: 1793600000000, pendingIds }), id]);
+
+    // The re-check breaks after 120 games: the first batch of 100 is stored, and the 50 games not
+    // stored yet stay pending (with the cursor unchanged).
+    saveState(ids);
+    idsOpts = { failAfter: 120 };
+    await expect(run(id)).rejects.toThrow(UpstreamError);
+    expect(t.db.value("SELECT COUNT(*) FROM games WHERE origin_id LIKE 'pend%'")).toBe(100);
+    let state = JSON.parse(t.db.value<string>('SELECT sync_state_json FROM sources WHERE id = ?', [id])!);
+    expect(state.since).toBe(1793600000000);
+    expect(state.pendingIds).toEqual(ids.slice(100));
+
+    // The next run finishes them; an id Lichess no longer returns is dropped.
+    idsOpts = {};
+    saveState([...state.pendingIds, 'gone0001']);
+    await run(id);
+    expect(fake.callsTo('/api/games/export/_ids').at(-1)!.body).toBe([...ids.slice(100), 'gone0001'].join(','));
+    expect(t.db.value("SELECT COUNT(*) FROM games WHERE origin_id LIKE 'pend%'")).toBe(150);
+    state = JSON.parse(t.db.value<string>('SELECT sync_state_json FROM sources WHERE id = ?', [id])!);
+    expect(state.pendingIds).toEqual([]);
   });
 
   it('limits the first import to initialSyncMonths', async () => {
