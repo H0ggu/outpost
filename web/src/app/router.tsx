@@ -4,6 +4,7 @@
  */
 import type { ComponentType } from 'react';
 import { createBrowserRouter, Navigate, type RouteObject } from 'react-router';
+import { Spinner } from './components/Feedback.tsx';
 import Layout from './Layout.tsx';
 import RouteError from './RouteError.tsx';
 
@@ -16,6 +17,8 @@ export const routes: RouteObject[] = [
   {
     path: '/',
     Component: Layout,
+    // Shown while the first page's lazy chunk loads (React Router warns without one).
+    HydrateFallback: () => <Spinner center label="Loading Outpost" />,
     errorElement: <RouteError />,
     children: [
       {

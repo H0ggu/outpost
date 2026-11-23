@@ -533,14 +533,6 @@
 
 .lib-tabs {
   margin: 0 var(--box-padding);
-  /* The kit's .tabs-horiz scrolls horizontally, which clips the active tab's underline where it
-     overlaps the bar's own bottom border (margin-bottom: -2px); draw the bar inside instead. */
-  border-bottom: 0;
-  box-shadow: inset 0 -2px 0 var(--c-border);
-}
-
-.lib-tabs a {
-  margin-bottom: 0;
 }
 
 .lib-tab-short {

@@ -842,12 +842,7 @@ html[data-theme='light'] {
 .profile-page .profile-tabs {
   margin-top: 0.6rem;
   padding: 0 calc(var(--box-padding) - 1rem);
-  border-bottom: 0;
   box-shadow: 0 -1px 0 var(--c-border) inset;
-}
-
-.profile-page .profile-tabs a {
-  margin-bottom: 0;
 }
 
 /* ---------------------------------------------------------------------------

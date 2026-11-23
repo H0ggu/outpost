@@ -91,13 +91,18 @@
   min-width: 0;
 }
 
-.site-search input {
+/* `input[type='search']` too: the generic form-control rule below (same specificity with the
+   attribute) would otherwise draw a second box inside the pill. */
+.site-search input,
+.site-search input[type='search'] {
   border: 0;
+  border-radius: 0;
   background: transparent;
   outline: none;
   width: 14rem;
   max-width: 40vw;
   padding: 0.25rem 0;
+  color: var(--c-font-clear);
 }
 
 .site-search i {
@@ -461,7 +466,9 @@ textarea:focus {
   display: flex;
   overflow-x: auto;
   scrollbar-width: none;
-  border-bottom: 2px solid var(--c-border);
+  /* The bar is drawn inside (not a border the active tab overlaps with a negative margin): the
+     horizontal scroll container would clip an underline that reaches outside it. */
+  box-shadow: inset 0 -2px 0 var(--c-border);
   gap: 0.1rem;
 }
 
@@ -474,7 +481,6 @@ textarea:focus {
   display: flex;
   align-items: center;
   padding: 0.7rem 1rem;
-  margin-bottom: -2px;
   color: var(--c-font-dim);
   border-bottom: 2px solid transparent;
   white-space: nowrap;

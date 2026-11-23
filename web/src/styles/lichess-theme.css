@@ -340,6 +340,9 @@ textarea {
 /* Icon font: <i data-icon={licon.Search}></i> (lila ui/lib/css/base/_data-icon.scss). */
 [data-icon]::before {
   content: attr(data-icon);
+  /* Empty alternative text: the private-use glyph stays out of the accessible name ("<glyph>
+     Update"). Browsers without CSS alt text keep the plain declaration above. */
+  content: attr(data-icon) / '';
   font-family: 'lichess';
   font-style: normal;
   font-weight: normal;
