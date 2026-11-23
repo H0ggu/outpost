@@ -46,6 +46,8 @@ export default function AdminLayout() {
   // No <Page> here: it would set the document title after the section page set its own.
   return (
     <div className="page">
+      {/* The page heading for screen readers; each section page's box title is its h2. */}
+      <h1 className="visually-hidden">Admin</h1>
       <PageMenu
         label="Admin sections"
         items={SECTIONS.map(s => ({ ...s, active: pathname === s.to || pathname.startsWith(`${s.to}/`) }))}

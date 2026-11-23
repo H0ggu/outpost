@@ -1,14 +1,17 @@
-import { useState } from 'react';
+import { lazy, Suspense, useEffect, useState, type FocusEvent, type PointerEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { OPENINGS_RANK_MIN_GAMES, type OpeningRow, type OpeningsParams } from '@outpost/shared/api';
 import type { Color } from '@outpost/shared/chess';
 import { filtersKey, isEmptyFilters } from '@outpost/shared/filters';
 import { useOpenings, useUrlFilters } from '../../api/hooks.ts';
-import { Box, EmptyState, ErrorBox, licon, Spinner, WdlBar } from '../../components/index.ts';
+import { Box, EmptyState, ErrorBox, licon, perspectiveWdl, Spinner, WdlBar, type WdlPerspective } from '../../components/index.ts';
 import { ColorDot, Pager, rowClick, ScoreText, Segmented, SelectField } from './components/bits.tsx';
 import { fmtInt, fmtLine, fmtMoves, scoreOfWdl } from './format.ts';
 import { oneOf, useProfile, useQueryParam, useSetQueryParams } from './hooks.ts';
 import { explorerTabAt } from './links.ts';
+
+/** The board preview of a line (chessground), fetched on the first hover. */
+const LinePreview = lazy(() => import('./components/LinePreview.tsx'));
 
 const ORDERS = ['most', 'best', 'worst'] as const;
 const MIN_GAMES = ['', '1', '5', '10', '20', '50', '100', '200', '500'] as const;
@@ -28,7 +31,7 @@ export const OPENINGS_PAGE_SIZE = 20;
  * `OPENINGS_PAGE_SIZE` lines at a time, back on its first page whenever the controls change.
  */
 export default function OpeningsPage() {
-  const { slug } = useProfile();
+  const { slug, prefs } = useProfile();
   const navigate = useNavigate();
   const [filters, setFilters] = useUrlFilters();
   const [order, setOrder] = useQueryParam<Order>('order', oneOf(ORDERS, 'most'), 'most');
@@ -123,6 +126,7 @@ export default function OpeningsPage() {
             onOpen={r => navigate(linkOf(r))}
             filtered={!isEmptyFilters(filters)}
             rankMin={rankMin}
+            perspective={prefs.winratePerspective}
           />
         ))}
       </div>
@@ -143,6 +147,7 @@ function OpeningsTable({
   onOpen,
   filtered,
   rankMin,
+  perspective,
 }: {
   color: Color;
   rows: readonly OpeningRow[];
@@ -151,9 +156,11 @@ function OpeningsTable({
   filtered: boolean;
   /** Under best / worst: the fewest games a ranked line has. */
   rankMin: number | null;
+  perspective: WdlPerspective;
 }) {
   const [page, setPage] = useState(1);
   const shown = rows.slice((page - 1) * OPENINGS_PAGE_SIZE, page * OPENINGS_PAGE_SIZE);
+  const preview = useLinePreview();
   return (
     <section className="openings-table" aria-label={color === 'white' ? 'As White' : 'As Black'}>
       <h3 className="openings-table__title">
@@ -180,17 +187,17 @@ function OpeningsTable({
               {shown.map(r => (
                 <tr key={`${r.eco}-${r.line}`} className="clickable" title={`Open ${r.name} in the explorer`} onClick={rowClick(() => onOpen(r))}>
                   <td className="op-name">
-                    <Link to={linkOf(r)} className="row-action">
+                    <Link to={linkOf(r)} className="row-action" {...preview.handlers(r)}>
                       <span className="eco">{r.eco}</span> {r.name}
                     </Link>
                     <span className="op-name__line san">{fmtLine(r.line)}</span>
                     {/* Phones show the bar under the name instead of in its own column. */}
-                    <WdlBar w={r.w} d={r.d} l={r.l} className="cell-bar" />
+                    <WdlBar {...perspectiveWdl(r, r.color, perspective)} className="cell-bar" />
                   </td>
                   <td className="num">{fmtInt(r.games)}</td>
                   <td className="num op-moves">{fmtMoves(r.avgPly)}</td>
                   <td className="op-wdl col-wdl">
-                    <WdlBar w={r.w} d={r.d} l={r.l} />
+                    <WdlBar {...perspectiveWdl(r, r.color, perspective)} />
                   </td>
                   <td className="num">
                     <ScoreText score={scoreOfWdl(r)} />
@@ -202,6 +209,53 @@ function OpeningsTable({
           <Pager page={page} pageSize={OPENINGS_PAGE_SIZE} total={rows.length} onPage={setPage} />
         </div>
       )}
+      {preview.shown && (
+        <Suspense fallback={null}>
+          <LinePreview line={preview.shown.row.line} color={preview.shown.row.color} anchor={preview.shown.anchor} />
+        </Suspense>
+      )}
     </section>
   );
+}
+
+/**
+ * Which opening's board preview is open: the one whose name the mouse is over, or which has
+ * keyboard focus (a touch tap opens the line instead). Scrolling closes it.
+ */
+function useLinePreview() {
+  const [shown, setShown] = useState<{ row: OpeningRow; anchor: DOMRect } | null>(null);
+  useEffect(() => {
+    if (!shown) return;
+    const close = () => setShown(null);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [shown]);
+  const show = (row: OpeningRow, el: Element) => setShown({ row, anchor: el.getBoundingClientRect() });
+  const hide = () => setShown(null);
+  return {
+    shown,
+    handlers: (row: OpeningRow) => ({
+      onPointerEnter: (e: PointerEvent<HTMLElement>) => {
+        if (e.pointerType === 'mouse') show(row, e.currentTarget);
+      },
+      onPointerLeave: hide,
+      onFocus: (e: FocusEvent<HTMLElement>) => {
+        if (focusVisible(e.currentTarget)) show(row, e.currentTarget);
+      },
+      onBlur: hide,
+    }),
+  };
+}
+
+/** Whether an element has keyboard focus (`:focus-visible`; false where that is unsupported). */
+function focusVisible(el: Element): boolean {
+  try {
+    return el.matches(':focus-visible');
+  } catch {
+    return false;
+  }
 }

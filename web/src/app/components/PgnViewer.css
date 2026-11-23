@@ -1,0 +1,20 @@
+/*
+ * pgn-viewer's board coordinates. pgn-viewer draws the rank numbers along the right edge, in the
+ * h-file squares, and chessground colours each number for that square (`coord-light` on light
+ * squares gets the dark ink, board.css). chessground.base.css, loaded first by main.tsx with the
+ * same specificity, also sets `left: 4px`, which wins over pgn-viewer's `right: 0` and moved the
+ * numbers onto the a-file, where every ink lands on a square of its own colour (about 1:1).
+ * File letters are lowercase, as lila writes them.
+ */
+.lpv .cg-wrap coords.ranks {
+  left: auto;
+  right: 0;
+}
+
+.lpv .cg-wrap coords.ranks coord {
+  transform: none;
+}
+
+.lpv .cg-wrap coords.files {
+  text-transform: none;
+}

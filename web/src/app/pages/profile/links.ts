@@ -1,10 +1,11 @@
 /**
- * Links out of the profile pages: Studio game analysis, the embedded explorer and the
- * click-through from an opening line to the Explorer tab.
+ * Links out of the profile pages: Studio game analysis, the embedded explorer, the
+ * click-through from an opening line to the Explorer tab and a new profile for an opponent.
  */
-import { toExplorerGameId, type Color } from '@outpost/shared/api';
+import { toExplorerGameId, type Color, type SourceKind } from '@outpost/shared/api';
 import { encodeFiltersSegment, withQuery, type ProfileFilters } from '@outpost/shared/filters';
 import { paths } from '../../paths.ts';
+import { newProfileHref } from '../components/library/newProfileQuery.ts';
 import { lineToSanMoves, numberedSan } from './format.ts';
 
 /**
@@ -35,3 +36,16 @@ export function studioExplorerLink(slug: string, color: Color, filters: ProfileF
 /** The Explorer tab at a line, as the given colour, keeping the other filters. */
 export const explorerTabAt = (slug: string, filters: ProfileFilters, color: Color, line: readonly string[]): string =>
   paths.profile(slug, 'explorer', { ...filters, color, line: [...line] });
+
+/**
+ * The new-profile form with an opponent's account picked (`/profiles/new?lichess=…&name=…`), for
+ * scouting someone Outpost has no profile of yet. Lichess and Chess.com opponents are known by
+ * username, reference-game opponents by FIDE id; a PGN opponent is only a name, so it has none.
+ */
+export function newProfileForOpponent(opponent: { kind: SourceKind; key: string; name: string }): string | null {
+  const { kind, key, name } = opponent;
+  if (kind === 'pgn' || !key) return null;
+  if (kind === 'fide') return newProfileHref([{ kind, key, label: name }], name);
+  // The username as the site writes it (the key is its lowercase form).
+  return newProfileHref([{ kind, key: name.toLowerCase() === key.toLowerCase() ? name : key }], name);
+}

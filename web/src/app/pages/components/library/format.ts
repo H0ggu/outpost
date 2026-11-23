@@ -6,10 +6,16 @@ import type { EpochMs, GameResult, SourceKind } from '@outpost/shared/api';
 
 const DAY_MS = 86_400_000;
 
-/** Date only, e.g. "23 Nov 2026" (locale-dependent). `—` when unknown. */
+/**
+ * Dates are written the same way on every page, whatever the browser's language: day month
+ * year and a 24-hour clock, as the profile and account pages write them (en-GB).
+ */
+export const DATE_LOCALE = 'en-GB';
+
+/** Date only, e.g. "23 Nov 2026". `—` when unknown. */
 export function formatDate(ms: EpochMs | null | undefined, utc = false): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—';
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(DATE_LOCALE, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -17,15 +23,16 @@ export function formatDate(ms: EpochMs | null | undefined, utc = false): string 
   }).format(ms);
 }
 
-/** Date and time, e.g. "23 Nov 2026, 14:05". */
+/** Date and time, e.g. "23 Nov 2026, 14:05" (", 14:05 UTC" in UTC). */
 export function formatDateTime(ms: EpochMs | null | undefined, utc = false): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—';
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(DATE_LOCALE, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    hourCycle: 'h23',
     ...(utc ? { timeZone: 'UTC', timeZoneName: 'short' } : {}),
   }).format(ms);
 }

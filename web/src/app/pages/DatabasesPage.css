@@ -39,7 +39,7 @@
 }
 
 .lib-dbname__src {
-  color: var(--c-font-dimmer);
+  color: var(--c-font-dim);
   font-size: 0.82rem;
 }
 
@@ -376,8 +376,20 @@
     display: none;
   }
 
+  /* Finger-sized, and apart: Analyse next to Delete. */
+  .lib-rowactions {
+    gap: 0.5rem;
+  }
+
+  .lib-rowactions .button {
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  /* Two 32 px buttons, the gap and the cell's padding. */
   .lib-gtable th[data-col='actions'] {
-    width: 5.5rem;
+    width: 6rem;
   }
 
   .lib-gtable--readonly th[data-col='actions'] {
@@ -397,7 +409,7 @@
   }
 
   .lib-gtable th[data-col='actions'] {
-    width: 4.75rem;
+    width: 5.5rem;
   }
 
   .lib-gtable--readonly th[data-col='actions'] {

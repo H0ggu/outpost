@@ -15,6 +15,7 @@ import { licon } from '../lichess/licon.ts';
 import { useLogout, useSession } from './api/hooks.ts';
 import { Button } from './components/index.ts';
 import { JobsIndicator } from './pages/components/account/JobsIndicator.tsx';
+import { focusMenuItem, menuButtonKeyDown, menuKeyDown, type MenuFocus } from './pages/components/account/menuKeys.ts';
 import { MAIN_NAV, paths } from './paths.ts';
 import { usePrefs } from './prefs.ts';
 import './Layout.css';
@@ -229,14 +230,37 @@ function SearchBox({ variant }: { variant: 'bar' | 'menu' }) {
   );
 }
 
+/**
+ * The account menu: a menu button (WAI-ARIA pattern, menuKeys.ts) whose menu takes focus when it
+ * opens and gives it back to the button when the keyboard closes it.
+ */
 function UserMenu({ session }: { session: SessionInfo | undefined }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const focusOnOpen = useRef<MenuFocus>('first');
   const logout = useLogout();
   const navigate = useNavigate();
   const location = useLocation();
 
+  const openMenu = (focus: MenuFocus) => {
+    focusOnOpen.current = focus;
+    setOpen(true);
+  };
+  /** Closes the menu from the keyboard: focus goes back to the button, not to the page. */
+  const closeToButton = () => {
+    setOpen(false);
+    buttonRef.current?.focus();
+  };
+
+  const menuId = useId();
+
   useEffect(() => setOpen(false), [location.pathname]);
+
+  useEffect(() => {
+    if (open) focusMenuItem(menuRef.current, focusOnOpen.current);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -244,7 +268,9 @@ function UserMenu({ session }: { session: SessionInfo | undefined }) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key !== 'Escape') return;
+      if (ref.current?.contains(document.activeElement)) buttonRef.current?.focus();
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -276,31 +302,41 @@ function UserMenu({ session }: { session: SessionInfo | undefined }) {
   return (
     <div className="user-menu" ref={ref}>
       <button
+        ref={buttonRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         aria-label={`Account menu (${user.username})`}
-        onClick={() => setOpen(o => !o)}
+        onClick={() => (open ? setOpen(false) : openMenu('first'))}
+        onKeyDown={e => menuButtonKeyDown(e, openMenu)}
         data-icon={licon.User}
       >
         <span className="user-menu__name">{user.username}</span>
       </button>
       {open && (
-        <div className="dropdown" role="menu">
+        <div
+          ref={menuRef}
+          id={menuId}
+          className="dropdown"
+          role="menu"
+          aria-label={`Account (${user.username})`}
+          onKeyDown={e => menuKeyDown(e, closeToButton)}
+        >
           <div className="user-menu__who" aria-hidden>
             Signed in as <strong>{user.username}</strong>
           </div>
-          <Link to={paths.bookmarks} role="menuitem" data-icon={licon.Star}>
+          <Link to={paths.bookmarks} role="menuitem" tabIndex={-1} data-icon={licon.Star}>
             Bookmarks
           </Link>
-          <Link to={paths.newProfile} role="menuitem" data-icon={licon.PlusButton}>
+          <Link to={paths.newProfile} role="menuitem" tabIndex={-1} data-icon={licon.PlusButton}>
             New profile
           </Link>
-          <Link to={paths.settings} role="menuitem" data-icon={licon.Gear}>
+          <Link to={paths.settings} role="menuitem" tabIndex={-1} data-icon={licon.Gear}>
             Settings
           </Link>
           {user.role === 'admin' && (
-            <Link to={paths.admin.root} role="menuitem" data-icon={licon.Cogs}>
+            <Link to={paths.admin.root} role="menuitem" tabIndex={-1} data-icon={licon.Cogs}>
               Admin
             </Link>
           )}
@@ -308,6 +344,7 @@ function UserMenu({ session }: { session: SessionInfo | undefined }) {
           <button
             type="button"
             role="menuitem"
+            tabIndex={-1}
             data-icon={licon.Power}
             disabled={logout.isPending}
             onClick={() => logout.mutate(undefined, { onSettled: () => navigate(paths.home) })}

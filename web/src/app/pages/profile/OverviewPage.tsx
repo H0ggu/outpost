@@ -2,14 +2,14 @@ import { Link, useNavigate } from 'react-router';
 import type { GameRow, OpeningRow, OverviewStats, ProfileHeader, TerminationRow } from '@outpost/shared/api';
 import type { Color } from '@outpost/shared/chess';
 import { useOverview } from '../../api/hooks.ts';
-import { Card, EmptyState, ErrorBox, licon, Spinner, TIME_CLASS_LABELS, TimeClassIcon, WdlBar } from '../../components/index.ts';
+import { Card, EmptyState, ErrorBox, licon, perspectiveWdl, Spinner, TIME_CLASS_LABELS, TimeClassIcon, WdlBar, type WdlPerspective } from '../../components/index.ts';
 import { paths } from '../../paths.ts';
 import { ColorDot, OpponentName, OutcomeMark, rowClick, ScoreText, SiteIcon } from './components/bits.tsx';
 import { ColumnChart, type ColumnDatum } from './components/charts/ColumnChart.tsx';
 import { ActivityTip, ScoreLegend, Swatch } from './components/charts/common.tsx';
 import { RatingChart } from './components/charts/RatingChart.tsx';
 import { mostPlayed, toChartSeries } from './components/charts/ratingSeries.ts';
-import { fmtInt, fmtIsoDay, fmtLine, fmtMoves, fmtRating, fmtRelative, scoreOfWdl, TERMINATION_LABELS } from './format.ts';
+import { fmtInt, fmtIsoDay, fmtLine, fmtMoves, fmtRating, fmtRelative, MONTHS_SHORT, scoreOfWdl, TERMINATION_LABELS } from './format.ts';
 import { useProfile } from './hooks.ts';
 import { explorerTabAt, studioGameLink } from './links.ts';
 
@@ -19,8 +19,9 @@ import { explorerTabAt, studioGameLink } from './links.ts';
  * a year of rating.
  */
 export default function OverviewPage() {
-  const { slug, header, timeZone } = useProfile();
+  const { slug, header, timeZone, prefs } = useProfile();
   const overview = useOverview(slug, {});
+  const perspective = prefs.winratePerspective;
 
   if (overview.isPending) return <Spinner center label="Loading overview" />;
   if (overview.isError) return <ErrorBox error={overview.error} onRetry={() => void overview.refetch()} title="Could not load the overview" />;
@@ -46,10 +47,10 @@ export default function OverviewPage() {
     <div className="overview-grid">
       <TimeClassCard slug={slug} o={o} header={header} />
       <RatingCard slug={slug} o={o} header={header} timeZone={timeZone} />
-      <ColorCard slug={slug} o={o} />
+      <ColorCard slug={slug} o={o} perspective={perspective} />
       <ActivityCard slug={slug} o={o} />
-      <OpeningsCard slug={slug} color="white" rows={o.topOpenings.white} />
-      <OpeningsCard slug={slug} color="black" rows={o.topOpenings.black} />
+      <OpeningsCard slug={slug} color="white" rows={o.topOpenings.white} perspective={perspective} />
+      <OpeningsCard slug={slug} color="black" rows={o.topOpenings.black} perspective={perspective} />
       <TerminationCard rows={o.terminations} />
       <LatestGamesCard slug={slug} games={o.latestGames} header={header} />
     </div>
@@ -160,7 +161,7 @@ function RatingCard({ slug, o, header, timeZone }: { slug: string; o: OverviewSt
   );
 }
 
-function ColorCard({ slug, o }: { slug: string; o: OverviewStats }) {
+function ColorCard({ slug, o, perspective }: { slug: string; o: OverviewStats; perspective: WdlPerspective }) {
   const navigate = useNavigate();
   const rows: Array<[Color, OverviewStats['byColor']['white']]> = [
     ['white', o.byColor.white],
@@ -176,7 +177,7 @@ function ColorCard({ slug, o }: { slug: string; o: OverviewStats }) {
                 <ColorDot color={c} /> {c === 'white' ? 'White' : 'Black'}
               </span>
               <span className="ov-bars__count">{fmtInt(x.games)}</span>
-              <WdlBar w={x.w} d={x.d} l={x.l} />
+              <WdlBar {...perspectiveWdl(x, c, perspective)} />
               <ScoreText score={scoreOfWdl(x)} />
             </button>
           </li>
@@ -189,7 +190,7 @@ function ColorCard({ slug, o }: { slug: string; o: OverviewStats }) {
 function ActivityCard({ slug, o }: { slug: string; o: OverviewStats }) {
   const data: ColumnDatum[] = o.activity.map(d => ({
     key: d.date,
-    label: d.date.endsWith('-01') ? new Date(`${d.date}T00:00:00Z`).toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' }) : '',
+    label: d.date.endsWith('-01') ? MONTHS_SHORT[Number(d.date.slice(5, 7)) - 1]! : '',
     games: d.games,
     score: d.score,
     tip: <ActivityTip title={fmtIsoDay(d.date)} games={d.games} score={d.score} />,
@@ -215,7 +216,7 @@ function ActivityCard({ slug, o }: { slug: string; o: OverviewStats }) {
   );
 }
 
-function OpeningsCard({ slug, color, rows }: { slug: string; color: Color; rows: readonly OpeningRow[] }) {
+function OpeningsCard({ slug, color, rows, perspective }: { slug: string; color: Color; rows: readonly OpeningRow[]; perspective: WdlPerspective }) {
   const navigate = useNavigate();
   const title = color === 'white' ? 'Openings as White' : 'Openings as Black';
   return (
@@ -244,7 +245,7 @@ function OpeningsCard({ slug, color, rows }: { slug: string; color: Color; rows:
                   {fmtInt(r.games)}
                   <span className="muted"> · {fmtMoves(r.avgPly)} mv</span>
                 </span>
-                <WdlBar w={r.w} d={r.d} l={r.l} />
+                <WdlBar {...perspectiveWdl(r, color, perspective)} />
               </button>
             </li>
           ))}

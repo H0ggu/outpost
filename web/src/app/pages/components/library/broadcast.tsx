@@ -9,7 +9,7 @@ import { useSession } from '../../../api/hooks.ts';
 import { ErrorBox, licon } from '../../../components/index.ts';
 import { paths } from '../../../paths.ts';
 import { isNoTokenError } from '../../library-hooks.ts';
-import { formatDateTime } from './format.ts';
+import { DATE_LOCALE, formatDateTime } from './format.ts';
 import { isUnauthorized, SignInPrompt } from './QueryView.tsx';
 
 /** True when the server could not reach Lichess or has no token for it (503 upstream_unavailable). */
@@ -78,7 +78,7 @@ export function BroadcastError({ error, onRetry }: { error: unknown; onRetry?: (
 export function formatTourDates(dates: readonly EpochMs[]): string | null {
   const [start, end] = dates;
   if (start === undefined) return null;
-  const fmt = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const fmt = new Intl.DateTimeFormat(DATE_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
   if (end === undefined || end === start) return fmt.format(start);
   try {
     return fmt.formatRange(start, end);

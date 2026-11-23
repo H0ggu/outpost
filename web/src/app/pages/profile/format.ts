@@ -87,6 +87,37 @@ export const fmtDateTime = (ms: number | null | undefined, timeZone: string): st
 /** `Nov 2026`. */
 export const fmtMonth = (ms: number, timeZone: string): string => dtf(timeZone, { month: 'short', year: 'numeric' }).format(ms);
 
+/** Month abbreviations of the chart axes (three letters, so labels have one width). */
+export const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+
+/**
+ * Labels for a time axis's ticks in day-month order rather than d3's default mix (`Oct 25`,
+ * `November`, `Nov 08`, `2026`): day ticks `8 Nov`, month ticks `Nov` (`Jan 2026` where a year
+ * starts), yearly ticks `2026`, and `14:00` between midnights. The ticks are boundaries in the
+ * chart's zone: UTC for d3's UTC scale (`timeZone` 'UTC'), else the browser's, as its time scale.
+ */
+export function timeTickFormat(ticks: readonly Date[], timeZone: string): (t: Date) => string {
+  const utc = timeZone === 'UTC';
+  const at = (t: Date) =>
+    utc
+      ? { year: t.getUTCFullYear(), month: t.getUTCMonth(), day: t.getUTCDate(), h: t.getUTCHours(), m: t.getUTCMinutes() }
+      : { year: t.getFullYear(), month: t.getMonth(), day: t.getDate(), h: t.getHours(), m: t.getMinutes() };
+  const monthStart = (t: Date) => {
+    const p = at(t);
+    return p.day === 1 && p.h === 0 && p.m === 0;
+  };
+  const yearStart = (t: Date) => monthStart(t) && at(t).month === 0;
+  const yearly = ticks.length > 0 && ticks.every(yearStart);
+  const monthly = ticks.length > 0 && ticks.every(monthStart);
+  return t => {
+    const p = at(t);
+    if (p.h !== 0 || p.m !== 0) return `${String(p.h).padStart(2, '0')}:${String(p.m).padStart(2, '0')}`;
+    if (yearly) return String(p.year);
+    if (monthly) return p.month === 0 ? `Jan ${p.year}` : MONTHS_SHORT[p.month]!;
+    return `${p.day} ${MONTHS_SHORT[p.month]}`;
+  };
+}
+
 /** A calendar date string `YYYY-MM-DD` as `Tue 12 Nov 2026` (no zone shift: it is already a day). */
 export const fmtIsoDay = (iso: string): string => {
   const [y, m, d] = iso.split('-').map(Number) as [number, number, number];
