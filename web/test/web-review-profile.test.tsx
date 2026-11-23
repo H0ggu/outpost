@@ -4,17 +4,23 @@
  * preview), the openings' board preview and the W/D/L bar's wording.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { UserPrefs } from '@outpost/shared/api';
 import { perspectiveWdl, WdlBar } from '../src/app/components/WdlBar.tsx';
+import GamesPage from '../src/app/pages/profile/GamesPage.tsx';
 import OpeningsPage from '../src/app/pages/profile/OpeningsPage.tsx';
 import OpponentsPage from '../src/app/pages/profile/OpponentsPage.tsx';
 import OverviewPage from '../src/app/pages/profile/OverviewPage.tsx';
 import ProfileLayout from '../src/app/pages/profile/ProfileLayout.tsx';
+import { newProfileForOpponent } from '../src/app/pages/profile/links.ts';
 import SettingsPage from '../src/app/pages/SettingsPage.tsx';
-import { mockFetch, sessionInfo, type MockOptions } from './web-profile-fixtures.ts';
+import { ALL_GAMES, mockFetch, sessionInfo, type MockOptions } from './web-profile-fixtures.ts';
+
+vi.mock('../src/app/components/PgnViewer.tsx', () => ({
+  PgnViewer: ({ pgn }: { pgn: string }) => <div data-testid="pgn-viewer" data-pgn={pgn} />,
+}));
 
 afterEach(() => {
   cleanup();
@@ -44,6 +50,7 @@ function renderAs(path: string, prefs: Partial<UserPrefs> = {}, opts: MockOption
         Component: ProfileLayout,
         children: [
           { index: true, Component: OverviewPage },
+          { path: 'games', Component: GamesPage },
           { path: 'openings', Component: OpeningsPage },
           { path: 'opponents', Component: OpponentsPage },
         ],
@@ -142,5 +149,57 @@ describe('the Display settings', () => {
   it('say where White / Black results apply', async () => {
     renderAs('/settings?section=display');
     expect(await screen.findByText(/Bars mixing both colours keep the player's results/)).toBeTruthy();
+  });
+});
+
+describe('a profile for an opponent', () => {
+  it('links the new-profile form with the account picked', () => {
+    expect(newProfileForOpponent({ kind: 'chesscom', key: 'faustinooro', name: 'FaustinoOro' })).toBe('/profiles/new?chesscom=FaustinoOro&name=FaustinoOro');
+    expect(newProfileForOpponent({ kind: 'lichess', key: 'someone', name: 'Other Name' })).toBe('/profiles/new?lichess=someone&name=Other+Name');
+    expect(newProfileForOpponent({ kind: 'fide', key: '1503014', name: 'Carlsen, Magnus' })).toBe(
+      '/profiles/new?fide=1503014&fideName=Carlsen%2C+Magnus&name=Carlsen%2C+Magnus',
+    );
+    // A PGN opponent is only a name.
+    expect(newProfileForOpponent({ kind: 'pgn', key: 'doe, jane', name: 'Doe, Jane' })).toBeNull();
+  });
+
+  it('offers it on the opponents table for opponents without a profile, signed in', async () => {
+    renderAs(`${SLUG}/opponents`);
+    const table = await find<HTMLElement>('.opponents-table');
+    const rows = await within(table).findAllByRole('row');
+    const create = within(table).getAllByRole('link', { name: /^New profile for / });
+    expect(create.length).toBeGreaterThan(0);
+    const href = create[0]!.getAttribute('href')!;
+    expect(href).toMatch(/^\/profiles\/new\?(lichess|chesscom)=Opponent\d\d&name=Opponent\d\d$/);
+    // Opponent01 has a profile here: its name links to it, and there is nothing to create.
+    const one = rows.find(r => r.textContent?.includes('Opponent01'));
+    expect(one).toBeTruthy();
+    expect(within(one!).getAllByRole('link').some(a => a.getAttribute('href') === '/u/opponent-one')).toBe(true);
+    expect(within(one!).queryByRole('link', { name: /^New profile/ })).toBeNull();
+    // The link does not also open the row's games.
+    fireEvent.click(create[0]!);
+  });
+
+  it('is not offered to visitors who are not signed in', async () => {
+    renderAs(`${SLUG}/opponents`, {}, { signedIn: false });
+    await find('.opponents-table td.col-wdl .wdl-bar');
+    expect(screen.queryByRole('link', { name: /^New profile for / })).toBeNull();
+  });
+
+  it("puts the opponent's profile, or a new one, in the game preview", async () => {
+    const vsOne = ALL_GAMES.find(g => g.opponent.key === 'opponent01')!;
+    const { unmount } = renderAs(`${SLUG}/games?oppName=Opponent01`);
+    fireEvent.click(await find('tr.game-row'));
+    const profile = await screen.findByRole('link', { name: 'Profile of Opponent01' });
+    expect(profile.getAttribute('href')).toBe('/u/opponent-one');
+    expect(screen.queryByRole('link', { name: /^New profile/ })).toBeNull();
+    expect(vsOne.opponent.name).toBe('Opponent01');
+    unmount();
+
+    renderAs(`${SLUG}/games?oppName=Opponent02`);
+    fireEvent.click(await find('tr.game-row'));
+    const create = await screen.findByRole('link', { name: 'New profile for Opponent02' });
+    expect(create.getAttribute('href')).toMatch(/^\/profiles\/new\?(lichess|chesscom)=Opponent02&name=Opponent02$/);
+    expect(create.textContent).toBe('New profile');
   });
 });

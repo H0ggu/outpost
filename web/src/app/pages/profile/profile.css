@@ -264,6 +264,30 @@ html[data-theme='light'] {
   font-size: 0.92em;
 }
 
+/* "New profile" next to an opponent Outpost has no profile of: a small icon button. */
+.profile-page .player-name > a.player-name__create {
+  align-self: center;
+  flex-shrink: 0;
+  justify-content: center;
+  align-items: center;
+  min-width: 1.7em;
+  min-height: 1.7em;
+  margin: -0.3em 0;
+  overflow: visible;
+  border-radius: var(--box-radius);
+  color: var(--c-font-dim);
+}
+
+.profile-page .player-name > a.player-name__create:hover,
+.profile-page .player-name > a.player-name__create:focus-visible {
+  color: var(--c-link-hover);
+  background: var(--c-bg-zebra2);
+}
+
+.profile-page .player-name__create::before {
+  font-size: 0.95em;
+}
+
 .profile-page .color-dot {
   display: inline-block;
   flex: 0 0 auto;

@@ -1,19 +1,23 @@
 /**
  * Inline game preview (Games tab): the kit's pgn-viewer replay (oriented to the player, at the
- * final position) plus the game's details and links. Loaded lazily with pgn-viewer.
+ * final position) plus the game's details and links: Analyse, the game on its site, the games
+ * against this opponent, and the opponent's profile (or, signed in, a new one to scout them).
+ * Loaded lazily with pgn-viewer.
  */
 import { Link } from 'react-router';
 import type { GameRow } from '@outpost/shared/api';
+import { useOpponents, useSession } from '../../../api/hooks.ts';
 import { ErrorBox, licon, Spinner, TIME_CLASS_LABELS } from '../../../components/index.ts';
 import { PgnViewer } from '../../../components/PgnViewer.tsx';
 import { paths } from '../../../paths.ts';
 import { fmtDateTime, fmtTimeControl, OUTCOME_LABELS, TERMINATION_LABELS } from '../format.ts';
 import { useGame } from '../hooks.ts';
-import { studioGameLink } from '../links.ts';
+import { newProfileForOpponent, studioGameLink } from '../links.ts';
 
 export default function GamePreview({ slug, game, timeZone }: { slug: string; game: GameRow; timeZone: string }) {
   const q = useGame(slug, game.id);
   const site = game.origin === 'lichess' ? 'Lichess' : game.origin === 'chesscom' ? 'Chess.com' : null;
+  const { profileSlug, createHref } = useOpponentProfile(slug, game.opponent);
 
   return (
     <div className="game-preview">
@@ -75,8 +79,46 @@ export default function GamePreview({ slug, game, timeZone }: { slug: string; ga
           <Link className="button button-empty button-thin" to={paths.profile(slug, 'games', { oppName: game.opponent.name })} data-icon={licon.Search}>
             All vs {game.opponent.name}
           </Link>
+          {profileSlug ? (
+            <Link
+              className="button button-empty button-thin"
+              to={paths.profile(profileSlug)}
+              data-icon={licon.User}
+              aria-label={`Profile of ${game.opponent.name}`}
+            >
+              Profile
+            </Link>
+          ) : (
+            createHref && (
+              <Link
+                className="button button-empty button-thin"
+                to={createHref}
+                data-icon={licon.PlusButton}
+                title={`Create a profile for ${game.opponent.name}`}
+                aria-label={`New profile for ${game.opponent.name}`}
+              >
+                New profile
+              </Link>
+            )
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+/**
+ * The opponent's profile here, if any (`OpponentRow.profileSlug` of the opponents list narrowed to
+ * their name), else for a signed-in viewer the new-profile form with their account picked. Neither
+ * shows until the lookup answers, so the preview never offers a second profile of someone who has
+ * one. PGN opponents are names only: no lookup, nothing to offer.
+ */
+function useOpponentProfile(slug: string, opponent: GameRow['opponent']): { profileSlug: string | null; createHref: string | null } {
+  const signedIn = !!useSession().data?.user;
+  const lookup = opponent.kind !== 'pgn';
+  const q = useOpponents(lookup ? slug : undefined, { oppName: opponent.name }, { pageSize: 20 });
+  if (!lookup || !q.isSuccess || q.isPlaceholderData) return { profileSlug: null, createHref: null };
+  const row = q.data.rows.find(r => r.kind === opponent.kind && r.key === opponent.key);
+  const profileSlug = row?.profileSlug ?? null;
+  return { profileSlug, createHref: !profileSlug && signedIn ? newProfileForOpponent(opponent) : null };
 }

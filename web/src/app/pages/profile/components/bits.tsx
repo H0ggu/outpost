@@ -56,15 +56,21 @@ export function SourceLabel({ source, withName = true }: { source: Pick<SourceSu
 // Players and outcomes
 // ---------------------------------------------------------------------------
 
-/** Opponent name with flag, title and rating, linking to their profile when Outpost has one. */
+/**
+ * Opponent name with flag, title and rating, linking to their profile when Outpost has one;
+ * otherwise, given `createHref` (the new-profile form with their account picked), a small button
+ * to create one, so an opponent can be scouted without typing their name into the search.
+ */
 export function OpponentName({
   opponent,
   profileSlug,
   showRating = true,
+  createHref,
 }: {
   opponent: Pick<GameRowOpponent, 'name' | 'title' | 'country' | 'rating'>;
   profileSlug?: string | null;
   showRating?: boolean;
+  createHref?: string | null;
 }) {
   const name = (
     <>
@@ -83,6 +89,16 @@ export function OpponentName({
         name
       )}
       {showRating && opponent.rating !== null && <span className="player-name__rating">({fmtRating(opponent.rating)})</span>}
+      {!profileSlug && createHref && (
+        <Link
+          to={createHref}
+          className="player-name__create"
+          data-icon={licon.PlusButton}
+          title={`New profile for ${opponent.name}`}
+          aria-label={`New profile for ${opponent.name}`}
+          onClick={e => e.stopPropagation()}
+        />
+      )}
     </span>
   );
 }
