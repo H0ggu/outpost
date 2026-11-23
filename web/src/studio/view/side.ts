@@ -159,7 +159,7 @@ function searchView(ctrl: StudioCtrl): VNode {
                         '.studio-hit__match',
                         {
                           title: 'Open the file at this position',
-                          onClick: () => void ctrl.openFile(hit.file.id, { gameIndex: m.gameIndex, ply: m.ply }),
+                          onClick: () => void ctrl.openFile(hit.file.id, { gameIndex: m.gameIndex, ply: m.ply, fen: s.fen }),
                         },
                         [
                           hit.matches.length > 1 || m.gameIndex > 0 ? `Game ${m.gameIndex + 1}, ` : '',

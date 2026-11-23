@@ -35,6 +35,7 @@ import {
   hasPgnContent,
   joinPgnGames,
   mainlinePlyOf,
+  pathOfPosition,
   pgnHeaders,
   sortGlyphs,
   splitPgnGames,
@@ -127,6 +128,8 @@ export class StudioCtrl {
   private loader?: (tab: StudioTab) => void;
   /** A jump asked for before lila was mounted. */
   private pendingJump?: { fen?: string; ply?: number };
+  /** A My Files search hit to show once lila is mounted (`jumpToHit`). */
+  private pendingHit?: { fen: string; ply: number };
   /** Saves in flight, per tab. */
   private readonly saves = new SaveQueue<string>(() => this.redraw());
 
@@ -490,6 +493,9 @@ export class StudioCtrl {
   applyPendingJump(): void {
     const jump = this.pendingJump;
     this.pendingJump = undefined;
+    const hit = this.pendingHit;
+    this.pendingHit = undefined;
+    if (hit && this.analyse) this.jumpToHit(hit.fen, hit.ply);
     if (!jump || !this.analyse) return;
     if (jump.fen) this.jumpToFen(jump.fen);
     else if (jump.ply !== undefined) {
@@ -762,8 +768,28 @@ export class StudioCtrl {
     return path;
   }
 
-  /** Opens a file (focuses its tab when already open). */
-  async openFile(id: Id, at?: { gameIndex: number; ply?: number }): Promise<void> {
+  /**
+   * Jumps to a My Files search hit: the node at `ply` (lila's ply, as the server indexes it) with
+   * position `fen`, in the main line or a variation; the main line's ply when none matches.
+   */
+  private jumpToHit(fen: string, ply: number): void {
+    const a = this.analyse;
+    if (!a) {
+      this.pendingHit = { fen, ply };
+      return;
+    }
+    const path = pathOfPosition(a.tree.root, fen, ply);
+    if (path !== undefined) a.userJump(path);
+    else a.jumpToMain(ply);
+    a.redraw();
+    this.syncActive();
+  }
+
+  /**
+   * Opens a file (focuses its tab when already open), optionally at a game and a ply; with `fen`
+   * (a position search hit) at that position, which may be in a variation.
+   */
+  async openFile(id: Id, at?: { gameIndex: number; ply?: number; fen?: string }): Promise<void> {
     const existing = this.tabs.tabs.find(t => t.source.kind === 'file' && t.source.fileId === id);
     if (existing) {
       this.switchTo(existing.id);
@@ -780,7 +806,8 @@ export class StudioCtrl {
     }
     if (at) {
       this.selectGame(at.gameIndex);
-      if (at.ply !== undefined) {
+      if (at.ply !== undefined && at.fen) this.jumpToHit(at.fen, at.ply);
+      else if (at.ply !== undefined) {
         if (!this.analyse) this.pendingJump = { ply: at.ply };
         else {
           this.analyse.jumpToMain(at.ply);

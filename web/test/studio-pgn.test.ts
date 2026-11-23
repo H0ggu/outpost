@@ -17,6 +17,7 @@ import {
   hasPgnContent,
   joinPgnGames,
   mainlinePlyOf,
+  pathOfPosition,
   pgnHeaders,
   positionKey,
   quickHeaders,
@@ -157,6 +158,23 @@ describe('positions', () => {
     expect(mainlinePlyOf(root, at(root, 0, 0, 0, 0, 0).fen)).toBe(5);
     expect(mainlinePlyOf(root, '8/8/8/4k3/8/8/4K3/8 w - - 0 1')).toBeUndefined();
     expect(positionKey(' a  b c d 1 2 ')).toBe('a b c d');
+  });
+
+  it('finds a My Files search hit in a variation by ply and position (lila tree path)', () => {
+    // Node ids as lila's tree has them: two characters per move; the path is their concatenation.
+    type Idd = PgnTreeNode & { id: string; children: Idd[] };
+    let n = 0;
+    const withIds = (node: PgnTreeNode): Idd => ({ ...node, id: String.fromCharCode(65 + Math.floor(n / 26), 65 + (n++ % 26)), children: node.children.map(withIds) });
+    const root = withIds(treeOf('1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *'));
+    const c5 = root.children[0]!.children[1]!;
+    const nf3InSicilian = c5.children[0]!;
+    // Same ply (3) as the main line's 2. Nf3, another position: found in the variation.
+    expect(pathOfPosition(root, nf3InSicilian.fen, 3)).toBe(root.children[0]!.id + c5.id + nf3InSicilian.id);
+    const mainNf3 = root.children[0]!.children[0]!.children[0]!;
+    expect(pathOfPosition(root, mainNf3.fen, 3)).toBe(root.children[0]!.id + root.children[0]!.children[0]!.id + mainNf3.id);
+    expect(pathOfPosition(root, root.fen, 0)).toBe('');
+    // Right position, wrong ply: not a match.
+    expect(pathOfPosition(root, nf3InSicilian.fen, 1)).toBeUndefined();
   });
 });
 

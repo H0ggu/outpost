@@ -213,6 +213,28 @@ export function mainlinePlyOf(root: PgnTreeNode, fen: string): number | undefine
   return undefined;
 }
 
+/**
+ * Path (concatenated node ids, lila's `TreePath`) of the node at `ply` whose position equals `fen`,
+ * looking at the main line first and then the variations (depth first, in order), or undefined.
+ * My Files search hits can be in a variation, where the main line's node at that ply is another
+ * position.
+ */
+export function pathOfPosition<N extends { id: string; ply: number; fen: string; children: N[] }>(
+  root: N,
+  fen: string,
+  ply: number,
+): string | undefined {
+  const key = positionKey(fen);
+  const stack: Array<{ node: N; path: string }> = [{ node: root, path: '' }];
+  while (stack.length) {
+    const { node, path } = stack.pop()!;
+    if (node.ply === ply && positionKey(node.fen) === key) return path;
+    if (node.ply >= ply) continue;
+    for (let i = node.children.length - 1; i >= 0; i--) stack.push({ node: node.children[i]!, path: path + node.children[i]!.id });
+  }
+  return undefined;
+}
+
 /** A short title for a game from its headers: `White – Black`, the Event, or the fallback. */
 export function gameTitle(headers: PgnHeaders, fallback: string): string {
   const get = (k: string): string | undefined => {
