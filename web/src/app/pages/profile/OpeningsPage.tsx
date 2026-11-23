@@ -1,10 +1,10 @@
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import type { OpeningRow, OpeningsParams } from '@outpost/shared/api';
 import type { Color } from '@outpost/shared/chess';
 import { isEmptyFilters } from '@outpost/shared/filters';
 import { useOpenings, useUrlFilters } from '../../api/hooks.ts';
 import { Box, EmptyState, ErrorBox, licon, Spinner, WdlBar } from '../../components/index.ts';
-import { ColorDot, ScoreText, Segmented, SelectField } from './components/bits.tsx';
+import { ColorDot, rowClick, ScoreText, Segmented, SelectField } from './components/bits.tsx';
 import { fmtInt, fmtLine, fmtMoves, scoreOfWdl } from './format.ts';
 import { oneOf, useProfile, useQueryParam, useSetQueryParams } from './hooks.ts';
 import { explorerTabAt } from './links.ts';
@@ -15,6 +15,8 @@ const MOVES = ['', '1', '2', '3', '4', '5'] as const;
 type Order = (typeof ORDERS)[number];
 type MinGames = (typeof MIN_GAMES)[number];
 type Moves = (typeof MOVES)[number];
+/** The server ranks best / worst lines among those with at least this many games. */
+const BEST_WORST_MIN_GAMES = 5;
 
 /**
  * Openings tab (PLAN §5, §6 `GET /api/profiles/:slug/openings`): opening lines per colour with
@@ -43,7 +45,15 @@ export default function OpeningsPage() {
   };
   const openings = useOpenings(slug, filters, params);
 
-  const open = (r: OpeningRow) => navigate(explorerTabAt(slug, filters, r.color, r.line.split(',')));
+  // Under best / worst the server's own floor applies, so lower minimums would be no-ops.
+  const floor = order === 'most' ? 1 : BEST_WORST_MIN_GAMES;
+  const minGamesShown: MinGames = minGames && Number(minGames) <= floor ? '' : minGames;
+  const minGamesOptions = MIN_GAMES.filter(m => m === '' || Number(m) > floor).map(m => ({
+    value: m,
+    label: m === '' ? (floor > 1 ? `${floor}+` : 'Any') : `${m}+`,
+  }));
+
+  const linkOf = (r: OpeningRow) => explorerTabAt(slug, filters, r.color, r.line.split(','));
   const movesOptions = (none: string) => MOVES.map(m => ({ value: m, label: m === '' ? none : `${m} move${m === '1' ? '' : 's'}` }));
 
   const controls = (
@@ -70,18 +80,13 @@ export default function OpeningsPage() {
           value={order}
           options={[
             { value: 'most', label: 'Most played' },
-            { value: 'best', label: 'Best' },
-            { value: 'worst', label: 'Worst' },
+            { value: 'best', label: 'Best', title: `Highest score among lines with ${BEST_WORST_MIN_GAMES}+ games` },
+            { value: 'worst', label: 'Worst', title: `Lowest score among lines with ${BEST_WORST_MIN_GAMES}+ games` },
           ]}
           onChange={v => setOrder(v)}
         />
       </span>
-      <SelectField
-        label="Min. games"
-        value={minGames}
-        options={MIN_GAMES.map(m => ({ value: m, label: m === '' ? 'Any' : `${m}+` }))}
-        onChange={v => setMinGames(v)}
-      />
+      <SelectField label="Min. games" value={minGamesShown} options={minGamesOptions} onChange={v => setMinGames(v)} />
       <SelectField
         label="Min. moves"
         value={minMoves}
@@ -105,7 +110,7 @@ export default function OpeningsPage() {
     body = (
       <div className={['openings-tables', sides.length === 2 && 'openings-tables--two', openings.isPlaceholderData && 'is-stale'].filter(Boolean).join(' ')}>
         {sides.map(c => (
-          <OpeningsTable key={c} color={c} rows={openings.data[c]} onOpen={open} filtered={!isEmptyFilters(filters)} />
+          <OpeningsTable key={c} color={c} rows={openings.data[c]} linkOf={linkOf} onOpen={r => navigate(linkOf(r))} filtered={!isEmptyFilters(filters)} />
         ))}
       </div>
     );
@@ -121,11 +126,13 @@ export default function OpeningsPage() {
 function OpeningsTable({
   color,
   rows,
+  linkOf,
   onOpen,
   filtered,
 }: {
   color: Color;
   rows: readonly OpeningRow[];
+  linkOf: (r: OpeningRow) => string;
   onOpen: (r: OpeningRow) => void;
   filtered: boolean;
 }) {
@@ -152,16 +159,11 @@ function OpeningsTable({
             </thead>
             <tbody>
               {rows.map(r => (
-                <tr
-                  key={`${r.eco}-${r.line}`}
-                  className="clickable"
-                  tabIndex={0}
-                  title={`Open ${r.name} in the explorer`}
-                  onClick={() => onOpen(r)}
-                  onKeyDown={e => e.key === 'Enter' && onOpen(r)}
-                >
+                <tr key={`${r.eco}-${r.line}`} className="clickable" title={`Open ${r.name} in the explorer`} onClick={rowClick(() => onOpen(r))}>
                   <td className="op-name">
-                    <span className="eco">{r.eco}</span> {r.name}
+                    <Link to={linkOf(r)} className="row-action">
+                      <span className="eco">{r.eco}</span> {r.name}
+                    </Link>
                     <span className="op-name__line san">{fmtLine(r.line)}</span>
                     {/* Phones show the bar under the name instead of in its own column. */}
                     <WdlBar w={r.w} d={r.d} l={r.l} className="cell-bar" />

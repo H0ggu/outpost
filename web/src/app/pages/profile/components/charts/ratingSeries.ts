@@ -28,3 +28,27 @@ export function toChartSeries(series: readonly RatingSeries[], sources: readonly
       };
     });
 }
+
+/**
+ * Games behind a series: the header's game count for that account and time class, else (no
+ * current rating there) its number of points. Points alone can't rank lines: the server sends
+ * one point per day and downsamples long histories to a fixed cap, so busy lines tie.
+ */
+export function seriesGames(s: Pick<RatingSeries, 'sourceId' | 'timeClass' | 'points'>, sources: readonly Pick<SourceSummary, 'id' | 'ratings'>[]): number {
+  const games = sources.find(x => x.id === s.sourceId)?.ratings.find(r => r.timeClass === s.timeClass)?.games;
+  return games ?? s.points.length;
+}
+
+/** The `n` most-played series (by `seriesGames`, then points), in their given order. */
+export function mostPlayed<T extends Pick<RatingSeries, 'sourceId' | 'timeClass' | 'points'>>(
+  series: readonly T[],
+  sources: readonly Pick<SourceSummary, 'id' | 'ratings'>[],
+  n: number,
+): T[] {
+  const keep = new Set(
+    [...series]
+      .sort((a, b) => seriesGames(b, sources) - seriesGames(a, sources) || b.points.length - a.points.length)
+      .slice(0, n),
+  );
+  return series.filter(s => keep.has(s));
+}

@@ -4,7 +4,7 @@
  * Query keys live under the existing `queryKeys.profile(slug)` prefix (docs/CONVENTIONS.md).
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router';
 import {
   API_ROUTES,
@@ -98,13 +98,26 @@ export function usePatchProfile(slug: string) {
   });
 }
 
-/** `DELETE /api/profiles/:slug`. */
+/**
+ * `DELETE /api/profiles/:slug`. The caller navigates away on success. The profile's cached
+ * queries are dropped only when the calling component unmounts (that is, once the profile pages
+ * are gone): removing them earlier would make the still-mounted layout refetch the deleted
+ * profile, logging a 404 and flashing a spinner before the navigation lands.
+ */
 export function useDeleteProfile(slug: string) {
   const qc = useQueryClient();
+  const deleted = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      if (deleted.current !== null) qc.removeQueries({ queryKey: queryKeys.profile(deleted.current) });
+    },
+    [qc],
+  );
   return useMutation({
     mutationFn: () => api.del<OkResponse>(API_ROUTES.profile(slug)),
-    onSuccess: () => {
-      qc.removeQueries({ queryKey: queryKeys.profile(slug) });
+    onSuccess: async () => {
+      deleted.current = slug;
+      await qc.cancelQueries({ queryKey: queryKeys.profile(slug) });
       void qc.invalidateQueries({ queryKey: ['profiles'] });
       void qc.invalidateQueries({ queryKey: queryKeys.bookmarks });
     },

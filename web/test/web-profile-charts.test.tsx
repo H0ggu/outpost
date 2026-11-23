@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { browserTimeZone } from '../src/app/api/hooks.ts';
-import { activity, CHESSCOM_ID, LICHESS_ID, worldMap } from './web-profile-fixtures.ts';
+import { activity, CHESSCOM_ID, LICHESS_ID, profileHeader, worldMap } from './web-profile-fixtures.ts';
 import { renderProfile, searchOf } from './web-profile-render.tsx';
 
 afterEach(() => {
@@ -75,6 +75,35 @@ describe('World map tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Country' }));
     const names = rows().map(r => r.querySelector('td')!.textContent!.trim());
     expect(names).toEqual([...names].sort((a, b) => a.replace(/^\S+\s/, '').localeCompare(b.replace(/^\S+\s/, ''))));
+  });
+
+  it('keys every atlas shape uniquely (N. Cyprus and Somaliland share codes)', async () => {
+    const error = vi.spyOn(console, 'error');
+    try {
+      renderProfile(`${SLUG}/worldmap`);
+      await screen.findByRole('img', { name: 'Opponents by country' });
+      expect(error.mock.calls.filter(c => String(c[0]).includes('same key'))).toEqual([]);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('picks a country from the list with a real button, and unpicks it', async () => {
+    renderProfile(`${SLUG}/worldmap`);
+    const map = await screen.findByRole('img', { name: 'Opponents by country' });
+    const table = screen.getByText('Top 10 countries').closest('.map-table') as HTMLElement;
+    const row = within(table).getAllByRole('row')[1]!;
+    // The row itself is not a tab stop: its first cell's button is.
+    expect(row.hasAttribute('tabindex')).toBe(false);
+    const button = within(row).getByRole('button');
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(button);
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    expect(row.className).toContain('selected');
+    expect(map.querySelectorAll('.map-country.active, .map-dot.active').length).toBe(1);
+    fireEvent.click(button);
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+    expect(map.querySelectorAll('.map-country.active, .map-dot.active').length).toBe(0);
   });
 
   it('explains an empty map and errors', async () => {
@@ -204,6 +233,35 @@ describe('Rating tab', () => {
     expect(screen.queryByText(/don’t compare/)).toBeNull();
     fireEvent.click(screen.getByRole('radio', { name: 'All' }));
     await waitFor(() => expect(searchOf(location()).has('period')).toBe(false));
+  });
+
+  it('shows a shorter period carried from the filters as the selected range', async () => {
+    const { requests, location } = renderProfile(`${SLUG}/rating?period=7d`);
+    await screen.findByRole('radiogroup', { name: 'Range' });
+    await waitFor(() => expect(lastQuery(requests(api('rating'))).get('period')).toBe('7d'));
+    const seven = screen.getByRole('radio', { name: '7 days' });
+    expect(seven.getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('radio', { name: 'All' }).getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(screen.getByRole('radio', { name: '30 days' }));
+    await waitFor(() => expect(searchOf(location()).get('period')).toBe('30d'));
+    expect(screen.queryByRole('radio', { name: '7 days' })).toBeNull();
+  });
+
+  it('switches on the lines with the most games, not the most points', async () => {
+    // The server caps points per line, so every line has the same number: the header's game
+    // counts decide. Chess.com rapid, Lichess classical and Chess.com bullet are the busiest.
+    const games: Record<string, number> = { [`${CHESSCOM_ID}:rapid`]: 900, [`${LICHESS_ID}:classical`]: 800, [`${CHESSCOM_ID}:bullet`]: 700 };
+    const base = profileHeader();
+    renderProfile(`${SLUG}/rating`, {
+      header: { sources: base.sources.map(s => ({ ...s, ratings: s.ratings.map(r => ({ ...r, games: games[`${s.id}:${r.timeClass}`] ?? 10 })) })) },
+      patch: { rating: r => ({ ...r, series: r.series.map(x => ({ ...x, points: x.points.slice(0, 4) })) }) },
+    });
+    await screen.findByRole('img', { name: 'Rating history' });
+    const on = within(screen.getByRole('list', { name: 'Lines' }))
+      .getAllByRole('button')
+      .filter(c => c.getAttribute('aria-pressed') === 'true')
+      .map(c => c.textContent);
+    expect(on.sort()).toEqual(['TestPlayer · Classical', 'test_player · Bullet', 'test_player · Rapid'].sort());
   });
 
   it('shows a custom range from the URL and a hover readout', async () => {

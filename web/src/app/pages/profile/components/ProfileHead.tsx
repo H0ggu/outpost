@@ -42,6 +42,8 @@ const countriesOf = (sources: readonly SourceSummary[]): string[] => [...new Set
 interface SyncView {
   queue: ProfileQueueInfo;
   syncOf: (s: SourceSummary) => SourceSyncStatus;
+  /** The source's game count, live from the status poll while a sync imports games. */
+  gamesOf: (s: SourceSummary) => number;
   lastUpdated: number | null;
   /** Call after a successful POST …/update so the end of the sync refreshes the stats. */
   started: () => void;
@@ -66,10 +68,13 @@ function useSyncView(slug: string, header: ProfileHeader): SyncView {
     busyRef.current = queue.busy;
   }, [queue.busy, qc, slug]);
 
-  const byId = new Map(status.data?.sources.map(s => [s.sourceId, s.sync]) ?? []);
+  const byId = new Map(status.data?.sources.map(s => [s.sourceId, s]) ?? []);
+  // Counts come from whichever response is newer: the poll while games arrive, the header after.
+  const statusNewer = status.dataUpdatedAt >= (qc.getQueryState(queryKeys.profile(slug))?.dataUpdatedAt ?? 0);
   return {
     queue,
-    syncOf: s => byId.get(s.id) ?? s.sync,
+    syncOf: s => byId.get(s.id)?.sync ?? s.sync,
+    gamesOf: s => (statusNewer ? byId.get(s.id)?.gameCount : undefined) ?? s.gameCount,
     lastUpdated: status.data?.lastUpdated ?? header.lastUpdated,
     started: () => {
       busyRef.current = true;
@@ -171,7 +176,7 @@ function syncLabel(sync: SourceSyncStatus, now: number): string {
   }
 }
 
-function SourceItem({ source, sync, now }: { source: SourceSummary; sync: SourceSyncStatus; now: number }) {
+function SourceItem({ source, sync, games, now }: { source: SourceSummary; sync: SourceSyncStatus; games: number; now: number }) {
   const ratings = [...source.ratings].sort((a, b) => b.games - a.games).slice(0, 4);
   const name = source.url ? (
     <a href={source.url} target="_blank" rel="noopener noreferrer" title={`Open on ${source.kind === 'chesscom' ? 'Chess.com' : 'Lichess'}`}>
@@ -211,7 +216,7 @@ function SourceItem({ source, sync, now }: { source: SourceSummary; sync: Source
       )}
       <span className={`psource__sync psource__sync--${sync.state}`} title={sync.lastError ?? undefined}>
         {sync.state === 'error' && <i data-icon={licon.CautionTriangle} aria-hidden />}
-        {syncLabel(sync, now)} · {fmtInt(source.gameCount)} games
+        {syncLabel(sync, now)} · {fmtInt(games)} games
       </span>
       {sync.state === 'error' && sync.lastError && (
         <span className="psource__error" title={sync.lastError}>
@@ -330,7 +335,7 @@ export function ProfileHead({ header, signedIn, filters, tabs }: ProfileHeadProp
       {header.sources.length > 0 ? (
         <ul className="profile-sources">
           {header.sources.map(s => (
-            <SourceItem key={s.id} source={s} sync={sync.syncOf(s)} now={now} />
+            <SourceItem key={s.id} source={s} sync={sync.syncOf(s)} games={sync.gamesOf(s)} now={now} />
           ))}
         </ul>
       ) : (

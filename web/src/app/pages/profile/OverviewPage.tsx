@@ -4,11 +4,11 @@ import type { Color } from '@outpost/shared/chess';
 import { useOverview } from '../../api/hooks.ts';
 import { Card, EmptyState, ErrorBox, licon, Spinner, TIME_CLASS_LABELS, TimeClassIcon, WdlBar } from '../../components/index.ts';
 import { paths } from '../../paths.ts';
-import { ColorDot, OpponentName, OutcomeMark, ScoreText, SiteIcon } from './components/bits.tsx';
+import { ColorDot, OpponentName, OutcomeMark, rowClick, ScoreText, SiteIcon } from './components/bits.tsx';
 import { ColumnChart, type ColumnDatum } from './components/charts/ColumnChart.tsx';
 import { ActivityTip, ScoreLegend, Swatch } from './components/charts/common.tsx';
 import { RatingChart } from './components/charts/RatingChart.tsx';
-import { toChartSeries } from './components/charts/ratingSeries.ts';
+import { mostPlayed, toChartSeries } from './components/charts/ratingSeries.ts';
 import { fmtInt, fmtIsoDay, fmtLine, fmtMoves, fmtRating, fmtRelative, scoreOfWdl, TERMINATION_LABELS } from './format.ts';
 import { useProfile } from './hooks.ts';
 import { explorerTabAt, studioGameLink } from './links.ts';
@@ -73,16 +73,14 @@ function TimeClassCard({ slug, o, header }: { slug: string; o: OverviewStats; he
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
-              <tr
-                key={r.timeClass}
-                className="clickable"
-                tabIndex={0}
-                onClick={() => navigate(paths.profile(slug, 'games', { tc: [r.timeClass] }))}
-                onKeyDown={e => e.key === 'Enter' && navigate(paths.profile(slug, 'games', { tc: [r.timeClass] }))}
-              >
+            {rows.map(r => {
+              const games = paths.profile(slug, 'games', { tc: [r.timeClass] });
+              return (
+              <tr key={r.timeClass} className="clickable" onClick={rowClick(() => navigate(games))}>
                 <td>
-                  <TimeClassIcon tc={r.timeClass} withLabel />
+                  <Link to={games} className="row-action" title={`${TIME_CLASS_LABELS[r.timeClass]} games`}>
+                    <TimeClassIcon tc={r.timeClass} withLabel />
+                  </Link>
                 </td>
                 <td className="num">{fmtInt(r.games)}</td>
                 <td className="num ov-ratings">
@@ -107,7 +105,8 @@ function TimeClassCard({ slug, o, header }: { slug: string; o: OverviewStats; he
                   <ScoreText score={scoreOfWdl(r)} />
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -118,7 +117,11 @@ function TimeClassCard({ slug, o, header }: { slug: string; o: OverviewStats; he
 function RatingCard({ slug, o, header, timeZone }: { slug: string; o: OverviewStats; header: ProfileHeader; timeZone: string }) {
   // The three most-played lines keep the sparkline readable; the Rating tab has them all.
   const series = toChartSeries(
-    [...o.ratingSparkline].filter(s => s.points.length > 1).sort((a, b) => b.points.length - a.points.length).slice(0, 3),
+    mostPlayed(
+      o.ratingSparkline.filter(s => s.points.length > 1),
+      header.sources,
+      3,
+    ),
     header.sources,
   );
   const now = Date.now();

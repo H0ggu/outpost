@@ -180,7 +180,7 @@ describe('Settings tab', () => {
   });
 
   it('deletes the profile only after the address is typed', async () => {
-    const { requests, location } = renderProfile(PAGE);
+    const { requests, location, queryClient } = renderProfile(PAGE);
     const danger = (await screen.findByRole('heading', { name: 'Delete profile' })).closest('section')!;
     fireEvent.click(within(danger).getByRole('button', { name: 'Delete this profile' }));
     const confirm = within(danger).getByRole('button', { name: 'Delete for good' }) as HTMLButtonElement;
@@ -188,10 +188,16 @@ describe('Settings tab', () => {
     fireEvent.change(within(danger).getByRole('textbox'), { target: { value: 'test-playe' } });
     expect(confirm.disabled).toBe(true);
     fireEvent.change(within(danger).getByRole('textbox'), { target: { value: 'test-player' } });
+    const gets = requests(PROFILE, 'GET').length;
     await act(async () => {
       fireEvent.click(confirm);
     });
     await waitFor(() => expect(requests(PROFILE, 'DELETE').length).toBe(1));
     await waitFor(() => expect(location().pathname).toBe('/players'));
+    await act(() => new Promise(r => setTimeout(r, 50)));
+    // The still-mounted layout never refetched the deleted profile (a 404 in the console), and
+    // its cache is gone once the profile pages are.
+    expect(requests(PROFILE, 'GET').length).toBe(gets);
+    expect(queryClient.getQueryData(['profile', 'test-player'])).toBeUndefined();
   });
 });

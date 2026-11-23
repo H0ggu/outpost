@@ -7,12 +7,14 @@ import { Box, Card, EmptyState, ErrorBox, licon, Spinner, TIME_CLASS_LABELS } fr
 import { ScoreText, Segmented, SelectField } from './components/bits.tsx';
 import { Swatch } from './components/charts/common.tsx';
 import { RatingChart } from './components/charts/RatingChart.tsx';
-import { toChartSeries } from './components/charts/ratingSeries.ts';
-import { fmtInt, fmtRating } from './format.ts';
+import { mostPlayed, seriesKey, toChartSeries } from './components/charts/ratingSeries.ts';
+import { fmtInt, fmtRating, PERIOD_LABELS } from './format.ts';
 import { useProfile } from './hooks.ts';
 
 const RANGES = ['all', '30d', '3m', '6m', '12m'] as const;
 type Range = (typeof RANGES)[number];
+/** What the Range control shows: a preset, another period carried from the filters, or dates. */
+type RangeValue = Range | 'other' | 'custom';
 /** Lines shown at first (the most-played ones); the legend switches the others on. */
 const DEFAULT_LINES = 3;
 const RANGE_LABELS: Readonly<Record<Range, string>> = { all: 'All', '30d': '30 days', '3m': '3 months', '6m': '6 months', '12m': '1 year' };
@@ -31,7 +33,21 @@ export default function RatingPage() {
 
   const src = filters.src?.length === 1 ? String(filters.src[0]) : 'all';
   const tc = filters.tc?.length === 1 ? filters.tc[0]! : 'all';
-  const range: Range | 'custom' = filters.period && (RANGES as readonly string[]).includes(filters.period) ? (filters.period as Range) : filters.from || filters.to ? 'custom' : 'all';
+  // The filters bar's shorter periods (24h, 7d) and custom dates reach this tab through its link:
+  // they show as one more, selected, option so the active range is never hidden.
+  const range: RangeValue = filters.period
+    ? (RANGES as readonly string[]).includes(filters.period)
+      ? (filters.period as Range)
+      : 'other'
+    : filters.from || filters.to
+      ? 'custom'
+      : 'all';
+  const extraRange =
+    range === 'other' && filters.period
+      ? [{ value: 'other' as const, label: PERIOD_LABELS[filters.period].replace(/^Last /, '') }]
+      : range === 'custom'
+        ? [{ value: 'custom' as const, label: `${filters.from ?? '…'} – ${filters.to ?? '…'}` }]
+        : [];
   const set = (patch: Partial<ProfileFilters>) => setFilters({ ...filters, ...patch });
 
   const playedClasses = new Set(header.sources.flatMap(s => s.ratings.map(r => r.timeClass)));
@@ -55,16 +71,13 @@ export default function RatingPage() {
       />
       <span className="field">
         <span className="field__label">Range</span>
-        <Segmented
+        <Segmented<RangeValue>
           label="Range"
           size="sm"
-          value={range === 'custom' ? ('custom' as const) : range}
-          options={[
-            ...RANGES.map(r => ({ value: r, label: RANGE_LABELS[r] })),
-            ...(range === 'custom' ? [{ value: 'custom' as const, label: `${filters.from ?? '…'} – ${filters.to ?? '…'}` }] : []),
-          ]}
+          value={range}
+          options={[...RANGES.map(r => ({ value: r, label: RANGE_LABELS[r] })), ...extraRange]}
           onChange={v => {
-            if (v !== 'custom') set({ period: v === 'all' ? undefined : (v as Period), from: undefined, to: undefined });
+            if (v !== 'custom' && v !== 'other') set({ period: v === 'all' ? undefined : (v as Period), from: undefined, to: undefined });
           }}
         />
       </span>
@@ -76,12 +89,7 @@ export default function RatingPage() {
   else if (rating.isError) body = <ErrorBox error={rating.error} onRetry={() => void rating.refetch()} title="Could not load the rating history" />;
   else {
     const series = toChartSeries(rating.data.series, header.sources);
-    const defaultOn = new Set(
-      [...series]
-        .sort((a, b) => b.points.length - a.points.length)
-        .slice(0, DEFAULT_LINES)
-        .map(s => s.key),
-    );
+    const defaultOn = new Set(mostPlayed(rating.data.series, header.sources, DEFAULT_LINES).map(seriesKey));
     const isOn = (key: string) => toggled.get(key) ?? defaultOn.has(key);
     const shown = series.filter(s => isOn(s.key));
     const { from, to } = resolveDateRange(filters);

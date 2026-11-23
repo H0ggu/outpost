@@ -177,7 +177,8 @@ export function WorldMap({ countries, metric, highlight, onSelect }: WorldMapPro
       >
         {geo.shapes.map((s, i) => (
           <path
-            key={s.code ?? `x${i}`}
+            // Not the code: N. Cyprus and Somaliland share CY / SO with Cyprus and Somalia.
+            key={`${s.name}-${i}`}
             d={s.d}
             className={['map-country', s.code && byCode.has(s.code) && 'has-data', s.code !== null && s.code === active && 'active'].filter(Boolean).join(' ')}
             style={{ fill: fillFor(metric, s.code ? byCode.get(s.code) : undefined, max) }}

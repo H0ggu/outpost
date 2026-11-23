@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { WorldMapCountry } from '@outpost/shared/api';
 import { useWorldMap } from '../../api/hooks.ts';
 import { Box, countryName, EmptyState, ErrorBox, FlagEmoji, licon, Spinner, WdlBar } from '../../components/index.ts';
-import { ScoreText, Segmented, StatTile } from './components/bits.tsx';
+import { rowClick, ScoreText, Segmented, StatTile } from './components/bits.tsx';
 import { CategoryLegend, ScoreLegend, SeqLegend } from './components/charts/common.tsx';
 import { WorldMap, type MapMetric } from './components/charts/WorldMap.tsx';
 import { fmtInt, scoreOfWdl } from './format.ts';
@@ -23,6 +23,8 @@ export default function WorldMapPage() {
   const [metric, setMetric] = useQueryParam<MapMetric>('show', oneOf(METRICS, 'games'), 'games');
   const [view, setView] = useQueryParam<(typeof VIEWS)[number]>('view', oneOf(VIEWS, 'map'), 'map');
   const [selected, setSelected] = useState<string | null>(null);
+  // The list's country buttons toggle (aria-pressed); the map only picks.
+  const toggleSelected = (code: string) => setSelected(s => (s === code ? null : code));
 
   const actions = (
     <div className="map-controls">
@@ -90,10 +92,10 @@ export default function WorldMapPage() {
                 <SeqLegend label={metric === 'games' ? 'Games' : 'Opponents'} />
               )}
             </div>
-            <CountryTable countries={countries} limit={10} selected={selected} onSelect={setSelected} />
+            <CountryTable countries={countries} limit={10} selected={selected} onSelect={toggleSelected} />
           </>
         ) : (
-          <CountryTable countries={countries} selected={selected} onSelect={setSelected} />
+          <CountryTable countries={countries} selected={selected} onSelect={toggleSelected} />
         )}
         <LookupNote unknownGames={m.unknownGames} pending={m.pendingLookups} />
       </>
@@ -165,9 +167,21 @@ function CountryTable({
           </thead>
           <tbody>
             {rows.map(c => (
-              <tr key={c.code} className={['clickable', selected === c.code.toUpperCase() && 'selected'].filter(Boolean).join(' ')} tabIndex={0} onClick={() => onSelect(c.code.toUpperCase())} onKeyDown={e => e.key === 'Enter' && onSelect(c.code.toUpperCase())}>
+              <tr
+                key={c.code}
+                className={['clickable', selected === c.code.toUpperCase() && 'selected'].filter(Boolean).join(' ')}
+                onClick={rowClick(() => onSelect(c.code.toUpperCase()))}
+              >
                 <td className="map-country-name">
-                  <FlagEmoji code={c.code} /> {countryName(c.code)}
+                  <button
+                    type="button"
+                    className="row-action"
+                    aria-pressed={selected === c.code.toUpperCase()}
+                    title="Show on the map"
+                    onClick={() => onSelect(c.code.toUpperCase())}
+                  >
+                    <FlagEmoji code={c.code} /> {countryName(c.code)}
+                  </button>
                   <WdlBar w={c.w} d={c.d} l={c.l} className="cell-bar" />
                 </td>
                 <td className="num">{fmtInt(c.games)}</td>

@@ -193,27 +193,37 @@ function LineFilter({ line, onChange }: { line: string[] | undefined; onChange: 
   );
 }
 
-/** Custom date range inputs. */
-function DateRange({ f, set }: { f: ProfileFilters; set: (patch: Partial<ProfileFilters>) => void }) {
+/**
+ * Custom date range inputs. `onEditing` keeps them on screen while a date is being retyped (a
+ * half-typed date is empty); `onLeave` runs when focus leaves both inputs.
+ */
+function DateRange({
+  f,
+  set,
+  onEditing,
+  onLeave,
+}: {
+  f: ProfileFilters;
+  set: (patch: Partial<ProfileFilters>) => void;
+  onEditing: () => void;
+  onLeave: () => void;
+}) {
+  const change = (key: 'from' | 'to', value: string) => {
+    if (!value) onEditing();
+    set({ period: undefined, [key]: value || undefined });
+  };
   return (
-    <span className="field field--dates">
+    <span
+      className="field field--dates"
+      onBlur={e => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onLeave();
+      }}
+    >
       <span className="field__label">From – to</span>
       <span className="field__input">
-        <input
-          type="date"
-          aria-label="From"
-          value={f.from ?? ''}
-          max={f.to}
-          onChange={e => set({ period: undefined, from: e.target.value || undefined })}
-        />
+        <input type="date" aria-label="From" value={f.from ?? ''} max={f.to} onChange={e => change('from', e.target.value)} />
         <span className="muted">–</span>
-        <input
-          type="date"
-          aria-label="To"
-          value={f.to ?? ''}
-          min={f.from}
-          onChange={e => set({ period: undefined, to: e.target.value || undefined })}
-        />
+        <input type="date" aria-label="To" value={f.to ?? ''} min={f.from} onChange={e => change('to', e.target.value)} />
       </span>
     </span>
   );
@@ -228,24 +238,30 @@ export function FiltersBar({ header, hideColor = false }: { header: ProfileHeade
   const [filters, setFilters] = useUrlFilters();
   const [open, setOpen] = useState(false);
   const [more, setMore] = useState(false);
-  const [customDates, setCustomDates] = useState(!!(filters.from || filters.to));
+  // "Custom…" picked (or a date being retyped) with no date in the URL yet. Otherwise the URL
+  // decides, so clearing the dates (chip, Reset, leaving empty inputs) goes back to "All time".
+  const [customPending, setCustomPending] = useState(false);
   const [wantNames, setWantNames] = useState(false);
   const opponentNames = useOpponentNames(header.slug, wantNames);
+  const hasDates = !!(filters.from || filters.to);
   useEffect(() => {
-    if (filters.from || filters.to) setCustomDates(true);
-  }, [filters.from, filters.to]);
+    if (hasDates) setCustomPending(false);
+  }, [hasDates]);
 
   const set = (patch: Partial<ProfileFilters>) => setFilters({ ...filters, ...patch });
   // Where the page owns the colour (its side toggle), it is not one of the bar's filters.
   const active = describeFilters(filters, header).filter(a => !(hideColor && a.key === 'color'));
-  const reset = () => setFilters(hideColor && filters.color ? { color: filters.color } : {});
+  const reset = () => {
+    setCustomPending(false);
+    setFilters(hideColor && filters.color ? { color: filters.color } : {});
+  };
   // `unknown` only exists for PGN and reference games.
   const timeClasses = TIME_CLASSES.filter(
     tc => tc !== 'unknown' || header.sources.some(s => s.kind === 'pgn' || s.kind === 'fide') || !!filters.tc?.includes('unknown'),
   );
   const advancedActive = !!(filters.src?.length || filters.opp || filters.oppName || filters.event || filters.line?.length);
   const showAdvanced = more || advancedActive;
-  const periodValue: Period | '' | 'custom' = filters.period ?? (customDates ? 'custom' : '');
+  const periodValue: Period | '' | 'custom' = filters.period ?? (hasDates || customPending ? 'custom' : '');
 
   return (
     <section className={['box', 'pfilters', open && 'pfilters--open'].filter(Boolean).join(' ')} aria-label="Filters">
@@ -302,15 +318,24 @@ export function FiltersBar({ header, hideColor = false }: { header: ProfileHeade
             ]}
             onChange={v => {
               if (v === 'custom') {
-                setCustomDates(true);
+                setCustomPending(true);
                 if (filters.period) set({ period: undefined });
               } else {
-                setCustomDates(false);
+                setCustomPending(false);
                 set({ period: v || undefined, from: undefined, to: undefined });
               }
             }}
           />
-          {periodValue === 'custom' && <DateRange f={filters} set={set} />}
+          {periodValue === 'custom' && (
+            <DateRange
+              f={filters}
+              set={set}
+              onEditing={() => setCustomPending(true)}
+              onLeave={() => {
+                if (!hasDates) setCustomPending(false);
+              }}
+            />
+          )}
 
           <span className="field">
             <span className="field__label">Time control</span>

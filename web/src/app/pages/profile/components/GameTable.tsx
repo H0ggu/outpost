@@ -9,7 +9,14 @@ import { fmtDate, fmtDateTime, fmtSigned, fmtTimeControl, TERMINATION_LABELS } f
 import { ColorDot, OpponentName, OutcomeMark, SiteIcon } from './bits.tsx';
 import { Boundary } from './Boundary.tsx';
 
-const GamePreview = lazy(() => import('./GamePreview.tsx'));
+/** The preview chunk's import (an object, so tests can make it fail like a missing chunk). */
+export const previewChunk = { load: () => import('./GamePreview.tsx') };
+const loadPreview = () => lazy(() => previewChunk.load());
+/**
+ * The lazily loaded preview, shared by every table. React.lazy caches a failed import, so after
+ * a failure Retry (the Boundary's `onReset`) replaces it with a fresh one that imports again.
+ */
+let sharedPreview = loadPreview();
 
 /** Result cell text: `1-0`, `½-½`. */
 const resultText = (r: GameRow['result']): string => (r === '1/2-1/2' ? '½-½' : r);
@@ -25,6 +32,11 @@ export interface GameTableProps {
 /** The expandable games table. */
 export function GameTable({ slug, games, sources, timeZone }: GameTableProps) {
   const [open, setOpen] = useState<number | null>(null);
+  const [GamePreview, setGamePreview] = useState(() => sharedPreview);
+  const reloadPreview = () => {
+    sharedPreview = loadPreview();
+    setGamePreview(() => sharedPreview);
+  };
   const toggle = (id: number) => setOpen(o => (o === id ? null : id));
   const onKey = (id: number) => (e: KeyboardEvent<HTMLTableRowElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -100,7 +112,7 @@ export function GameTable({ slug, games, sources, timeZone }: GameTableProps) {
                 {expanded && (
                   <tr className="game-preview-row">
                     <td colSpan={8}>
-                      <Boundary title="Could not show the game">
+                      <Boundary title="Could not show the game" onReset={reloadPreview}>
                         <Suspense fallback={<Spinner center size={28} label="Loading game" />}>
                           <GamePreview slug={slug} game={g} timeZone={timeZone} />
                         </Suspense>

@@ -88,6 +88,19 @@ html[data-theme='light'] {
   min-width: 0;
 }
 
+/* A failed header refresh: the cached profile stays, this note stays in view while scrolling. */
+.profile-page .profile-refresh-error {
+  position: sticky;
+  top: calc(var(--site-header-height) + 0.5rem);
+  z-index: 5;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.45);
+  border-radius: var(--box-radius);
+}
+
+.profile-page .profile-refresh-error .error-box {
+  background: color-mix(in srgb, var(--c-bad) 18%, var(--c-bg-box));
+}
+
 .profile-page .is-stale {
   opacity: 0.55;
   transition: opacity 0.2s 0.15s;
@@ -133,6 +146,29 @@ html[data-theme='light'] {
 /* Absolutely positioned bits (visually-hidden labels) must stay inside the table scroller. */
 .profile-page .table-wrap {
   position: relative;
+}
+
+/* A clickable row's real link or button (first cell): looks like the cell's text; keyboard
+ * focus lights up the whole row like hovering does. */
+.profile-page .row-action {
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  text-decoration: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.profile-page .row-action:hover,
+.profile-page .row-action:focus-visible {
+  color: inherit;
+}
+
+.profile-page .slist tbody tr.clickable:has(.row-action:focus-visible) {
+  background: color-mix(in oklab, var(--c-primary) 18%, var(--c-bg-box));
 }
 
 /* ---------------------------------------------------------------------------

@@ -3,9 +3,9 @@
  * API (web-profile-fixtures.ts): what they request, what they render, and where they link.
  */
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeFiltersSegment } from '@outpost/shared/filters';
-import { ALL_GAMES, filterGames, gamesPage, overview, profileHeader } from './web-profile-fixtures.ts';
+import { ALL_GAMES, CHESSCOM_ID, filterGames, gamesPage, LICHESS_ID, overview, profileHeader } from './web-profile-fixtures.ts';
 import { renderProfile, searchOf } from './web-profile-render.tsx';
 
 // pgn-viewer's dist uses extensionless ESM imports that Node can't load outside Vite; stand in
@@ -16,11 +16,22 @@ vi.mock('../src/app/components/PgnViewer.tsx', () => ({
   ),
 }));
 
-// Note: happy-dom never loads iframe pages and logs a NotSupportedError for each Studio embed;
-// that output is expected.
+// happy-dom never loads iframe pages and logs a NotSupportedError for each Studio embed (the
+// Explorer tab), straight to stderr through the console it was created with: drop exactly those
+// lines, so real warnings stay visible.
+// (The web tests have no Node types: reach stderr through globalThis.)
+const stderr = (globalThis as unknown as { process: { stderr: { write: (...args: unknown[]) => boolean } } }).process.stderr;
+beforeEach(() => {
+  const write = stderr.write.bind(stderr);
+  vi.spyOn(stderr, 'write').mockImplementation((chunk: unknown, ...rest: unknown[]) =>
+    String(chunk).includes('Iframe page loading is disabled') ? true : write(chunk, ...rest),
+  );
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const SLUG = '/u/test-player';
@@ -59,6 +70,28 @@ describe('Overview tab', () => {
     fireEvent.click(within(tcTable).getByText('Rapid'));
     await waitFor(() => expect(location().pathname).toBe('/u/test-player/games'));
     expect(searchOf(location()).get('tc')).toBe('rapid');
+  });
+
+  it('links each time class row to its games with a real link', async () => {
+    renderProfile(SLUG);
+    const tcTable = (await screen.findByRole('heading', { name: 'Time controls' })).closest('section')!;
+    const link = within(tcTable).getByRole('link', { name: /Rapid/ });
+    expect(link.getAttribute('href')).toBe('/u/test-player/games?tc=rapid');
+    // The link is the tab stop, not the row.
+    expect(link.closest('tr')!.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('draws the sparkline lines with the most games, not the most points', async () => {
+    // Downsampled lines all have the same number of points: the header's counts decide.
+    const games: Record<string, number> = { [`${LICHESS_ID}:bullet`]: 900, [`${CHESSCOM_ID}:classical`]: 800, [`${LICHESS_ID}:rapid`]: 700 };
+    const base = profileHeader();
+    const { container } = renderProfile(SLUG, {
+      header: { sources: base.sources.map(s => ({ ...s, ratings: s.ratings.map(r => ({ ...r, games: games[`${s.id}:${r.timeClass}`] ?? 10 })) })) },
+      patch: { overview: o => ({ ...o, ratingSparkline: o.ratingSparkline.map(x => ({ ...x, points: x.points.slice(0, 4) })) }) },
+    });
+    await screen.findByRole('img', { name: 'Rating over the last year' });
+    const legend = [...container.querySelectorAll('.ov-rating-card .series-legend li')].map(li => li.textContent);
+    expect(legend.sort()).toEqual(['TestPlayer · Bullet', 'TestPlayer · Rapid', 'test_player · Classical'].sort());
   });
 
   it('opens the explorer at an opening line as that colour', async () => {
@@ -303,6 +336,42 @@ describe('Openings tab', () => {
     await waitFor(() => expect(lastQuery(requests(api('openings'))).get('maxMoves')).toBe('4'));
   });
 
+  it('shows the server’s 5-game floor for best and worst lines', async () => {
+    renderProfile(`${SLUG}/openings?order=worst&minGames=1`);
+    await screen.findByRole('region', { name: 'As White' });
+    const min = screen.getByLabelText('Min. games') as HTMLSelectElement;
+    const labels = () => [...min.options].map(o => o.textContent);
+    // "1+" would do nothing there: the default reads "5+" and the lower choices are gone.
+    expect(min.value).toBe('');
+    expect(labels()[0]).toBe('5+');
+    expect(labels()).not.toContain('1+');
+    expect(labels().filter(l => l === '5+').length).toBe(1);
+    expect(screen.getByRole('radio', { name: 'Worst' }).getAttribute('title')).toMatch(/5\+ games/);
+    fireEvent.click(screen.getByRole('radio', { name: 'Most played' }));
+    await waitFor(() => expect(labels()[0]).toBe('Any'));
+    expect(labels().slice(0, 2)).toEqual(['Any', '5+']);
+  });
+
+  it('moves through a segmented control with the arrow keys, one tab stop', async () => {
+    const { location } = renderProfile(`${SLUG}/openings`);
+    await screen.findByRole('region', { name: 'As White' });
+    const group = screen.getByRole('radiogroup', { name: 'Order' });
+    const radios = () => within(group).getAllByRole('radio');
+    expect(radios().map(r => r.tabIndex)).toEqual([0, -1, -1]);
+    radios()[0]!.focus();
+    fireEvent.keyDown(radios()[0]!, { key: 'ArrowRight' });
+    await waitFor(() => expect(searchOf(location()).get('order')).toBe('best'));
+    expect(document.activeElement).toBe(radios()[1]);
+    expect(radios().map(r => r.tabIndex)).toEqual([-1, 0, -1]);
+    fireEvent.keyDown(radios()[1]!, { key: 'End' });
+    await waitFor(() => expect(searchOf(location()).get('order')).toBe('worst'));
+    fireEvent.keyDown(radios()[2]!, { key: 'ArrowRight' });
+    await waitFor(() => expect(searchOf(location()).has('order')).toBe(false));
+    expect(document.activeElement).toBe(radios()[0]);
+    fireEvent.keyDown(radios()[0]!, { key: 'ArrowLeft' });
+    await waitFor(() => expect(searchOf(location()).get('order')).toBe('worst'));
+  });
+
   it('never sends a minimum above the maximum from a hand-edited URL', async () => {
     const { requests } = renderProfile(`${SLUG}/openings?minMoves=5&maxMoves=2`);
     await screen.findByRole('region', { name: 'As White' });
@@ -314,6 +383,11 @@ describe('Openings tab', () => {
   it('opens the explorer at a row’s line, keeping the filters', async () => {
     const { location } = renderProfile(`${SLUG}/openings?tc=blitz`);
     const white = await screen.findByRole('region', { name: 'As White' });
+    // Each row's name is a real link (keyboard, screen readers); the row is not a tab stop.
+    const first = within(white).getAllByRole('row')[1]!;
+    expect(first.hasAttribute('tabindex')).toBe(false);
+    const href = within(first).getByRole('link').getAttribute('href')!;
+    expect(href).toMatch(/^\/u\/test-player\/explorer\?color=white&tc=blitz&line=/);
     fireEvent.click(within(white).getAllByRole('row')[1]!);
     await waitFor(() => expect(location().pathname).toBe('/u/test-player/explorer'));
     const q = searchOf(location());

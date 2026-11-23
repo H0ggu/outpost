@@ -59,6 +59,56 @@ describe('ProfileLayout header', () => {
     await waitFor(() => expect(requests(api()).length).toBe(2));
   });
 
+  it('keeps the cached profile on screen when a refetch fails, with an inline retry', async () => {
+    const fail: Array<{ match: RegExp; status: number; code: string; message: string }> = [];
+    const { requests, queryClient } = renderProfile(`${SLUG}/settings`, { fail });
+    await screen.findByRole('heading', { level: 1 });
+    // The server goes away; something (here: a finished sync) refreshes the header.
+    fail.push({ match: /^GET \/api\/profiles\/test-player$/, status: 502, code: 'upstream_error', message: 'Bad gateway' });
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['profile', 'test-player'] });
+    });
+    expect(await screen.findByText('Could not refresh this profile')).toBeTruthy();
+    expect(screen.getByText('Bad gateway')).toBeTruthy();
+    // Header, tabs and the active tab stay.
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Test Player');
+    expect(screen.getByRole('navigation', { name: 'Profile sections' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Delete profile' })).toBeTruthy();
+    // Back online: Retry clears the banner.
+    fail.length = 0;
+    const before = requests(api()).length;
+    fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    await waitFor(() => expect(requests(api()).length).toBe(before + 1));
+    await waitFor(() => expect(screen.queryByText('Could not refresh this profile')).toBeNull());
+  });
+
+  it('shows not found when a refetch says the profile is gone', async () => {
+    const fail: Array<{ match: RegExp; status: number; code: string; message: string }> = [];
+    const { queryClient } = renderProfile(`${SLUG}/games`, { fail });
+    await screen.findByRole('heading', { level: 1 });
+    fail.push({ match: /^GET \/api\/profiles\/test-player$/, status: 404, code: 'not_found', message: 'Profile not found' });
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['profile', 'test-player'] });
+    });
+    expect(await screen.findByText('No profile called “test-player”')).toBeTruthy();
+    expect(screen.queryByRole('navigation', { name: 'Profile sections' })).toBeNull();
+  });
+
+  it('redirects a mixed-case address to the lowercase slug', async () => {
+    const { location, calls } = renderProfile('/u/Test-Player/games?tc=blitz');
+    await screen.findByRole('heading', { level: 1 });
+    expect(location().pathname).toBe('/u/test-player/games');
+    expect(location().search).toBe('?tc=blitz');
+    // The mixed-case slug never reaches the server.
+    expect(calls.some(c => c.url.pathname.includes('Test-Player'))).toBe(false);
+  });
+
+  it('treats an address the server rejects as not found', async () => {
+    renderProfile('/u/-x', { fail: [{ match: /^GET \/api\/profiles\/-x$/, status: 400, code: 'validation', message: 'invalid profile slug' }] });
+    expect(await screen.findByText('No profile called “-x”')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+  });
+
   it('toggles the bookmark', async () => {
     const { requests } = renderProfile(SLUG);
     fireEvent.click(await screen.findByRole('button', { name: 'Bookmark this profile' }));
@@ -101,6 +151,32 @@ describe('ProfileLayout header', () => {
     });
     expect(await screen.findByText('Updating · TestPlayer: 312')).toBeTruthy();
     expect(screen.getByText(/updating · 312/)).toBeTruthy();
+  });
+
+  it('counts games from the status poll while a sync imports them', async () => {
+    const base = profileHeader();
+    const lichess = base.sources[0]!;
+    // The status endpoint already knows about 25 more games than the header did.
+    let path = '';
+    renderProfile(SLUG, {
+      record: (_m, url) => {
+        path = url.pathname;
+      },
+      header: () => ({
+        queue: { busy: true, cooldownUntil: null, queuePosition: 0 },
+        sources: base.sources.map((s, i) =>
+          i === 0
+            ? {
+                ...s,
+                gameCount: path.endsWith('/status') ? s.gameCount + 25 : s.gameCount,
+                sync: { ...s.sync, state: 'running', progress: { done: 25, total: null, message: null }, queuePosition: 0 },
+              }
+            : s,
+        ),
+      }),
+    });
+    const n = new Intl.NumberFormat('en-US').format(lichess.gameCount + 25);
+    expect(await screen.findByText(new RegExp(`updating · 25 · ${n} games`))).toBeTruthy();
   });
 
   it('shows a failed sync with its error', async () => {
@@ -169,6 +245,16 @@ describe('tab links and the filters bar', () => {
     renderProfile(`${SLUG}/games?period=3m&tc=blitz`);
     const tabs = await screen.findByRole('navigation', { name: 'Profile sections' });
     expect(within(tabs).getByText('Rating').getAttribute('href')).toBe('/u/test-player/rating?period=3m');
+  });
+
+  it('carries only the date range back from the Rating tab', async () => {
+    // Account and time control there narrow the chart, not the other tabs.
+    renderProfile(`${SLUG}/rating?period=6m&tc=blitz&src=12`);
+    const tabs = await screen.findByRole('navigation', { name: 'Profile sections' });
+    expect(within(tabs).getByText('Games').getAttribute('href')).toBe('/u/test-player/games?period=6m');
+    expect(within(tabs).getByText('Openings').getAttribute('href')).toBe('/u/test-player/openings?period=6m');
+    expect(within(tabs).getByText('Rating').getAttribute('href')).toBe('/u/test-player/rating?period=6m&tc=blitz&src=12');
+    expect(within(tabs).getByText('Overview').getAttribute('href')).toBe('/u/test-player');
   });
 
   it('updates the URL from the controls and resets paging', async () => {
@@ -249,6 +335,43 @@ describe('tab links and the filters bar', () => {
     expect(screen.getAllByText('1. e4 c5 2. Nf3').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: 'Clear the line filter' }));
     await waitFor(() => expect(searchOf(location()).has('line')).toBe(false));
+  });
+
+  it('leaves “Custom…” once no date is set any more', async () => {
+    const { location } = renderProfile(`${SLUG}/games`);
+    const period = (await screen.findByLabelText('Period')) as HTMLSelectElement;
+    // Picked but not filled in yet: the date inputs stay.
+    fireEvent.change(period, { target: { value: 'custom' } });
+    expect(period.value).toBe('custom');
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-06-30' } });
+    await waitFor(() => expect(searchOf(location()).get('to')).toBe('2026-06-30'));
+    // Retyping a date empties it for a moment: the inputs stay while focus is in them...
+    const to = screen.getByLabelText('To');
+    fireEvent.focus(to);
+    fireEvent.change(to, { target: { value: '' } });
+    await waitFor(() => expect(searchOf(location()).has('to')).toBe(false));
+    expect(period.value).toBe('custom');
+    expect(screen.getByLabelText('From')).toBeTruthy();
+    // ...and leaving them empty goes back to "All time".
+    fireEvent.blur(screen.getByLabelText('To'), { relatedTarget: document.body });
+    await waitFor(() => expect(period.value).toBe(''));
+    expect(screen.queryByLabelText('From')).toBeNull();
+  });
+
+  it('shows “All time” after Reset or removing the dates chip', async () => {
+    const { location } = renderProfile(`${SLUG}/games?from=2026-01-01&to=2026-06-30`);
+    const period = (await screen.findByLabelText('Period')) as HTMLSelectElement;
+    expect(period.value).toBe('custom');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove filter 2026-01-01 → 2026-06-30' }));
+    await waitFor(() => expect(location().search).toBe(''));
+    expect(period.value).toBe('');
+    // Custom picked with nothing typed, then Reset (another filter is active).
+    fireEvent.click(within(screen.getByRole('group', { name: 'Time control' })).getByRole('button', { name: /Blitz/ }));
+    fireEvent.change(period, { target: { value: 'custom' } });
+    expect(period.value).toBe('custom');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    await waitFor(() => expect(location().search).toBe(''));
+    expect(period.value).toBe('');
   });
 
   it('opens the filters panel on phones', async () => {

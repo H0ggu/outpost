@@ -56,6 +56,14 @@ export function renderProfile(path: string, opts: MockOptions = {}) {
           { path: 'settings', Component: ProfileSettingsPage },
         ],
       },
+      // Lazy like the app's routes, so a navigation away keeps the profile mounted for a moment.
+      {
+        path: '/players',
+        lazy: async () => {
+          await new Promise(r => setTimeout(r, 20));
+          return { Component: () => <p>players</p> };
+        },
+      },
       { path: '*', element: <p>elsewhere</p> },
     ],
     { initialEntries: [path] },

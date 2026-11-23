@@ -2,7 +2,7 @@
  * Small presentational pieces shared by the profile pages: site badges, segmented controls,
  * toggle chips, a pager, player names, outcome marks and stat tiles.
  */
-import { useId, type ReactNode } from 'react';
+import { useId, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { GameRowOpponent, SourceKind, SourceSummary, Title } from '@outpost/shared/api';
 import type { Color, Outcome } from '@outpost/shared/chess';
@@ -138,7 +138,10 @@ export interface SegmentOption<T extends string> {
   icon?: LiconValue;
 }
 
-/** A single-choice button group (lila's `.btn-rack`), exposed as a radio group. */
+/**
+ * A single-choice button group (lila's `.btn-rack`), exposed as a radio group: one tab stop
+ * (the checked option), arrow keys and Home / End move and select, like native radios.
+ */
 export function Segmented<T extends string>({
   value,
   options,
@@ -154,14 +157,36 @@ export function Segmented<T extends string>({
   className?: string;
   size?: 'md' | 'sm';
 }) {
+  const checked = options.findIndex(o => o.value === value);
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const n = options.length;
+    const buttons = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const from = at >= 0 ? at : Math.max(0, checked);
+    let next: number;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (from + 1) % n;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (from - 1 + n) % n;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = n - 1;
+    else return;
+    e.preventDefault();
+    buttons[next]?.focus();
+    if (options[next]!.value !== value) onChange(options[next]!.value);
+  };
   return (
-    <div className={['seg', size === 'sm' && 'seg--sm', className].filter(Boolean).join(' ')} role="radiogroup" aria-label={label}>
-      {options.map(o => (
+    <div
+      className={['seg', size === 'sm' && 'seg--sm', className].filter(Boolean).join(' ')}
+      role="radiogroup"
+      aria-label={label}
+      onKeyDown={onKeyDown}
+    >
+      {options.map((o, i) => (
         <button
           key={o.value}
           type="button"
           role="radio"
           aria-checked={o.value === value}
+          tabIndex={i === Math.max(0, checked) ? 0 : -1}
           className={o.value === value ? 'seg__btn active' : 'seg__btn'}
           title={o.title}
           data-icon={o.icon}
@@ -173,6 +198,18 @@ export function Segmented<T extends string>({
     </div>
   );
 }
+
+/**
+ * Click handler for a table row whose first cell holds the row's real link or button (the
+ * keyboard and screen-reader way in): a click anywhere else on the row does the same, and a
+ * click on a control inside the row is left to that control.
+ */
+export const rowClick =
+  (action: () => void) =>
+  (e: MouseEvent<HTMLElement>): void => {
+    if ((e.target as Element).closest('a, button, input, select, label')) return;
+    action();
+  };
 
 /** A multi-select toggle chip (`aria-pressed`). */
 export function ToggleChip({
