@@ -41,7 +41,13 @@ export default function GamesPage() {
         {total > 0 && <WdlBar w={g.summary.w} d={g.summary.d} l={g.summary.l} className="games-summary__bar" />}
         <div className="games-summary__export">
           {g.total > 0 ? (
-            <a className="button button-secondary button-thin" href={exportHref} download={`${slug}.pgn`} data-icon={licon.Download}>
+            <a
+              className="button button-secondary button-thin"
+              href={exportHref}
+              download={`${slug}.pgn`}
+              data-icon={licon.Download}
+              title="This player's side is named after the account that played each game"
+            >
               Download PGN
             </a>
           ) : (

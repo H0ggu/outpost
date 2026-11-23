@@ -67,7 +67,10 @@ export default function ActivityPage() {
   else if (activity.isError) body = <ErrorBox error={activity.error} onRetry={() => void activity.refetch()} title="Could not load the activity" />;
   else {
     const a = activity.data;
-    const total = a.byHour.reduce((n, c) => n + c.games, 0);
+    // Every game counts in byWeekday; byHour and grid leave out games with no time of day
+    // (date-only PGN and reference games), so the totals come from the weekdays.
+    const total = a.byWeekday.reduce((n, c) => n + c.games, 0);
+    const timed = a.byHour.reduce((n, c) => n + c.games, 0);
     if (total === 0) {
       body = <EmptyState icon={licon.Clock} title={span === '12m' ? 'No games in the last 12 months' : 'No games yet'} />;
     } else {
@@ -95,11 +98,13 @@ export default function ActivityPage() {
             <StatTile value={fmtInt(activeDays)} label="Days played" />
             <StatTile value={activeDays ? (total / activeDays).toFixed(1) : '–'} label="Games per day played" />
             <StatTile value={WEEKDAYS[busiestDay]} label="Busiest day" />
-            <StatTile value={`${fmtHour(busiestHour)}:00`} label="Busiest hour" />
-            <StatTile value={fmtPct(combinedScore(a.byHour))} label="Score" />
+            <StatTile value={timed ? `${fmtHour(busiestHour)}:00` : '–'} label="Busiest hour" />
+            <StatTile value={fmtPct(combinedScore(a.byWeekday))} label="Score" />
           </div>
           <p className="muted activity-tz">
             Times in {a.tz === 'UTC' ? 'UTC' : a.tz.replace(/_/g, ' ')}.
+            {timed < total &&
+              ` ${fmtInt(total - timed)} of these games have a date but no time of day (PGN and over-the-board games): they count in the calendar and the weekdays, not in the hour charts.`}
           </p>
           <div className="activity-grid">
             <Card

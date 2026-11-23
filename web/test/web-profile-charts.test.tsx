@@ -183,6 +183,21 @@ describe('Activity tab', () => {
     expect(tip.textContent).toContain('Monday 00:00–00:59');
   });
 
+  it('counts games without a time of day (date-only PGN / OTB games) outside the hour charts', async () => {
+    const empty = { games: 0, score: null };
+    // Only date-only games: the server leaves them out of byHour and grid, not of the weekdays.
+    renderProfile(`${SLUG}/activity`, {
+      patch: { activity: r => ({ ...r, byHour: r.byHour.map(() => empty), grid: r.grid.map(row => row.map(() => empty)) }) },
+    });
+    await screen.findByRole('img', { name: 'Games per day over the last year' });
+    const a = activity({ period: '12m' });
+    const total = a.byWeekday.reduce((n, c) => n + c.games, 0);
+    const summary = document.querySelector<HTMLElement>('.activity-summary')!;
+    expect(within(summary).getByText('Games').previousElementSibling?.textContent).toBe(fmt(total));
+    expect(within(summary).getByText('Busiest hour').previousElementSibling?.textContent).toBe('–');
+    expect(screen.getByText(new RegExp(`${fmt(total)} of these games have a date but no time of day`))).toBeTruthy();
+  });
+
   it('shows the empty state', async () => {
     const empty = { games: 0, score: null };
     renderProfile(`${SLUG}/activity`, {
