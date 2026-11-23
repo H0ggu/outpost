@@ -18,7 +18,10 @@ type SortKey = 'games' | 'opponents' | 'score' | 'name';
  * list, and a note about opponents whose country is unknown or still being looked up.
  */
 export default function WorldMapPage() {
-  const { slug } = useProfile();
+  const { slug, header } = useProfile();
+  // Only Lichess and Chess.com opponents have a country to look up: PGN and reference-DB games
+  // name their players and nothing more.
+  const online = header.sources.some(s => s.kind === 'lichess' || s.kind === 'chesscom');
   const map = useWorldMap(slug, {});
   const [metric, setMetric] = useQueryParam<MapMetric>('show', oneOf(METRICS, 'games'), 'games');
   const [view, setView] = useQueryParam<(typeof VIEWS)[number]>('view', oneOf(VIEWS, 'map'), 'map');
@@ -71,9 +74,7 @@ export default function WorldMapPage() {
           <StatTile value={fmtInt(knownGames)} label="Games" />
         </div>
         {countries.length === 0 ? (
-          <EmptyState icon={licon.Globe} title="No opponent countries yet">
-            <p>Countries are looked up after games are imported; this can take a while for big profiles.</p>
-          </EmptyState>
+          <EmptyMap pending={m.pendingLookups} online={online} />
         ) : view === 'map' ? (
           <>
             <WorldMap countries={countries} metric={metric} highlight={selected} onSelect={setSelected} />
@@ -106,6 +107,28 @@ export default function WorldMapPage() {
     <Box title="World map" level={2} actions={actions} className="worldmap-box">
       {body}
     </Box>
+  );
+}
+
+/**
+ * No country on the map: still being looked up (only promised while lookups are queued), or
+ * unknown for good — PGN and over-the-board (reference) opponents carry no country.
+ */
+function EmptyMap({ pending, online }: { pending: number; online: boolean }) {
+  if (pending > 0)
+    return (
+      <EmptyState icon={licon.Globe} title="No opponent countries yet">
+        <p>Countries are looked up after games are imported; this can take a while for big profiles.</p>
+      </EmptyState>
+    );
+  return (
+    <EmptyState icon={licon.Globe} title="No opponent countries">
+      <p>
+        {online
+          ? 'None of these opponents has a country on Lichess or Chess.com.'
+          : 'Opponents from PGN databases and the reference database come with a name only, so their countries are unknown. Countries are shown for Lichess and Chess.com opponents.'}
+      </p>
+    </EmptyState>
   );
 }
 

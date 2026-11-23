@@ -112,6 +112,18 @@ describe('World map tab', () => {
     expect(screen.getByText(/30 opponents are still queued/)).toBeTruthy();
     cleanup();
     vi.unstubAllGlobals();
+    // Nothing queued: no promise of countries to come.
+    renderProfile(`${SLUG}/worldmap`, { patch: { worldmap: () => ({ countries: [], unknownGames: 12, pendingLookups: 0 }) } });
+    expect(await screen.findByText('No opponent countries')).toBeTruthy();
+    expect(screen.queryByText(/Countries are looked up after games are imported/)).toBeNull();
+    expect(screen.getByText('None of these opponents has a country on Lichess or Chess.com.')).toBeTruthy();
+    cleanup();
+    vi.unstubAllGlobals();
+    const pgnOnly = profileHeader({ sources: profileHeader().sources.map(s => ({ ...s, kind: 'pgn' as const })) });
+    renderProfile(`${SLUG}/worldmap`, { header: pgnOnly, patch: { worldmap: () => ({ countries: [], unknownGames: 19, pendingLookups: 0 }) } });
+    expect(await screen.findByText(/Opponents from PGN databases and the reference database come with a name only/)).toBeTruthy();
+    cleanup();
+    vi.unstubAllGlobals();
     renderProfile(`${SLUG}/worldmap`, { fail: [{ match: /worldmap$/, status: 500, code: 'internal', message: 'Map failed' }] });
     expect(await screen.findByText('Map failed')).toBeTruthy();
   });
