@@ -514,7 +514,8 @@ export interface MockResponse {
 
 /** Hooks a test can use to change answers (header overrides, failures, recorded calls). */
 export interface MockOptions {
-  header?: Partial<ProfileHeader>;
+  /** Header overrides; a function is called on every request (for state that changes). */
+  header?: Partial<ProfileHeader> | (() => Partial<ProfileHeader>);
   signedIn?: boolean;
   /** Paths (regex) that should fail with this response. */
   fail?: Array<{ match: RegExp; status: number; code: string; message: string; details?: unknown }>;
@@ -532,7 +533,7 @@ export function mockApi(method: string, rawUrl: string, body: unknown, opts: Moc
   const path = url.pathname;
   for (const f of opts.fail ?? []) if (f.match.test(`${method} ${path}`)) return err(f.status, f.code, f.message, f.details);
   const f = parseFilters(url.searchParams, 'lenient');
-  const header = profileHeader(opts.header);
+  const header = profileHeader(typeof opts.header === 'function' ? opts.header() : opts.header);
 
   if (path === '/api/session') return json(sessionInfo(opts.signedIn ?? true));
   if (path === '/api/me/prefs' && method === 'PUT') return json({ ...DEFAULT_PREFS, ...(body as object) });
