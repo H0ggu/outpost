@@ -20,6 +20,7 @@ import {
   type SourceSyncStatus,
 } from '@outpost/shared/api';
 import type { Db } from '../db/index.ts';
+import { notifyJobsQueued } from './notify.ts';
 
 /** A `jobs` row. */
 export interface JobRow {
@@ -77,6 +78,9 @@ export interface EnqueueOptions {
 /** Dedupe key of a source's sync job. Used by profile updates and the auto-refresh scheduler alike. */
 export const syncDedupeKey = (sourceId: Id): string => `sync:${sourceId}`;
 
+/** Dedupe key of the opponent geo lookup job of one site (one active per site). */
+export const geoDedupeKey = (kind: 'lichess' | 'chesscom'): string => `geo:${kind}`;
+
 /**
  * Lane of a job: `sync` follows the source kind (lichess / chesscom; fide and pgn sources sync
  * locally), `geo` follows its payload, `broadcastRound` fetches from Lichess; imports and
@@ -110,7 +114,9 @@ export function jobLabel<K extends JobKind>(db: Db, kind: K, payload: JobPayload
     }
     case 'geo': {
       const p = payload as JobPayloads['geo'];
-      return `Look up ${p.keys.length} ${p.kind} player${p.keys.length === 1 ? '' : 's'}`;
+      const n = p.keys?.length ?? 0;
+      // An empty key list means "every opponent still waiting for a lookup" (sync/geo.ts).
+      return n === 0 ? `Look up ${p.kind} opponents (country, title)` : `Look up ${n} ${p.kind} player${n === 1 ? '' : 's'}`;
     }
     case 'pgnImport': {
       const p = payload as JobPayloads['pgnImport'];
@@ -201,7 +207,7 @@ export function enqueueJob<K extends JobKind>(
   const userId = opts.userId ?? null;
   const priority = opts.priority ?? (userId !== null ? JOB_PRIORITY.manual : JOB_PRIORITY.scheduled);
   const dedupeKey = opts.dedupeKey ?? null;
-  return db.tx(() => {
+  const job = db.tx(() => {
     if (dedupeKey !== null) {
       const existing = db.get<JobRow>(
         `SELECT ${JOB_COLUMNS} FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running')`,
@@ -211,6 +217,11 @@ export function enqueueJob<K extends JobKind>(
         if (existing.status === 'queued' && priority > existing.priority) {
           db.run('UPDATE jobs SET priority = ? WHERE id = ?', [priority, existing.id]);
           existing.priority = priority;
+        }
+        // A user asking for it makes a system job theirs (it then shows in /api/jobs/mine).
+        if (existing.user_id === null && userId !== null) {
+          db.run('UPDATE jobs SET user_id = ? WHERE id = ?', [userId, existing.id]);
+          existing.user_id = userId;
         }
         return toJobInfo(db, existing);
       }
@@ -223,6 +234,9 @@ export function enqueueJob<K extends JobKind>(
     );
     return getJob(db, lastInsertRowid)!;
   });
+  // Wake the lane's worker (it re-checks the table, so a rolled-back outer transaction is harmless).
+  if (job.status === 'queued') notifyJobsQueued(db, job.lane);
+  return job;
 }
 
 /** Enqueues a sync of one source (deduplicated with `syncDedupeKey`). */
