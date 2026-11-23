@@ -15,7 +15,6 @@ export const UPSTREAM_LABELS: Readonly<Record<UpstreamStatus['name'], string>> =
   'lichess-explorer': 'Lichess opening explorer',
   chesscom: 'Chess.com API',
   'lichess-database': 'Lichess database (broadcasts)',
-  'stockfish-nnue': 'Stockfish NNUE networks',
 };
 
 /** Token state as one word and a tone. */

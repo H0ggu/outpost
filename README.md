@@ -65,6 +65,7 @@ Set in `.env` (or the environment). Relative paths resolve against the repositor
 | `DATA_DIR` | `./data` | SQLite file, NNUE cache, uploads |
 | `LICHESS_TOKEN` | empty | Lichess personal token (any scope; `study:read` recommended). Needed for the Lichess and player explorers and broadcasts; faster game export; rating history. Can also be set by the admin in the UI (env wins) |
 | `CHESSCOM_CONTACT` | empty | Contact for the User-Agent sent to Chess.com (it rejects anonymous clients). Can also be set in the UI (env wins) |
+| `SOURCE_URL` | empty | Where this instance's source code is published (AGPL-3.0 §13); the footer links to it. Set it when you run a modified Outpost for others |
 | `SETUP_TOKEN` | generated, logged | One-time token for creating the first admin at `/setup` |
 | `LOG_LEVEL` | `info` | `fatal` … `trace`, or `silent` |
 | `OUTPOST_WORKERS` | `true` (`false` in tests) | Run the background job workers and the auto-refresh scheduler |

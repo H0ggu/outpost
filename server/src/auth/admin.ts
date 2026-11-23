@@ -76,6 +76,7 @@ export function toAdminSettings(db: Db, config: Config): AdminSettings {
     updateCooldownMinutes: s.updateCooldownMinutes,
     initialSyncMonths: s.initialSyncMonths,
     mastersSource: s.mastersSource,
+    broadcastAutoImport: s.broadcastAutoImport,
   };
 }
 
@@ -104,6 +105,7 @@ export const updateSettingsSchema = z.strictObject({
     .string()
     .regex(/^(lichess|reference:[1-9]\d{0,15})$/, "Use 'lichess' or 'reference:<database id>'")
     .optional(),
+  broadcastAutoImport: z.boolean().optional(),
 });
 
 /** Applies a validated settings patch. Throws 400 when `mastersSource` names no reference database. */

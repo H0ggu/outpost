@@ -179,10 +179,16 @@ export const DEFAULT_PREFS: UserPrefs = {
 /** `PUT /api/me/prefs` body: any subset; the server merges and returns the full `UserPrefs`. */
 export type UpdatePrefsRequest = Partial<UserPrefs>;
 
+// Account policy: the one source of truth for the server's checks and the web forms (decision 10).
+
+/** Shortest Outpost account username (characters). */
+export const USERNAME_MIN_LENGTH = 2;
+/** Longest Outpost account username (characters). */
+export const USERNAME_MAX_LENGTH = 30;
 /**
- * Outpost account usernames (setup, signup): 2–30 characters, letters, digits, `_` and `-`,
- * starting with a letter or digit. Unique case-insensitively (`users.username COLLATE NOCASE`);
- * the case typed at signup is kept for display.
+ * Outpost account usernames (setup, signup): `USERNAME_MIN_LENGTH`–`USERNAME_MAX_LENGTH`
+ * characters, letters, digits, `_` and `-`, starting with a letter or digit. Unique
+ * case-insensitively (`users.username COLLATE NOCASE`); the case typed at signup is kept for display.
  */
 export const ACCOUNT_USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{1,29}$/;
 /** Minimum password length (characters) for new passwords. */
@@ -208,6 +214,11 @@ export interface SessionInfo {
   /** Whether anonymous visitors may read public profiles and their stats. */
   anonymousBrowsing: boolean;
   version: string;
+  /**
+   * Where this instance's source code is published (env `SOURCE_URL`, AGPL-3.0 §13), or null when
+   * the operator did not set one; the footer then links to the licence and NOTICE instead.
+   */
+  sourceUrl?: string | null;
 }
 
 /** `POST /api/setup`: create the first admin with the one-time setup token. Returns `LoginResponse`. */
@@ -243,13 +254,13 @@ export interface ChangePasswordRequest {
 }
 
 /**
- * `POST /api/me/totp/setup` body (optional; the endpoint also accepts no body). When `password` is
- * sent it must be the current password (wrong → 403, throttled), so a session alone (e.g. a stolen
- * cookie) cannot put somebody else's authenticator on the account. Clients should ask for it; the
- * server may require it in a later version.
+ * `POST /api/me/totp/setup` body. `password` is the current password and is required (missing →
+ * 400 `validation`, wrong → 403 `forbidden`, throttled with the other re-authentications), so a
+ * session alone (e.g. a stolen cookie) cannot put somebody else's authenticator on the account.
+ * `enable` then only needs a code for the pending secret this call created.
  */
 export interface TotpSetupRequest {
-  password?: string;
+  password: string;
 }
 
 /** `POST /api/me/totp/setup`: a pending secret; nothing changes until it is confirmed with `enable`. */
@@ -333,8 +344,8 @@ export interface AdminSettings {
   mastersSource: MastersSource;
   /**
    * Import finished official Lichess broadcast rounds into the built-in "Lichess broadcasts"
-   * reference database automatically (needs the Lichess token; default off). Optional for
-   * compatibility; absent means off.
+   * reference database automatically (needs the Lichess token; default off, decision 22). The
+   * server always sends it; it stays optional so clients can treat its absence as "off".
    */
   broadcastAutoImport?: boolean;
 }
@@ -404,9 +415,12 @@ export interface CreateInviteRequest {
   expiresInDays?: number;
 }
 
-/** One upstream reachability probe in `AdminStatus`. */
+/**
+ * One upstream reachability probe in `AdminStatus`. tests.stockfishchess.org (the NNUE download
+ * host) is deliberately not probed: it is a volunteer-run server (decision 11).
+ */
 export interface UpstreamStatus {
-  name: 'lichess' | 'lichess-explorer' | 'chesscom' | 'lichess-database' | 'stockfish-nnue';
+  name: 'lichess' | 'lichess-explorer' | 'chesscom' | 'lichess-database';
   url: string;
   ok: boolean;
   status: number | null;

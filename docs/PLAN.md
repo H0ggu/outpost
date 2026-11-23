@@ -93,6 +93,7 @@ Vendored lila commit: **`b071608bc4ce71b31cda36ffa493100e3dc3580f`** (2026-11-22
 | `DATA_DIR` | `./data` | Holds the SQLite file, NNUE cache and uploads |
 | `LICHESS_TOKEN` | empty | Personal token (any scope; `study:read` recommended). **Required** for the Lichess explorer, player explorer and broadcasts. Also speeds up game export and enables rating history. The admin can also set it in the UI; env wins. |
 | `CHESSCOM_CONTACT` | empty | Contact text put in the Chess.com User-Agent, `Outpost/<ver> (self-hosted; contact: <value>)`. Chess.com returns 403 to anonymous user agents. The admin can set it in the UI. |
+| `SOURCE_URL` | empty | Public URL of this instance's source code (AGPL-3.0 §13). Sent as `SessionInfo.sourceUrl`; the footer links to it, or to the AGPL text and NOTICE when unset. |
 | `SETUP_TOKEN` | generated, printed to logs | One-time token to create the first admin |
 | `LOG_LEVEL` | `info` | Log level |
 | `OUTPOST_WORKERS` | `true` (`false` when `NODE_ENV=test`) | Start the job workers, the auto-refresh scheduler and any other upstream-calling timer (`config.startWorkers`) |
@@ -193,7 +194,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 ### Session, account and admin
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/session` | `{user|null, setupRequired, signupMode, anonymousBrowsing}` |
+| GET | `/api/session` | `{user|null, setupRequired, signupMode, anonymousBrowsing, version, sourceUrl?}` |
 | POST | `/api/setup` | `{token, username, password}` creates the first admin |
 | POST | `/api/login` | `{username, password, totp?}` |
 | POST | `/api/logout` | |

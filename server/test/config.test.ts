@@ -49,6 +49,16 @@ describe('config', () => {
     expect(() => loadConfig({ TRUSTED_PROXIES: '10.0.0.0/33' })).toThrow(ConfigError);
   });
 
+  it('parses SOURCE_URL (AGPL-3.0 §13 source offer)', () => {
+    expect(loadConfig({}).sourceUrl).toBeNull();
+    expect(loadConfig({ SOURCE_URL: '' }).sourceUrl).toBeNull();
+    expect(loadConfig({ SOURCE_URL: ' https://example.com/me/outpost ' }).sourceUrl).toBe('https://example.com/me/outpost');
+    expect(loadConfig({ SOURCE_URL: 'http://git.example.org' }).sourceUrl).toBe('http://git.example.org/');
+    for (const bad of ['example.com/outpost', 'javascript:alert(1)', 'ftp://example.com/x', 'https://user:pw@example.com/x']) {
+      expect(() => loadConfig({ SOURCE_URL: bad }), bad).toThrow(/SOURCE_URL/);
+    }
+  });
+
   it('starts background workers except in tests', () => {
     expect(loadConfig({}).startWorkers).toBe(true);
     expect(loadConfig({ NODE_ENV: 'test' }).startWorkers).toBe(false);

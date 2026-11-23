@@ -94,6 +94,23 @@ const envSchema = z.object({
     .max(2048)
     .optional(),
   CHESSCOM_CONTACT: z.string().trim().min(1).max(200).optional(),
+  SOURCE_URL: z
+    .string()
+    .max(2048)
+    .transform((s, ctx) => {
+      let u: URL | null = null;
+      try {
+        u = new URL(s);
+      } catch {
+        // reported below
+      }
+      if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password) {
+        ctx.addIssue({ code: 'custom', message: 'SOURCE_URL must be an http(s) URL like https://example.com/you/outpost' });
+        return z.NEVER;
+      }
+      return u.href;
+    })
+    .optional(),
   SETUP_TOKEN: z.string().min(16, 'SETUP_TOKEN must be at least 16 characters').max(256).optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   OUTPOST_WORKERS: z
@@ -135,6 +152,11 @@ export interface Config {
   lichessToken: string | null;
   /** Env CHESSCOM_CONTACT (wins over the admin UI value). */
   chesscomContact: string | null;
+  /**
+   * Env SOURCE_URL: where this instance's source code is published (AGPL-3.0 §13). Sent to the
+   * browser as `SessionInfo.sourceUrl`; null when unset.
+   */
+  sourceUrl: string | null;
   /** Env SETUP_TOKEN; when null the auth module generates one and logs it. */
   setupToken: string | null;
   logLevel: LogLevel;
@@ -189,6 +211,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     webDistDir: e.NODE_ENV === 'development' ? null : join(ROOT_DIR, 'web', 'dist'),
     lichessToken: e.LICHESS_TOKEN ?? null,
     chesscomContact: e.CHESSCOM_CONTACT ?? null,
+    sourceUrl: e.SOURCE_URL ?? null,
     setupToken: e.SETUP_TOKEN ?? null,
     logLevel: e.LOG_LEVEL,
     startWorkers: e.OUTPOST_WORKERS ?? e.NODE_ENV !== 'test',

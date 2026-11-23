@@ -117,6 +117,17 @@ async function signup(t: TestApp, username: string, password = USER_PW, invite?:
 
 // ---------------------------------------------------------------------------
 
+describe('session info', () => {
+  it('links the source code when SOURCE_URL is set (decision 30)', async () => {
+    const t = await makeTestApp({ env: { SOURCE_URL: 'https://example.com/someone/outpost' } });
+    try {
+      expect(await sessionOf(t, null)).toMatchObject({ sourceUrl: 'https://example.com/someone/outpost', version: t.config.version });
+    } finally {
+      await t.close();
+    }
+  });
+});
+
 describe('setup (SETUP_TOKEN from env)', () => {
   let t: TestApp;
   beforeAll(async () => {
@@ -128,6 +139,7 @@ describe('setup (SETUP_TOKEN from env)', () => {
 
   it('reports setupRequired and refuses signup until an admin exists', async () => {
     expect((await sessionOf(t, null)).setupRequired).toBe(true);
+    expect((await sessionOf(t, null)).sourceUrl).toBeNull();
     writeSettings(t.db, { signupMode: 'open' });
     const res = await post(t, API_ROUTES.signup, { username: 'early', password: USER_PW });
     expect(res.statusCode).toBe(403);
@@ -663,7 +675,7 @@ describe('TOTP', () => {
   });
 
   it('setup returns a pending secret, otpauth URI and QR codes without enabling anything', async () => {
-    const res = await post(t, API_ROUTES.me.totpSetup, undefined, { cookie });
+    const res = await post(t, API_ROUTES.me.totpSetup, { password: USER_PW }, { cookie });
     expect(res.statusCode).toBe(200);
     const body = res.json<TotpSetupResponse>();
     secret = body.secret;
@@ -685,7 +697,7 @@ describe('TOTP', () => {
     expect(ok.statusCode).toBe(200);
     expect((await sessionOf(t, cookie)).user?.totpEnabled).toBe(true);
     // A second setup while enabled is refused.
-    expect((await post(t, API_ROUTES.me.totpSetup, undefined, { cookie })).statusCode).toBe(409);
+    expect((await post(t, API_ROUTES.me.totpSetup, { password: USER_PW }, { cookie })).statusCode).toBe(409);
     expect((await post(t, API_ROUTES.me.totpEnable, { code: totpCode(secret) }, { cookie })).statusCode).toBe(409);
   });
 
@@ -729,7 +741,7 @@ describe('TOTP', () => {
   });
 
   it('disable with a code only; a re-enabled secret starts fresh', async () => {
-    const s = (await post(t, API_ROUTES.me.totpSetup, undefined, { cookie })).json<TotpSetupResponse>().secret;
+    const s = (await post(t, API_ROUTES.me.totpSetup, { password: USER_PW }, { cookie })).json<TotpSetupResponse>().secret;
     expect(s).not.toBe(secret);
     expect((await post(t, API_ROUTES.me.totpEnable, { code: totpCode(s) }, { cookie })).statusCode).toBe(200);
     // The code used to enable cannot disable (replay); the next one can.
@@ -743,22 +755,26 @@ describe('TOTP', () => {
     });
   });
 
-  it('setup checks the current password when one is sent (and still works without a body)', async () => {
+  it('setup requires the current password (decision 8)', async () => {
     const wrong = await post(t, API_ROUTES.me.totpSetup, { password: 'not my password' }, { cookie });
     expect(wrong.statusCode).toBe(403);
     expect(wrong.json().error.message).toBe('Current password is incorrect');
     expect(t.db.value("SELECT totp_pending_secret FROM users WHERE username = 'twofa'")).toBeNull();
+    // No body, an empty password or a wrong type: a validation error, and no pending secret.
+    for (const body of [undefined, {}, { password: '' }, { password: 42 }]) {
+      const res = await post(t, API_ROUTES.me.totpSetup, body, { cookie });
+      expect(res.statusCode, JSON.stringify(body)).toBe(400);
+      expect(res.json().error.code).toBe('validation');
+    }
+    expect(t.db.value("SELECT totp_pending_secret FROM users WHERE username = 'twofa'")).toBeNull();
     const right = await post(t, API_ROUTES.me.totpSetup, { password: USER_PW }, { cookie });
     expect(right.statusCode).toBe(200);
     expect(right.json<TotpSetupResponse>().secret).toMatch(/^[A-Z2-7]{32}$/);
-    // An empty password counts as none; unknown keys are ignored like before.
-    expect((await post(t, API_ROUTES.me.totpSetup, { password: '' }, { cookie })).statusCode).toBe(200);
-    expect((await post(t, API_ROUTES.me.totpSetup, { password: 42 }, { cookie })).statusCode).toBe(400);
     t.db.run("UPDATE users SET totp_pending_secret = NULL, totp_pending_at = NULL WHERE username = 'twofa'");
   });
 
   it('a pending secret expires', async () => {
-    const s = (await post(t, API_ROUTES.me.totpSetup, undefined, { cookie })).json<TotpSetupResponse>().secret;
+    const s = (await post(t, API_ROUTES.me.totpSetup, { password: USER_PW }, { cookie })).json<TotpSetupResponse>().secret;
     t.db.run("UPDATE users SET totp_pending_at = 1 WHERE username = 'twofa'");
     const res = await post(t, API_ROUTES.me.totpEnable, { code: totpCode(s) }, { cookie });
     expect(res.statusCode).toBe(400);

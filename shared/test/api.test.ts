@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { API_ROUTES, explorerEndpoint, fromExplorerGameId, SLUG_RE, slugify, toExplorerGameId } from '../src/api.ts';
+import {
+  ACCOUNT_USERNAME_RE,
+  API_ROUTES,
+  explorerEndpoint,
+  fromExplorerGameId,
+  SLUG_RE,
+  slugify,
+  toExplorerGameId,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+} from '../src/api.ts';
 
 describe('API_ROUTES', () => {
   it('builds encoded paths', () => {
@@ -21,6 +31,15 @@ describe('API_ROUTES', () => {
   it('passes Fastify placeholders through, so the server can derive route patterns', () => {
     expect(API_ROUTES.profileSource(':slug', ':sourceId')).toBe('/api/profiles/:slug/sources/:sourceId');
     expect(API_ROUTES.admin.jobRetry(':id')).toBe('/api/admin/jobs/:id/retry');
+  });
+});
+
+describe('account policy', () => {
+  it('keeps the username pattern and its length bounds in step', () => {
+    for (let n = 1; n <= USERNAME_MAX_LENGTH + 1; n++) {
+      const ok = n >= USERNAME_MIN_LENGTH && n <= USERNAME_MAX_LENGTH;
+      expect(ACCOUNT_USERNAME_RE.test('a'.repeat(n)), String(n)).toBe(ok);
+    }
   });
 });
 

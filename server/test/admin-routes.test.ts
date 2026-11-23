@@ -139,6 +139,7 @@ describe('admin settings', () => {
       updateCooldownMinutes: 15,
       initialSyncMonths: 0,
       mastersSource: 'lichess',
+      broadcastAutoImport: false,
     });
   });
 
@@ -197,6 +198,8 @@ describe('admin settings', () => {
       { mastersSource: 'chessbase' },
       { mastersSource: 'reference:abc' },
       { mastersSource: 'reference:999' },
+      { broadcastAutoImport: 'on' },
+      { broadcastAutoImport: null },
       { somethingElse: true },
     ];
     const before = (await req(t, 'GET', API_ROUTES.admin.settings, admin)).json<AdminSettings>();
@@ -206,6 +209,17 @@ describe('admin settings', () => {
       expect(res.json().error.code).toBe('validation');
     }
     expect((await req(t, 'GET', API_ROUTES.admin.settings, admin)).json<AdminSettings>()).toEqual(before);
+  });
+
+  it('switches the broadcast auto-import on and off (decision 22)', async () => {
+    const on = await put({ broadcastAutoImport: true });
+    expect(on.statusCode).toBe(200);
+    expect(on.json<AdminSettings>().broadcastAutoImport).toBe(true);
+    expect(readSettings(t.db, t.config).broadcastAutoImport).toBe(true);
+    // Other changes leave it alone.
+    expect((await put({ signupMode: 'closed' })).json<AdminSettings>().broadcastAutoImport).toBe(true);
+    expect((await put({ broadcastAutoImport: false })).json<AdminSettings>().broadcastAutoImport).toBe(false);
+    expect(readSettings(t.db, t.config).broadcastAutoImport).toBe(false);
   });
 
   it('accepts a reference database as the masters source', async () => {

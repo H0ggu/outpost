@@ -80,7 +80,7 @@ import { readSettings } from '../settings.ts';
  *   - GET/PUT /api/me/prefs (UserPrefs / UpdatePrefsRequest → UserPrefs)
  *   - POST /api/me/password (ChangePasswordRequest → OkResponse): needs the current password, signs
  *     out every other session.
- *   - POST /api/me/totp/setup (optional TotpSetupRequest: the current password, checked when sent →
+ *   - POST /api/me/totp/setup (TotpSetupRequest: the current password, required →
  *     TotpSetupResponse: pending secret, otpauth URI, QR as SVG and data: URL), /api/me/totp/enable
  *     (TotpEnableRequest: a code for the pending secret), /api/me/totp/disable (TotpDisableRequest:
  *     password or a current code)
@@ -166,6 +166,7 @@ const authRoutes: FastifyPluginAsync = async app => {
       signupMode: settings.signupMode,
       anonymousBrowsing: settings.anonymousBrowsing,
       version: config.version,
+      sourceUrl: config.sourceUrl,
     };
   });
 
@@ -305,10 +306,8 @@ const authRoutes: FastifyPluginAsync = async app => {
       const me = req.user!;
       const body = parseBody(totpSetupSchema, req.body ?? {});
       if (me.totpEnabled) throw conflict('Two-factor authentication is already on; turn it off first');
-      if (body.password !== null) {
-        await assertCurrentPassword(me.id, body.password, reply);
-        reauthFailures.reset(reauthKey(me.id));
-      }
+      await assertCurrentPassword(me.id, body.password, reply);
+      reauthFailures.reset(reauthKey(me.id));
       const secret = generateTotpSecret();
       const now = Date.now();
       db.run('UPDATE users SET totp_pending_secret = ?, totp_pending_at = ? WHERE id = ?', [secret, now, me.id]);

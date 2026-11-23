@@ -5,6 +5,8 @@
  */
 import {
   ACCOUNT_USERNAME_RE,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
   BOARD_THEMES,
   PIECE_SETS,
   SOUND_SETS,
@@ -24,7 +26,10 @@ import { parsePrefs } from './session.ts';
 export const usernameSchema = z
   .string()
   .trim()
-  .regex(ACCOUNT_USERNAME_RE, 'Username must be 2–30 letters, digits, _ or -, starting with a letter or digit');
+  .regex(
+    ACCOUNT_USERNAME_RE,
+    `Username must be ${USERNAME_MIN_LENGTH}–${USERNAME_MAX_LENGTH} letters, digits, _ or -, starting with a letter or digit`,
+  );
 
 /** `POST /api/setup`. */
 export const setupSchema = z.object({
@@ -65,12 +70,10 @@ export const prefsPatchSchema = z.strictObject({
 });
 
 /**
- * `POST /api/me/totp/setup`: optionally the current password, checked when present (empty = absent).
- * Optional so clients that send no body keep working; see `TotpSetupRequest`.
+ * `POST /api/me/totp/setup`: the current password (required, so a session alone cannot put another
+ * authenticator on the account and lock its owner out); see `TotpSetupRequest`.
  */
-export const totpSetupSchema = z
-  .object({ password: anyPasswordSchema.optional() })
-  .transform(v => ({ password: v.password || null }));
+export const totpSetupSchema = z.object({ password: anyPasswordSchema.min(1, 'Current password required') });
 
 /** `POST /api/me/totp/enable`. */
 export const totpEnableSchema = z.object({ code: z.string().max(32) });

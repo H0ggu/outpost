@@ -5,7 +5,8 @@
  * - Token check: `GET https://lichess.org/api/account` through `app.upstream` with `auth: 'required'`
  *   (no token → `missing`, nothing is sent). 200 → `valid` with the account id and the scopes from
  *   Lichess's `X-OAuth-Scopes` header; 401/403 → `invalid`; anything else → `unknown` with the reason.
- * - Probes: one small request per upstream host, each with a short timeout; hosts are probed in
+ * - Probes: one small request per upstream host (not tests.stockfishchess.org, a volunteer-run
+ *   server: decision 11), each with a short timeout; hosts are probed in
  *   parallel, requests to one host one at a time (Lichess asks for that). `ok` means the host
  *   answered with an HTTP status below 500: a 4xx (e.g. a refused token or a missing Chess.com
  *   contact) still proves it is reachable, and is reported in `error`. A host in a 429 cool-down is
