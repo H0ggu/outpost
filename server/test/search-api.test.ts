@@ -1,10 +1,11 @@
 import type { SearchResults } from '@outpost/shared/api';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { insertGame } from '../src/chess/store.ts';
-import { knownUsernames, SearchCache, visibleProfileSlugFor } from '../src/search/index.ts';
+import type { AuthUser } from '../src/http/types.ts';
+import { knownUsernames, search as runSearch, SearchCache, visibleProfileSlugFor } from '../src/search/index.ts';
 import { writeSettings } from '../src/settings.ts';
 import { createSource, createUserSession, makeTestApp, testGame, type TestApp } from './helpers.ts';
-import { fakeUpstream, HIKARU_PLAYER, json, networkDown } from './fixtures/profiles/upstream.ts';
+import { fakeUpstream, HIKARU_PLAYER, json, networkDown, stalledJson } from './fixtures/profiles/upstream.ts';
 
 type Session = { userId: number; cookie: string };
 
@@ -77,8 +78,8 @@ describe('search API', () => {
       { kind: 'lichess', username: 'Alice', title: 'FM', exists: true, known: true, profileSlug: 'alice-public' },
       { kind: 'lichess', username: 'Alina', title: null, exists: true, known: false, profileSlug: null },
       { kind: 'lichess', username: 'Alibi_Bot', title: 'BOT', exists: true, known: false, profileSlug: null },
-      // Known locally only (in key order); a hidden account is known but links to no profile.
-      { kind: 'lichess', username: 'alias-hidden', title: null, exists: false, known: true, profileSlug: null },
+      // Known locally only (in key order). The hidden account of someone else's profile (no games
+      // yet) is not known to me.
       { kind: 'lichess', username: 'Alistair', title: 'CM', exists: false, known: true, profileSlug: null },
     ]);
     // Chess.com has no search: the exact check found nothing, local accounts match by prefix.
@@ -147,12 +148,61 @@ describe('search API', () => {
   });
 
   it('finds known usernames by prefix with an index-friendly range', () => {
-    expect(knownUsernames(t.db, 'lichess', 'AL').map(h => h.username)).toEqual(['alias-hidden', 'Alice', 'Alistair']);
-    expect(knownUsernames(t.db, 'chesscom', 'aliy')).toEqual([{ username: 'Aliyev', title: 'IM' }]);
-    expect(knownUsernames(t.db, 'lichess', 'zz')).toEqual([]);
+    expect(knownUsernames(t.db, 'lichess', 'AL', null).map(h => h.username)).toEqual(['Alice', 'Alistair']);
+    // The profile's owner sees its hidden account.
+    const owner = { id: other.userId, username: 'other', role: 'user', totpEnabled: false, prefs: {} } as AuthUser;
+    expect(knownUsernames(t.db, 'lichess', 'AL', owner).map(h => h.username)).toEqual(['alias-hidden', 'Alice', 'Alistair']);
+    expect(knownUsernames(t.db, 'chesscom', 'aliy', null)).toEqual([{ username: 'Aliyev', title: 'IM' }]);
+    expect(knownUsernames(t.db, 'lichess', 'zz', null)).toEqual([]);
     const cache = new SearchCache(() => 0);
     cache.set('a', 1);
     expect(cache.get('a')).toBe(1);
+  });
+
+  it("doesn't reveal accounts only a private profile tracks", async () => {
+    const secret = createSource(t.db, { kind: 'lichess', key: 'secretguy', displayName: 'SecretGuy' });
+    addProfile('secret-dossier', 'Dossier', me.userId, 'private', [[secret, false]]);
+    const saved = up.routes['GET lichess.org/api/player/autocomplete']!;
+    up.routes['GET lichess.org/api/player/autocomplete'] = () => json({ result: [] });
+    try {
+      // Someone else: no local hit, and nothing marks the account as tracked.
+      expect((await results(other, 'secret')).lichess).toEqual([]);
+      const exact = await results(other, 'SecretGuy');
+      expect(exact.lichess).toEqual([]);
+      // The owner finds it through their own profile.
+      expect((await results(me, 'secret')).lichess).toEqual([
+        { kind: 'lichess', username: 'SecretGuy', title: null, exists: false, known: true, profileSlug: 'secret-dossier' },
+      ]);
+      // Once games are imported the account is known to everyone (but its profile stays private).
+      insertGame(t.db, testGame({ white: { name: 'SecretGuy' }, black: { name: 'zed' } }));
+      expect((await results(other, 'secretg')).lichess).toEqual([
+        { kind: 'lichess', username: 'SecretGuy', title: null, exists: false, known: true, profileSlug: null },
+      ]);
+    } finally {
+      up.routes['GET lichess.org/api/player/autocomplete'] = saved;
+    }
+  });
+
+  it('gives up on an upstream that stalls in the middle of its body', async () => {
+    const stalled = fakeUpstream({
+      'GET api.chess.com/pub/player/slowpoke': () => stalledJson(),
+      'GET lichess.org/api/player/autocomplete': () => stalledJson(),
+    });
+    const s = await makeTestApp({ fetch: stalled.fetch });
+    try {
+      const started = Date.now();
+      const r = await runSearch({ db: s.db, upstream: s.app.upstream, cache: new SearchCache(), timeoutMs: 150 }, 'slowpoke', null);
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(r.unavailable).toEqual(['lichess', 'chesscom']);
+      expect(r.lichess).toEqual([]);
+      // A client that goes away cancels the lookups at once.
+      const gone = new AbortController();
+      const pending = runSearch({ db: s.db, upstream: s.app.upstream, cache: new SearchCache(), signal: gone.signal }, 'slowpoke', null);
+      gone.abort();
+      expect((await pending).unavailable).toEqual(['lichess', 'chesscom']);
+    } finally {
+      await s.close();
+    }
   });
 
   it('throttles searches per IP', async () => {

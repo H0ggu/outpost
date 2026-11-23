@@ -15,6 +15,7 @@ import { loadProfileForViewer } from '../profiles/access.ts';
 import {
   addProfileSource,
   AnonymousViews,
+  type CleanupOptions,
   createProfile,
   createProfileSchema,
   deleteProfile,
@@ -28,6 +29,7 @@ import {
   removeProfileSource,
   requestUpdate,
   setBookmark,
+  sweepOrphans,
   updateProfile,
   updateProfileSchema,
 } from '../profiles/service.ts';
@@ -53,13 +55,53 @@ import {
 
 /** Creating profiles and adding accounts call Lichess / Chess.com: throttled per IP. */
 export const ACCOUNT_CHECK_RATE_LIMIT = { max: 60, timeWindow: 60_000 } as const;
+/** How often the orphan sweep runs while the workers run (and once at startup). */
+export const ORPHAN_SWEEP_EVERY_MS = 6 * 3_600_000;
 
 const sourceParams = z.object({ slug: slugParams.shape.slug, sourceId: zId });
 
 const profileRoutes: FastifyPluginAsync = async app => {
   const anonymousViews = new AnonymousViews();
   const ctx = { db: app.db, config: app.config, upstream: app.upstream };
-  const logError = (err: unknown): void => app.log.error({ err }, 'profile clean-up failed');
+  // Background clean-ups (large profile deletes, the orphan sweep) stop at shutdown; what they
+  // leave is found by the next sweep.
+  const stop = new AbortController();
+  const pending = new Set<Promise<unknown>>();
+  const track = (p: Promise<unknown>): void => {
+    pending.add(p);
+    void p.finally(() => pending.delete(p));
+  };
+  const cleanup: CleanupOptions = { log: err => app.log.error({ err }, 'profile clean-up failed'), signal: stop.signal };
+
+  // The orphan policy for profiles deleted with their owner (src/profiles/service.ts). Background
+  // work: only when this process runs the workers (never in tests).
+  let sweepTimer: NodeJS.Timeout | null = null;
+  let sweeping = false;
+  const runSweep = (): void => {
+    if (sweeping || stop.signal.aborted) return;
+    sweeping = true;
+    track(
+      sweepOrphans(app.db, { scanGames: true, signal: stop.signal })
+        .then(r => {
+          if (r.sources || r.games) app.log.info(r, 'removed orphaned sources and games');
+        })
+        .catch(err => app.log.error({ err }, 'orphan sweep failed'))
+        .finally(() => {
+          sweeping = false;
+        }),
+    );
+  };
+  app.addHook('onReady', async () => {
+    if (!app.config.startWorkers) return;
+    runSweep();
+    sweepTimer = setInterval(runSweep, ORPHAN_SWEEP_EVERY_MS);
+    sweepTimer.unref();
+  });
+  app.addHook('onClose', async () => {
+    stop.abort();
+    if (sweepTimer) clearInterval(sweepTimer);
+    await Promise.allSettled([...pending]);
+  });
 
   app.get(API_ROUTES.profiles, { preHandler: requireViewer }, async (req): Promise<ProfileListResponse> => {
     const { scope } = parseQuery(profileListQuerySchema, req.query);
@@ -93,7 +135,7 @@ const profileRoutes: FastifyPluginAsync = async app => {
 
   app.delete(API_ROUTES.profile(':slug'), { preHandler: requireUser }, async (req): Promise<OkResponse> => {
     const { slug } = parseParams(slugParams, req.params);
-    deleteProfile(app.db, loadProfileForViewer(app.db, slug, req.user), logError);
+    track(deleteProfile(app.db, loadProfileForViewer(app.db, slug, req.user), cleanup).cleanup);
     return { ok: true };
   });
 
@@ -110,7 +152,9 @@ const profileRoutes: FastifyPluginAsync = async app => {
 
   app.delete(API_ROUTES.profileSource(':slug', ':sourceId'), { preHandler: requireUser }, async (req): Promise<ProfileHeader> => {
     const { slug, sourceId } = parseParams(sourceParams, req.params);
-    const { profile } = removeProfileSource(app.db, loadProfileForViewer(app.db, slug, req.user), req.user!, sourceId, logError);
+    const removed = removeProfileSource(app.db, loadProfileForViewer(app.db, slug, req.user), req.user!, sourceId, cleanup);
+    track(removed.cleanup);
+    const { profile } = removed;
     return profileHeader(app.db, app.config, profile, req.user);
   });
 

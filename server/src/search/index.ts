@@ -9,17 +9,23 @@
  * - reference-DB players (`searchReferencePlayers`, owned by the reference module);
  * - local profiles the viewer may see (name, address, or a visible account's name).
  *
- * Upstream calls go through `app.upstream` with short timeouts; a failure leaves that site's
+ * Upstream calls go through `app.upstream` with a short deadline that covers the response body
+ * too (`upstreamJsonWithin`), and stop when the client goes away; a failure leaves that site's
  * upstream hits out (local hits stay) and lists the site in `unavailable`. Answers are cached
  * per app for a minute so typing doesn't hammer Lichess / Chess.com.
+ *
+ * "Known" accounts (local hits, `known`) are the ones with imported games, or in a profile the
+ * viewer may see: a source row that only a private profile uses doesn't reveal that someone
+ * tracks the account.
  */
 import type { ExternalPlayerHit, Id, ProfileSummary, ReferencePlayer, SearchResults, Title } from '@outpost/shared/api';
 import { isTitle, playerKey } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
 import type { AuthUser } from '../http/types.ts';
 import { UPSTREAM, type Upstream } from '../http/upstream.ts';
-import { CHESSCOM_USERNAME_RE, chesscomDisplayName, LICHESS_USERNAME_RE } from '../profiles/sources.ts';
 import { profileSummaries } from '../profiles/service.ts';
+import { CHESSCOM_USERNAME_RE, chesscomDisplayName, LICHESS_USERNAME_RE } from '../profiles/sources.ts';
+import { upstreamJsonWithin } from '../profiles/upstreamJson.ts';
 import { searchReferencePlayers } from '../reference/index.ts';
 import { likeContains } from '../stats/index.ts';
 
@@ -29,7 +35,7 @@ export const MIN_QUERY_LENGTH = 2;
 export const MAX_QUERY_LENGTH = 100;
 /** Results per list. */
 export const SEARCH_LIMIT = 10;
-/** Upstream timeout: search must feel instant, partial results beat waiting. */
+/** Upstream deadline (headers and body): search must feel instant, partial results beat waiting. */
 export const SEARCH_UPSTREAM_TIMEOUT_MS = 3500;
 /** Lichess autocomplete needs 3+ characters (shorter terms only match exactly). */
 export const LICHESS_MIN_TERM = 3;
@@ -74,6 +80,10 @@ export interface SearchDeps {
   db: Db;
   upstream: Upstream;
   cache: SearchCache;
+  /** Aborts the upstream calls (the client closed the request). */
+  signal?: AbortSignal;
+  /** Upstream deadline (default `SEARCH_UPSTREAM_TIMEOUT_MS`; tests shorten it). */
+  timeoutMs?: number;
 }
 
 interface UpstreamHit {
@@ -92,11 +102,11 @@ async function lichessAutocomplete(deps: SearchDeps, q: string): Promise<Upstrea
   const url = new URL(`${UPSTREAM.lichess}/api/player/autocomplete`);
   url.searchParams.set('term', q);
   url.searchParams.set('object', 'true');
-  const body = await deps.upstream.json<{ result?: Array<{ id?: unknown; name?: unknown; title?: unknown }> }>(url, {
-    timeoutMs: SEARCH_UPSTREAM_TIMEOUT_MS,
-  });
+  const { body } = await upstreamJsonWithin(deps.upstream, url, { timeoutMs: deps.timeoutMs ?? SEARCH_UPSTREAM_TIMEOUT_MS, signal: deps.signal });
+  const result = (body as { result?: unknown } | null)?.result;
   const hits: UpstreamHit[] = [];
-  for (const r of Array.isArray(body?.result) ? body.result : []) {
+  for (const r of Array.isArray(result) ? (result as Array<{ id?: unknown; name?: unknown; title?: unknown } | null>) : []) {
+    if (!r || typeof r !== 'object') continue;
     const name = typeof r.name === 'string' ? r.name : typeof r.id === 'string' ? r.id : null;
     if (name && LICHESS_USERNAME_RE.test(name)) hits.push({ username: name, title: titleOf(r.title) });
   }
@@ -111,26 +121,36 @@ async function chesscomExact(deps: SearchDeps, q: string): Promise<UpstreamHit[]
   const key = `chesscom:${lower}`;
   const cached = deps.cache.get<UpstreamHit[]>(key);
   if (cached) return cached;
-  const res = await deps.upstream.fetch(`${UPSTREAM.chesscom}/pub/player/${encodeURIComponent(lower)}`, {
+  const res = await upstreamJsonWithin(deps.upstream, `${UPSTREAM.chesscom}/pub/player/${encodeURIComponent(lower)}`, {
     allowStatuses: [404, 410],
-    timeoutMs: SEARCH_UPSTREAM_TIMEOUT_MS,
-    headers: { accept: 'application/json' },
+    timeoutMs: deps.timeoutMs ?? SEARCH_UPSTREAM_TIMEOUT_MS,
+    signal: deps.signal,
   });
   let hits: UpstreamHit[] = [];
-  if (res.status === 200) {
-    const player = (await res.json()) as { username?: unknown; url?: unknown; title?: unknown } | null;
-    if (player && typeof player.username === 'string') {
-      hits = [{ username: chesscomDisplayName(player.url, player.username), title: titleOf(player.title) }];
-    }
-  } else void res.body?.cancel().catch(() => {});
+  const player = res.body as { username?: unknown; url?: unknown; title?: unknown } | null;
+  if (player && typeof player === 'object' && typeof player.username === 'string') {
+    hits = [{ username: chesscomDisplayName(player.url, player.username), title: titleOf(player.title) }];
+  }
   deps.cache.set(key, hits);
   return hits;
 }
 
 const MAX_CODEPOINT = '\u{10FFFF}';
 
+/**
+ * SQL condition (source alias `s`): the source counts as known to the viewer — it has imported
+ * games, or a profile the viewer may see shows it. Named parameters `:me`, `:admin`.
+ */
+const KNOWN_SOURCE = `(EXISTS (SELECT 1 FROM player_games kpg WHERE kpg.source_id = s.id)
+  OR EXISTS (SELECT 1 FROM profile_sources kps JOIN profiles kp ON kp.id = kps.profile_id
+              WHERE kps.source_id = s.id
+                AND (kp.visibility = 'public' OR kp.owner_user_id = :me OR :admin)
+                AND (kps.hidden = 0 OR kp.owner_user_id = :me OR :admin)))`;
+
+const viewerParams = (viewer: AuthUser | null): { me: Id | null; admin: boolean } => ({ me: viewer?.id ?? null, admin: viewer?.role === 'admin' });
+
 /** Usernames Outpost already knows for a site, by prefix (display case, best first). */
-export function knownUsernames(db: Db, kind: 'lichess' | 'chesscom', q: string, limit = SEARCH_LIMIT): UpstreamHit[] {
+export function knownUsernames(db: Db, kind: 'lichess' | 'chesscom', q: string, viewer: AuthUser | null, limit = SEARCH_LIMIT): UpstreamHit[] {
   const prefix = playerKey(q);
   const range = [kind, prefix, `${prefix}${MAX_CODEPOINT}`, limit] as const;
   const byKey = new Map<string, UpstreamHit>();
@@ -140,8 +160,10 @@ export function knownUsernames(db: Db, kind: 'lichess' | 'chesscom', q: string, 
     else if (!prev.title && isTitle(title)) prev.title = title;
   };
   for (const r of db.all<{ key: string; display_name: string; title: string | null }>(
-    'SELECT key, display_name, title FROM sources WHERE kind = ? AND key >= ? AND key < ? ORDER BY key LIMIT ?',
-    range,
+    `SELECT s.key, s.display_name, s.title FROM sources s
+      WHERE s.kind = :kind AND s.key >= :from AND s.key < :to AND ${KNOWN_SOURCE}
+      ORDER BY s.key LIMIT :limit`,
+    { kind, from: range[1], to: range[2], limit, ...viewerParams(viewer) },
   )) {
     add(r.key, r.display_name, r.title);
   }
@@ -166,12 +188,12 @@ export function knownUsernames(db: Db, kind: 'lichess' | 'chesscom', q: string, 
     .map(([, hit]) => hit);
 }
 
-const isKnown = (db: Db, kind: 'lichess' | 'chesscom', key: string): boolean =>
+const isKnown = (db: Db, kind: 'lichess' | 'chesscom', key: string, viewer: AuthUser | null): boolean =>
   db.value(
-    `SELECT 1 WHERE EXISTS (SELECT 1 FROM sources WHERE kind = ?1 AND key = ?2)
-        OR EXISTS (SELECT 1 FROM players_cache WHERE kind = ?1 AND key = ?2)
-        OR EXISTS (SELECT 1 FROM player_games WHERE opp_source_kind = ?1 AND opp_key = ?2)`,
-    [kind, key],
+    `SELECT 1 WHERE EXISTS (SELECT 1 FROM sources s WHERE s.kind = :kind AND s.key = :key AND ${KNOWN_SOURCE})
+        OR EXISTS (SELECT 1 FROM players_cache WHERE kind = :kind AND key = :key)
+        OR EXISTS (SELECT 1 FROM player_games WHERE opp_source_kind = :kind AND opp_key = :key)`,
+    { kind, key, ...viewerParams(viewer) },
   ) !== undefined;
 
 /** Whether Outpost has synced this account successfully (so it is known to exist upstream). */
@@ -264,7 +286,7 @@ function mergeHits(
       username: h.username,
       title: h.title ?? localTitle,
       exists: confirmed.has(key) || syncedOk(db, kind, key),
-      known: isKnown(db, kind, key),
+      known: isKnown(db, kind, key, viewer),
       profileSlug: visibleProfileSlugFor(db, kind, key, viewer),
     };
   });
@@ -286,8 +308,8 @@ export async function search(deps: SearchDeps, q: string, viewer: AuthUser | nul
   const result: SearchResults = {
     q,
     profiles: searchProfiles(db, q, viewer),
-    lichess: mergeHits(db, 'lichess', q, upstreamOf(lichess), LICHESS_USERNAME_RE.test(q) ? knownUsernames(db, 'lichess', q) : [], viewer),
-    chesscom: mergeHits(db, 'chesscom', q, upstreamOf(chesscom), CHESSCOM_USERNAME_RE.test(q) ? knownUsernames(db, 'chesscom', q) : [], viewer),
+    lichess: mergeHits(db, 'lichess', q, upstreamOf(lichess), LICHESS_USERNAME_RE.test(q) ? knownUsernames(db, 'lichess', q, viewer) : [], viewer),
+    chesscom: mergeHits(db, 'chesscom', q, upstreamOf(chesscom), CHESSCOM_USERNAME_RE.test(q) ? knownUsernames(db, 'chesscom', q, viewer) : [], viewer),
     reference: withProfileSlugs(db, searchReferencePlayers(db, q, { limit: SEARCH_LIMIT }), viewer),
   };
   if (unavailable.length) result.unavailable = unavailable;

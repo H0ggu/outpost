@@ -3,8 +3,9 @@
  *
  * - `resolveSource` turns a user's `NewSourceInput` into a row to reuse or create. Existing rows
  *   are reused through UNIQUE(kind, key) without any upstream call; new Lichess / Chess.com
- *   accounts are checked upstream (through `app.upstream`), FIDE ids against the local games and
- *   Lichess's FIDE directory, and PGN players against their (visible) database.
+ *   accounts are checked upstream (through `app.upstream`, with a deadline that covers the body
+ *   too: `upstreamJsonWithin`), FIDE ids against the reference-DB games and Lichess's FIDE
+ *   directory, and PGN players against their (visible) database.
  * - `insertSource` writes a resolved row (race-safe with ON CONFLICT).
  * - `sourceSummaries` builds `SourceSummary` rows (sync status, game counts, current ratings).
  *
@@ -31,9 +32,10 @@ import { pgnSourceKey } from '../chess/store.ts';
 import type { Db } from '../db/index.ts';
 import { HttpError, validationError } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
-import { UPSTREAM, upstreamHttpError, UpstreamError, type Upstream } from '../http/upstream.ts';
+import { UPSTREAM, upstreamHttpError, type Upstream } from '../http/upstream.ts';
 import { sourceSyncStatus } from '../jobs/index.ts';
 import { loadDatabaseForViewer } from './access.ts';
+import { upstreamJsonWithin } from './upstreamJson.ts';
 
 /** Lichess usernames: 2–30 letters, digits, `_` or `-`. */
 export const LICHESS_USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{1,29}$/;
@@ -44,7 +46,7 @@ export const FIDE_ID_RE = /^[1-9]\d{0,11}$/;
 /** Longest PGN player name accepted as a `pgn` source. */
 export const MAX_PGN_NAME_LENGTH = 200;
 
-/** Timeout of the account checks made while creating a profile. */
+/** Deadline (headers and body) of each account check made while creating a profile. */
 const CHECK_TIMEOUT_MS = 8000;
 
 /** A `sources` row as this module reads it. */
@@ -111,10 +113,11 @@ function rethrowUpstream(e: unknown): never {
  * 503/502 when the upstream check itself fails. `index` names the source in error details.
  */
 export async function resolveSource(
-  ctx: { db: Db; upstream: Upstream; viewer: AuthUser },
+  ctx: { db: Db; upstream: Upstream; viewer: AuthUser; /** Deadline of each upstream check (tests). */ timeoutMs?: number },
   input: NewSourceInput,
   index = 0,
 ): Promise<ResolvedSource> {
+  const timeoutMs = ctx.timeoutMs ?? CHECK_TIMEOUT_MS;
   const fail = (message: string): never => {
     throw validationError(message, { issues: [{ path: `sources.${index}.key`, message }] });
   };
@@ -125,20 +128,20 @@ export async function resolveSource(
       const key = playerKey(raw);
       const row = existingSource(ctx.db, 'lichess', key);
       if (row) return reuse(row);
-      return checkLichessUser(ctx.upstream, key, fail);
+      return checkLichessUser(ctx.upstream, key, fail, timeoutMs);
     }
     case 'chesscom': {
       if (!CHESSCOM_USERNAME_RE.test(raw)) fail(`"${raw}" is not a valid Chess.com username`);
       const key = playerKey(raw);
       const row = existingSource(ctx.db, 'chesscom', key);
       if (row) return reuse(row);
-      return checkChesscomUser(ctx.upstream, key, fail);
+      return checkChesscomUser(ctx.upstream, key, fail, timeoutMs);
     }
     case 'fide': {
       if (!FIDE_ID_RE.test(raw)) fail(`"${raw}" is not a FIDE id`);
       const row = existingSource(ctx.db, 'fide', raw);
       if (row) return reuse(row);
-      return checkFideId(ctx.db, ctx.upstream, raw, fail);
+      return checkFideId(ctx.db, ctx.upstream, raw, fail, timeoutMs);
     }
     case 'pgn': {
       if (input.databaseId === undefined) {
@@ -195,23 +198,18 @@ function hasPendingImport(db: Db, databaseId: Id): boolean {
   );
 }
 
-async function checkLichessUser(upstream: Upstream, key: string, fail: (m: string) => never): Promise<ResolvedSource> {
+async function checkLichessUser(upstream: Upstream, key: string, fail: (m: string) => never, timeoutMs: number): Promise<ResolvedSource> {
   let user: Record<string, unknown> | null;
   try {
-    const res = await upstream.fetch(`${UPSTREAM.lichess}/api/user/${encodeURIComponent(key)}`, {
+    const res = await upstreamJsonWithin(upstream, `${UPSTREAM.lichess}/api/user/${encodeURIComponent(key)}`, {
       auth: 'optional',
       allowStatuses: [404],
-      timeoutMs: CHECK_TIMEOUT_MS,
-      headers: { accept: 'application/json' },
+      timeoutMs,
     });
-    if (res.status === 404) {
-      void res.body?.cancel().catch(() => {});
-      return fail(`No Lichess account "${key}"`);
-    }
-    user = obj(await res.json());
+    if (res.status === 404) return fail(`No Lichess account "${key}"`);
+    user = obj(res.body);
   } catch (e) {
     if (e instanceof HttpError) throw e;
-    if (e instanceof SyntaxError) rethrowUpstream(new UpstreamError('status', 'lichess.org', 'Invalid JSON from lichess.org'));
     rethrowUpstream(e);
   }
   if (!user || typeof user.id !== 'string') return fail(`No Lichess account "${key}"`);
@@ -230,30 +228,22 @@ async function checkLichessUser(upstream: Upstream, key: string, fail: (m: strin
   };
 }
 
-async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: string) => never): Promise<ResolvedSource> {
+async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: string) => never, timeoutMs: number): Promise<ResolvedSource> {
   const base = `${UPSTREAM.chesscom}/pub/player/${encodeURIComponent(key)}`;
   let player: Record<string, unknown> | null;
   try {
-    const res = await upstream.fetch(base, {
-      allowStatuses: [404, 410],
-      timeoutMs: CHECK_TIMEOUT_MS,
-      headers: { accept: 'application/json' },
-    });
-    if (res.status === 404 || res.status === 410) {
-      void res.body?.cancel().catch(() => {});
-      return fail(`No Chess.com account "${key}"`);
-    }
-    player = obj(await res.json());
+    const res = await upstreamJsonWithin(upstream, base, { allowStatuses: [404, 410], timeoutMs });
+    if (res.status === 404 || res.status === 410) return fail(`No Chess.com account "${key}"`);
+    player = obj(res.body);
   } catch (e) {
     if (e instanceof HttpError) throw e;
-    if (e instanceof SyntaxError) rethrowUpstream(new UpstreamError('status', 'api.chess.com', 'Invalid JSON from api.chess.com'));
     rethrowUpstream(e);
   }
   if (!player || typeof player.username !== 'string') return fail(`No Chess.com account "${key}"`);
   // Ratings are a bonus for the header before the first sync: a failure here is not fatal.
   let stats: Record<string, unknown> | null = null;
   try {
-    stats = obj(await upstream.json<unknown>(`${base}/stats`, { timeoutMs: CHECK_TIMEOUT_MS }));
+    stats = obj((await upstreamJsonWithin(upstream, `${base}/stats`, { timeoutMs })).body);
   } catch {
     stats = null;
   }
@@ -272,28 +262,37 @@ async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: stri
   };
 }
 
-async function checkFideId(db: Db, upstream: Upstream, fideId: string, fail: (m: string) => never): Promise<ResolvedSource> {
-  // The newest stored game with this FIDE id gives the name as the reference DB writes it.
+/**
+ * A FIDE source reads reference-DB games only (PLAN §5; migration 502 enforces it for
+ * `player_games`), so only those may name the player: a FideId tag in someone's private PGN
+ * database must not leak through a public FIDE profile.
+ */
+async function checkFideId(
+  db: Db,
+  upstream: Upstream,
+  fideId: string,
+  fail: (m: string) => never,
+  timeoutMs: number,
+): Promise<ResolvedSource> {
+  // The newest reference game with this FIDE id gives the name as the reference DB writes it.
   const local = db.get<{ name: string; title: string | null }>(
     `SELECT CASE WHEN white_fide_id = ?1 THEN white ELSE black END AS name,
             CASE WHEN white_fide_id = ?1 THEN white_title ELSE black_title END AS title
-       FROM games WHERE white_fide_id = ?1 OR black_fide_id = ?1
+       FROM games WHERE (white_fide_id = ?1 OR black_fide_id = ?1) AND origin = 'reference'
       ORDER BY ended_at DESC LIMIT 1`,
     [fideId],
   );
   // Lichess's copy of the FIDE rating list adds the official name, title, federation and ratings.
   let fide: Record<string, unknown> | null = null;
   try {
-    const res = await upstream.fetch(`${UPSTREAM.lichess}/api/fide/player/${fideId}`, {
+    const res = await upstreamJsonWithin(upstream, `${UPSTREAM.lichess}/api/fide/player/${fideId}`, {
       allowStatuses: [404],
-      timeoutMs: CHECK_TIMEOUT_MS,
-      headers: { accept: 'application/json' },
+      timeoutMs,
     });
-    if (res.status === 404) void res.body?.cancel().catch(() => {});
-    else fide = obj(await res.json());
+    fide = res.status === 404 ? null : obj(res.body);
   } catch (e) {
     // Without local games the id can't be checked at all; with them the lookup is optional.
-    if (!local) rethrowUpstream(e instanceof SyntaxError ? new UpstreamError('status', 'lichess.org', 'Invalid JSON from lichess.org') : e);
+    if (!local) rethrowUpstream(e);
   }
   const fideName = typeof fide?.name === 'string' && fide.name.trim() ? fide.name.trim() : null;
   if (!local && !fideName) return fail(`Unknown FIDE id ${fideId}`);
@@ -326,9 +325,17 @@ export function chesscomDisplayName(url: unknown, username: string): string {
   return playerKey(decoded) === playerKey(username) ? decoded : username;
 }
 
-/** Inserts a resolved source (or finds the row another request created meanwhile). */
+/**
+ * Inserts a resolved source (or finds the row another request created meanwhile). A reused row
+ * that was deleted in the meantime (its last profile let go of it during the upstream checks) is
+ * created again from the resolved values. Call inside the transaction that attaches it.
+ */
 export function insertSource(db: Db, r: ResolvedSource): { id: Id; created: boolean } {
-  if (r.existingId !== null) return { id: r.existingId, created: false };
+  const stillThere = (id: Id): boolean => db.value('SELECT 1 FROM sources WHERE id = ? AND kind = ? AND key = ?', [id, r.kind, r.key]) !== undefined;
+  if (r.existingId !== null && stillThere(r.existingId)) return { id: r.existingId, created: false };
+  if (r.databaseId !== null && db.value('SELECT 1 FROM databases WHERE id = ?', [r.databaseId]) === undefined) {
+    throw validationError(`Database ${r.databaseId} not found`, { issues: [{ path: 'databaseId', message: 'not found' }] });
+  }
   const res = db.run(
     `INSERT INTO sources (kind, key, display_name, site_user_id, title, country, database_id, profile_json, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (kind, key) DO NOTHING`,

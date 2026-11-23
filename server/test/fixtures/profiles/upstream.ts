@@ -15,6 +15,20 @@ export type FakeRoute = (url: URL, init: RequestInit) => Response | Promise<Resp
 export const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+/**
+ * A 200 response that sends its headers and the start of a JSON body, then stalls forever (a hung
+ * upstream). Cancelling the body (or aborting `signal`) ends the stream.
+ */
+export function stalledJson(signal?: AbortSignal | null): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{"username":'));
+      signal?.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+    },
+  });
+  return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
 /** Fake fetch: routes are keyed `METHOD host/path` (no query). Unknown routes answer 404. */
 export function fakeUpstream(routes: Record<string, FakeRoute> = {}): {
   fetch: typeof globalThis.fetch;

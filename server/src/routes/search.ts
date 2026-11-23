@@ -11,7 +11,8 @@ import { MAX_QUERY_LENGTH, MIN_QUERY_LENGTH, search, SearchCache } from '../sear
  * Endpoints (request/response types in @outpost/shared/api):
  *   - GET /api/search?q= (SearchResults: local profiles, Lichess autocomplete, Chess.com exact-username check, known usernames, reference players)
  *
- * requireViewer; throttled per client IP (each query can reach Lichess and Chess.com). Logic in src/search/.
+ * requireViewer; throttled per client IP (each query can reach Lichess and Chess.com); upstream calls
+ * have a short deadline (body included) and stop when the client closes the request. Logic in src/search/.
  */
 
 /** Searches per IP per minute (the web app debounces typing). */
@@ -32,9 +33,19 @@ const searchRoutes: FastifyPluginAsync = async app => {
   app.get(
     API_ROUTES.search,
     { preHandler: requireViewer, config: { rateLimit: SEARCH_RATE_LIMIT } },
-    async (req): Promise<SearchResults> => {
+    async (req, reply): Promise<SearchResults> => {
       const { q } = parseQuery(searchQuery, req.query);
-      return search({ db: app.db, upstream: app.upstream, cache }, q, req.user);
+      // Stop the upstream calls when the client goes away (typing ahead cancels the previous search).
+      const gone = new AbortController();
+      const onClose = (): void => {
+        if (!reply.raw.writableFinished) gone.abort();
+      };
+      reply.raw.once('close', onClose);
+      try {
+        return await search({ db: app.db, upstream: app.upstream, cache, signal: gone.signal }, q, req.user);
+      } finally {
+        reply.raw.off('close', onClose);
+      }
     },
   );
 };

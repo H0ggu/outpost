@@ -5,13 +5,20 @@
  * Access: every function takes a `ViewableProfile` from `loadProfileForViewer` (404 for private
  * profiles of others); mutations additionally need `canEdit` (owner or admin, `requireEditor`).
  *
- * Orphan policy (profile delete, source removal): a source stays as long as any profile uses it.
- * When the last profile lets go of a source, the source row is deleted with its `player_games`
- * rows; for Lichess / Chess.com sources the games nobody else references (no `player_games` row
- * left, not in a database) are deleted too, positions included. PGN and reference games always
- * stay in their database. Small clean-ups run inside the request; large ones continue in the
- * background in short batches (`collectOrphanGames`), so the API stays responsive. A sync job
- * still queued for a deleted source finds no source and does nothing.
+ * Orphan policy: a source stays as long as any profile uses it. When the last profile lets go of
+ * a source (profile delete, account removal), the source row is deleted with its `player_games`
+ * rows and its queued sync job is cancelled; for Lichess / Chess.com sources the games nobody else
+ * references (no `player_games` row left, not in a database) are deleted too, positions included.
+ * PGN and reference games always stay in their database. Small clean-ups run inside the request;
+ * large ones continue in the background in short batches (`collectOrphanGames`), so the API stays
+ * responsive. Source ids are never reused (AUTOINCREMENT, migration 501), so a sync that was
+ * already running when its source went away writes nothing to another account; the games it still
+ * stores reference nothing and are collected by `sweepOrphans`.
+ *
+ * Profiles also disappear without passing through here: deleting a user deletes their profiles
+ * (`profiles.owner_user_id ON DELETE CASCADE`). `sweepOrphans` applies the same policy to every
+ * source no profile uses and to games nothing references; routes/profiles.ts runs it at startup
+ * and every few hours while the workers run, and the auth module may call it after deleting a user.
  */
 import type {
   BookmarkResponse,
@@ -43,7 +50,7 @@ import type { Db } from '../db/index.ts';
 import { conflict, forbidden, HttpError, validationError } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import type { Upstream } from '../http/upstream.ts';
-import { enqueueSync, JOB_PRIORITY, sourceSyncStatus } from '../jobs/index.ts';
+import { enqueueSync, JOB_PRIORITY, sourceSyncStatus, syncDedupeKey } from '../jobs/index.ts';
 import { readSettings, type InstanceSettings } from '../settings.ts';
 import { loadProfileByIdForViewer, type ViewableProfile } from './access.ts';
 import { insertSource, resolveSource, SOURCE_COLUMNS, sourceSummaries, type ResolvedSource, type SourceRow } from './sources.ts';
@@ -148,7 +155,8 @@ function cooldownUntil(row: Pick<ProfileRow, 'update_requested_at'>, settings: I
 }
 
 function queueInfo(syncs: readonly SourceSyncStatus[], cooldown: EpochMs | null): ProfileQueueInfo {
-  const positions = syncs.map(s => s.queuePosition).filter((p): p is number => p !== null);
+  // Best position among the queued jobs (a running one is 0, which says nothing about the queue).
+  const positions = syncs.filter(s => s.state === 'queued').map(s => s.queuePosition).filter((p): p is number => p !== null);
   return {
     busy: syncs.some(s => s.state === 'queued' || s.state === 'running'),
     cooldownUntil: cooldown,
@@ -538,11 +546,14 @@ const GC_BATCH = 250;
 
 /**
  * Deletes the given games when nothing references them any more: no `player_games` row and no
- * database. Runs in short transactions and yields between them. Returns the number deleted.
+ * database. Runs in short transactions and yields between them; stops early when `signal`
+ * aborts. Returns the number deleted.
  */
-export async function collectOrphanGames(db: Db, gameIds: readonly Id[]): Promise<number> {
+export async function collectOrphanGames(db: Db, gameIds: readonly Id[], signal?: AbortSignal): Promise<number> {
   let deleted = 0;
   for (let i = 0; i < gameIds.length; i += GC_BATCH) {
+    // Stopped (shutdown): the next `sweepOrphans` with `scanGames` finds the rest.
+    if (signal?.aborted) break;
     deleted += collectBatch(db, gameIds.slice(i, i + GC_BATCH));
     if (i + GC_BATCH < gameIds.length) await yieldToLoop();
   }
@@ -564,30 +575,107 @@ function collectBatch(db: Db, ids: readonly Id[]): number {
 }
 
 /**
- * Deletes the sources no profile uses any more (call inside the transaction that detached them).
- * Returns the ids of the Lichess / Chess.com games they had, for `finishOrphanCleanup`.
+ * Cancels the queued sync job of sources that are going away (call inside the transaction that
+ * deletes them), so it neither waits in a lane nor counts in other profiles' queue positions.
+ * The jobs module exposes no cancel call to other modules (its runner is private to its plugin),
+ * so this makes the same conditional `queued → cancelled` transition as its admin cancel. A sync
+ * already running finishes on its own (see the module comment). Returns the number cancelled.
+ */
+export function cancelQueuedSyncs(db: Db, sourceIds: readonly Id[], now = Date.now()): number {
+  let n = 0;
+  for (const id of sourceIds) {
+    n += db.run("UPDATE jobs SET status = 'cancelled', finished_at = ?, run_after = NULL WHERE dedupe_key = ? AND status = 'queued'", [
+      now,
+      syncDedupeKey(id),
+    ]).changes;
+  }
+  return n;
+}
+
+/**
+ * Deletes the sources no profile uses any more (call inside the transaction that detached them)
+ * and cancels their queued syncs. Returns the ids of the Lichess / Chess.com games they had, for
+ * `finishOrphanCleanup`.
  */
 function dropOrphanSources(db: Db, sourceIds: readonly Id[]): Id[] {
   const games: Id[] = [];
   for (const id of sourceIds) {
     if (db.value('SELECT 1 FROM profile_sources WHERE source_id = ? LIMIT 1', [id]) !== undefined) continue;
     const kind = db.value<SourceKind>('SELECT kind FROM sources WHERE id = ?', [id]);
+    if (kind === undefined) continue;
     if (kind === 'lichess' || kind === 'chesscom') {
       for (const r of db.all<{ game_id: Id }>('SELECT game_id FROM player_games WHERE source_id = ?', [id])) games.push(r.game_id);
     }
+    cancelQueuedSyncs(db, [id]);
     db.run('DELETE FROM sources WHERE id = ?', [id]);
   }
   return games;
 }
 
+/** Ids scanned per step by `collectUnreferencedGames`. */
+const SCAN_WINDOW = 5000;
+
+/**
+ * Deletes every Lichess / Chess.com game nothing references (no `player_games` row, no database):
+ * games a sync stored after its source was deleted, and what a restart left of a background
+ * clean-up. Scans the games by id in windows and yields between them; stops early when `signal`
+ * aborts. Returns the number deleted.
+ */
+export async function collectUnreferencedGames(db: Db, signal?: AbortSignal): Promise<number> {
+  let deleted = 0;
+  const maxId = db.value<number>('SELECT MAX(id) FROM games') ?? 0;
+  for (let from = 0; from < maxId; from += SCAN_WINDOW) {
+    if (signal?.aborted) break;
+    const ids = db
+      .all<{ id: Id }>(
+        `SELECT g.id FROM games g
+          WHERE g.id > ? AND g.id <= ? AND g.database_id IS NULL AND g.origin IN ('lichess', 'chesscom')
+            AND NOT EXISTS (SELECT 1 FROM player_games pg WHERE pg.game_id = g.id)`,
+        [from, from + SCAN_WINDOW],
+      )
+      .map(r => r.id);
+    for (let i = 0; i < ids.length; i += GC_BATCH) deleted += collectBatch(db, ids.slice(i, i + GC_BATCH));
+    await yieldToLoop();
+  }
+  return deleted;
+}
+
+/**
+ * The orphan policy for profiles that went away without `deleteProfile` (their owner was
+ * deleted): drops every source no profile uses (cancelling its queued sync) and collects their
+ * Lichess / Chess.com games; with `scanGames`, also every other game nothing references
+ * (`collectUnreferencedGames`). Safe to run any time; yields between batches.
+ */
+export async function sweepOrphans(
+  db: Db,
+  opts: { scanGames?: boolean; signal?: AbortSignal } = {},
+): Promise<{ sources: number; games: number }> {
+  const { sources, games } = db.tx(() => {
+    const ids = db
+      .all<{ id: Id }>('SELECT s.id FROM sources s WHERE NOT EXISTS (SELECT 1 FROM profile_sources ps WHERE ps.source_id = s.id)')
+      .map(r => r.id);
+    return { sources: ids.length, games: dropOrphanSources(db, ids) };
+  });
+  let deleted = await collectOrphanGames(db, games, opts.signal);
+  if (opts.scanGames && !opts.signal?.aborted) deleted += await collectUnreferencedGames(db, opts.signal);
+  return { sources, games: deleted };
+}
+
+/** What a clean-up may use: a log for background failures and a stop signal (app shutdown). */
+export interface CleanupOptions {
+  log?: (err: unknown) => void;
+  signal?: AbortSignal;
+}
+
 /** Collects orphaned games: inline when few, otherwise in the background. */
-function finishOrphanCleanup(db: Db, gameIds: Id[], log?: (err: unknown) => void): Promise<number> {
+function finishOrphanCleanup(db: Db, gameIds: Id[], opts: CleanupOptions = {}): Promise<number> {
   if (gameIds.length <= INLINE_GC_LIMIT) {
     let n = 0;
     for (let i = 0; i < gameIds.length; i += GC_BATCH) n += collectBatch(db, gameIds.slice(i, i + GC_BATCH));
     return Promise.resolve(n);
   }
-  return collectOrphanGames(db, gameIds).catch(err => {
+  const { log } = opts;
+  return collectOrphanGames(db, gameIds, opts.signal).catch(err => {
     log?.(err);
     return 0;
   });
@@ -597,14 +685,14 @@ function finishOrphanCleanup(db: Db, gameIds: Id[], log?: (err: unknown) => void
  * `DELETE /api/profiles/:slug` (orphan policy in the module comment). `cleanup` settles when the
  * orphaned games are gone (already settled for small clean-ups); callers need not wait for it.
  */
-export function deleteProfile(db: Db, profile: ViewableProfile, log?: (err: unknown) => void): { cleanup: Promise<number> } {
+export function deleteProfile(db: Db, profile: ViewableProfile, opts: CleanupOptions = {}): { cleanup: Promise<number> } {
   requireEditor(profile);
   const games = db.tx(() => {
     const sourceIds = db.all<{ source_id: Id }>('SELECT source_id FROM profile_sources WHERE profile_id = ?', [profile.id]).map(r => r.source_id);
     db.run('DELETE FROM profiles WHERE id = ?', [profile.id]);
     return dropOrphanSources(db, sourceIds);
   });
-  return { cleanup: finishOrphanCleanup(db, games, log) };
+  return { cleanup: finishOrphanCleanup(db, games, opts) };
 }
 
 /** `POST /api/profiles/:slug/sources`. 409 when the source is already part of the profile. */
@@ -636,7 +724,7 @@ export function removeProfileSource(
   profile: ViewableProfile,
   viewer: AuthUser,
   sourceId: Id,
-  log?: (err: unknown) => void,
+  opts: CleanupOptions = {},
 ): { profile: ViewableProfile; cleanup: Promise<number> } {
   requireEditor(profile);
   const games = db.tx(() => {
@@ -645,7 +733,7 @@ export function removeProfileSource(
     db.run('UPDATE profiles SET updated_at = ? WHERE id = ?', [Date.now(), profile.id]);
     return dropOrphanSources(db, [sourceId]);
   });
-  const cleanup = finishOrphanCleanup(db, games, log);
+  const cleanup = finishOrphanCleanup(db, games, opts);
   return { profile: loadProfileByIdForViewer(db, profile.id, viewer), cleanup };
 }
 

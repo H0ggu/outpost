@@ -1,10 +1,12 @@
 import type { ProfileHeader } from '@outpost/shared/api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { insertGame } from '../src/chess/store.ts';
+import { insertGame, rebuildPlayerGames } from '../src/chess/store.ts';
+import { HttpError } from '../src/http/errors.ts';
+import type { AuthUser } from '../src/http/types.ts';
 import { collectOrphanGames } from '../src/profiles/service.ts';
-import { chesscomDisplayName, fideRatings, snapshotRatings, sourceUrl } from '../src/profiles/sources.ts';
+import { chesscomDisplayName, fideRatings, resolveSource, snapshotRatings, sourceUrl } from '../src/profiles/sources.ts';
 import { createUserSession, makeTestApp, mutationHeaders, testGame, type TestApp } from './helpers.ts';
-import { fakeUpstream, json, networkDown } from './fixtures/profiles/upstream.ts';
+import { fakeUpstream, json, networkDown, stalledJson } from './fixtures/profiles/upstream.ts';
 
 type Session = { userId: number; cookie: string };
 
@@ -86,6 +88,79 @@ describe('FIDE sources and source helpers', () => {
     expect(local.json<ProfileHeader>().sources[0]).toMatchObject({ displayName: 'Opponent 1', gameCount: 1 });
     const down = await create({ displayName: 'Down', sources: [{ kind: 'fide', key: '4000004' }] });
     expect(down.statusCode).toBe(503);
+  });
+
+  it("never attaches games of user PGN databases to a FIDE source (someone's private DB stays private)", async () => {
+    const alice = createUserSession(t.db, { username: 'alice' });
+    const mallory = createUserSession(t.db, { username: 'mallory' });
+    const privateDb = t.db
+      .run("INSERT INTO databases (owner_user_id, name, kind, visibility, created_at) VALUES (?, 'Secrets', 'games', 'private', 0)", [alice.userId])
+      .lastInsertRowid;
+    const privateGame = (n: number) =>
+      testGame({
+        origin: 'pgn',
+        originId: `${privateDb}:secret${n}`,
+        databaseId: privateDb,
+        event: 'Secret training match',
+        result: n % 2 ? '1-0' : '1/2-1/2',
+        white: { name: 'Alice Private', fideId: '99999999' },
+        black: { name: `Sparring ${n}`, fideId: '88888888' },
+      });
+    insertGame(t.db, privateGame(1));
+    insertGame(t.db, privateGame(2));
+
+    // Unknown to the reference DB and to the FIDE directory: the private games don't vouch for it.
+    const asMallory = (body: unknown) =>
+      t.app.inject({ method: 'POST', url: '/api/profiles', headers: { ...mutationHeaders, cookie: mallory.cookie }, payload: body as object });
+    const unknown = await asMallory({ displayName: 'Probe', visibility: 'public', sources: [{ kind: 'fide', key: '99999999' }] });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json().error.message).toBe('Unknown FIDE id 99999999');
+
+    // Known to the directory: the profile is created, but without the private games or their name.
+    up.routes['GET lichess.org/api/fide/player/99999999'] = () => json({ id: 99999999, name: 'Directory, Name', federation: 'FID' });
+    const res = await asMallory({ displayName: 'Probe', visibility: 'public', sources: [{ kind: 'fide', key: '99999999' }] });
+    expect(res.statusCode, res.body).toBe(200);
+    const h = res.json<ProfileHeader>();
+    expect(h.sources[0]).toMatchObject({ displayName: 'Directory, Name', gameCount: 0 });
+    expect(h.totals).toEqual({ w: 0, d: 0, l: 0, games: 0 });
+    const fideSource = h.sources[0]!.id;
+
+    // Later imports into the private DB and manual updates don't attach them either.
+    insertGame(t.db, privateGame(3));
+    const update = await t.app.inject({
+      method: 'POST',
+      url: `/api/profiles/${h.slug}/update`,
+      headers: { ...mutationHeaders, cookie: mallory.cookie },
+    });
+    expect(update.statusCode, update.body).toBe(200);
+    expect(rebuildPlayerGames(t.db, fideSource)).toBe(0);
+    expect(t.db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fideSource])).toBe(0);
+    expect((await t.app.inject({ url: `/api/profiles/${h.slug}`, headers: { cookie: mallory.cookie } })).json<ProfileHeader>().totals.games).toBe(0);
+
+    // Reference games of the same id still count.
+    insertGame(
+      t.db,
+      testGame({
+        origin: 'reference',
+        originId: `${refDb}:fide-probe`,
+        databaseId: refDb,
+        white: { name: 'Directory, Name', fideId: '99999999' },
+        black: { name: 'Someone', fideId: '3000009' },
+      }),
+    );
+    expect(t.db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fideSource])).toBe(1);
+  });
+
+  it('gives up on an account check whose answer stalls mid-body', async () => {
+    up.routes['GET lichess.org/api/user/staller'] = () => stalledJson();
+    const started = Date.now();
+    const err = await resolveSource(
+      { db: t.db, upstream: t.app.upstream, viewer: { id: me.userId, username: 'me', role: 'user', totpEnabled: false, prefs: {} } as AuthUser, timeoutMs: 100 },
+      { kind: 'lichess', key: 'staller' },
+    ).catch((e: unknown) => e);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err).toMatchObject({ statusCode: 503, code: 'upstream_unavailable', details: { reason: 'timeout' } });
   });
 
   it('reads rating snapshots in the shapes the sync may store', () => {
