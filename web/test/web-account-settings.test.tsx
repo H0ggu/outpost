@@ -138,7 +138,7 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'UTC' }));
     await waitFor(() => expect(me.prefs.timezone).toBe('utc'));
     expect(await screen.findByText(/\d\d:\d\d UTC$/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('radio', { name: 'Focus' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Board only' }));
     await waitFor(() => expect(me.prefs.studioLayout).toBe('focus'));
     expect(api().find('PUT', '/api/me/prefs').map(c => c.body)).toEqual([
       { winratePerspective: 'white' },

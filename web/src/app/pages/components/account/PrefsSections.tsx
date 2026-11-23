@@ -59,11 +59,12 @@ export const THEMES: ReadonlyArray<{ value: ThemeName; label: string; help: stri
   { value: 'light', label: 'Light', help: "Lichess's light theme." },
 ];
 
+/** The Studio's own names for its layout presets (src/studio/view/util.ts) and what its CSS does. */
 const STUDIO_LAYOUT_LABELS: Readonly<Record<StudioLayout, { label: string; help: string }>> = {
   default: { label: 'Standard', help: "Lichess's analysis board layout." },
-  explorer: { label: 'Explorer', help: 'Opens the opening explorer next to the board.' },
-  games: { label: 'Games', help: 'Makes room for game lists and My Files.' },
-  focus: { label: 'Focus', help: 'Fewer panels: the board and the moves.' },
+  explorer: { label: 'Explorer open', help: 'Opens the opening explorer next to the board.' },
+  games: { label: 'Files first', help: 'A wider side panel for My Files and game lists (above the moves on phones).' },
+  focus: { label: 'Board only', help: 'The board, the moves and the engine: no side panel, no FEN and PGN boxes.' },
 };
 
 /** Saves one preference change and reports it. */
