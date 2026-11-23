@@ -1,0 +1,179 @@
+/*
+ * Board themes and piece sets, using lila's pattern (AGPL-3.0-or-later, the lila authors):
+ *   - pieces: `.is2d .<role>.<color> { background-image: var(---<color>-<role>) }`
+ *     (ui/lib/css/theme/_pieces.scss); the variables are set on <body> by
+ *     src/lichess/assets.ts `applyPieceSet()`. cburnett is the default below.
+ *   - boards: `body[data-board=<name>] .is2d cg-board::before { background-image: ... }` with
+ *     per-board coordinate colours (ui/lib/css/theme/board/_board-2d.scss, _boards.scss).
+ *   - highlights: ui/lib/css/theme/board/_chessground.scss.
+ * chessground's own layout CSS (chessground.base.css) is imported in main.tsx.
+ * Wrap every board (chessground or pgn-viewer) in an element with class `is2d`.
+ */
+
+:root {
+  ---white-pawn: url('/lichess/piece/cburnett/wP.svg');
+  ---white-knight: url('/lichess/piece/cburnett/wN.svg');
+  ---white-bishop: url('/lichess/piece/cburnett/wB.svg');
+  ---white-rook: url('/lichess/piece/cburnett/wR.svg');
+  ---white-queen: url('/lichess/piece/cburnett/wQ.svg');
+  ---white-king: url('/lichess/piece/cburnett/wK.svg');
+  ---black-pawn: url('/lichess/piece/cburnett/bP.svg');
+  ---black-knight: url('/lichess/piece/cburnett/bN.svg');
+  ---black-bishop: url('/lichess/piece/cburnett/bB.svg');
+  ---black-rook: url('/lichess/piece/cburnett/bR.svg');
+  ---black-queen: url('/lichess/piece/cburnett/bQ.svg');
+  ---black-king: url('/lichess/piece/cburnett/bK.svg');
+}
+
+/* Specificity is above pgn-viewer's built-in `.cg-wrap piece.pawn.white`. */
+.is2d .cg-wrap piece.pawn.white { background-image: var(---white-pawn); }
+.is2d .cg-wrap piece.knight.white { background-image: var(---white-knight); }
+.is2d .cg-wrap piece.bishop.white { background-image: var(---white-bishop); }
+.is2d .cg-wrap piece.rook.white { background-image: var(---white-rook); }
+.is2d .cg-wrap piece.queen.white { background-image: var(---white-queen); }
+.is2d .cg-wrap piece.king.white { background-image: var(---white-king); }
+.is2d .cg-wrap piece.pawn.black { background-image: var(---black-pawn); }
+.is2d .cg-wrap piece.knight.black { background-image: var(---black-knight); }
+.is2d .cg-wrap piece.bishop.black { background-image: var(---black-bishop); }
+.is2d .cg-wrap piece.rook.black { background-image: var(---black-rook); }
+.is2d .cg-wrap piece.queen.black { background-image: var(---black-queen); }
+.is2d .cg-wrap piece.king.black { background-image: var(---black-king); }
+
+.is2d piece {
+  background-size: cover;
+}
+
+/* --- Board images ---------------------------------------------------------- */
+
+.is2d cg-board::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  border-radius: inherit;
+}
+
+body[data-board='brown'] .is2d cg-board::before { background-image: url('/lichess/board/brown.png'); }
+body[data-board='blue'] .is2d cg-board::before { background-image: url('/lichess/board/blue.png'); }
+body[data-board='green'] .is2d cg-board::before { background-image: url('/lichess/board/green.png'); }
+body[data-board='purple'] .is2d cg-board::before { background-image: url('/lichess/board/purple.png'); }
+body[data-board='ic'] .is2d cg-board::before { background-image: url('/lichess/board/ic.png'); }
+body[data-board='wood4'] .is2d cg-board::before { background-image: url('/lichess/board/wood4.jpg'); }
+body[data-board='maple'] .is2d cg-board::before { background-image: url('/lichess/board/maple.jpg'); }
+body[data-board='olive'] .is2d cg-board::before { background-image: url('/lichess/board/olive.jpg'); }
+body[data-board='grey'] .is2d cg-board::before { background-image: url('/lichess/board/grey.jpg'); }
+body[data-board='blue3'] .is2d cg-board::before { background-image: url('/lichess/board/blue3.jpg'); }
+
+/* Coordinate colours per board (light-square colour on dark squares and vice versa). */
+body[data-board='brown'] .is2d coords { ---cg-ccw: #f0d9b5; ---cg-ccb: #946f51; ---cg-cs: none; }
+body[data-board='blue'] .is2d coords { ---cg-ccw: #dee3e6; ---cg-ccb: #788a94; ---cg-cs: none; }
+body[data-board='green'] .is2d coords { ---cg-ccw: #ffd; ---cg-ccb: #6d8753; ---cg-cs: none; }
+body[data-board='purple'] .is2d coords { ---cg-ccw: #9f90b0; ---cg-ccb: #7d4a8d; ---cg-cs: none; }
+body[data-board='ic'] .is2d coords { ---cg-ccw: #ececec; ---cg-ccb: #c1c18e; ---cg-cs: none; }
+body[data-board='wood4'] .is2d coords { ---cg-ccw: #caaf7d; ---cg-ccb: #7b5330; ---cg-cs: none; }
+body[data-board='maple'] .is2d coords { ---cg-ccw: #e8ceab; ---cg-ccb: #bc7944; ---cg-cs: none; }
+body[data-board='olive'] .is2d coords { ---cg-ccw: #b8b19f; ---cg-ccb: #6d6655; ---cg-cs: none; }
+body[data-board='grey'] .is2d coords { ---cg-ccw: #b8b8b8; ---cg-ccb: #7d7d7d; ---cg-cs: none; }
+body[data-board='blue3'] .is2d coords { ---cg-ccw: #d9e0e6; ---cg-ccb: #315991; ---cg-cs: none; }
+
+coords {
+  text-shadow: var(---cg-cs, 0 1px 2px #000);
+}
+
+coords .coord-light {
+  color: var(---cg-ccb, #fff);
+}
+
+coords .coord-dark {
+  color: var(---cg-ccw, #fff);
+}
+
+/* --- Highlights (lila _chessground.scss) ------------------------------------ */
+
+cg-board square.move-dest {
+  background: radial-gradient(rgb(20 85 30 / 0.5) 19%, rgb(0 0 0 / 0) 20%);
+  pointer-events: auto;
+}
+
+cg-board square.premove-dest {
+  background: radial-gradient(rgb(20 30 85 / 0.5) 19%, rgb(0 0 0 / 0) 20%);
+  pointer-events: auto;
+}
+
+cg-board square.oc.move-dest {
+  background: radial-gradient(transparent 0%, transparent 79%, rgb(20 85 0 / 0.3) 80%);
+}
+
+cg-board square.oc.premove-dest {
+  background: radial-gradient(transparent 0%, transparent 79%, rgb(20 30 85 / 0.2) 80%);
+}
+
+cg-board square.last-move {
+  will-change: transform;
+  background-color: rgb(155 199 0 / 0.41);
+}
+
+body[data-board='green'] cg-board square.last-move {
+  background-color: rgb(0 155 199 / 0.41);
+}
+
+cg-board square.selected {
+  background-color: rgb(20 85 30 / 0.5);
+}
+
+cg-board square.check {
+  background: radial-gradient(
+    ellipse at center,
+    rgb(255 0 0 / 1) 0%,
+    rgb(231 0 0 / 1) 25%,
+    rgb(169 0 0 / 0) 89%,
+    rgb(158 0 0 / 0) 100%
+  );
+}
+
+cg-board square.current-premove {
+  background-color: rgb(20 30 85 / 0.5) !important;
+}
+
+@media (hover: hover) {
+  cg-board square.move-dest:hover {
+    background: rgb(20 85 30 / 0.3);
+  }
+}
+
+/* --- Host elements of the React wrappers ------------------------------------ */
+
+/* <Board>: a square chessground. Size the host (width), the board follows. */
+.board-host {
+  width: 100%;
+  max-width: 100%;
+}
+
+.board-host > .cg-wrap {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  height: auto;
+  position: relative;
+  display: block;
+}
+
+.board-host cg-board {
+  border-radius: 2px;
+  box-shadow: var(--shadow-box);
+}
+
+/* <PgnViewer> host. */
+.pgn-viewer-host {
+  width: 100%;
+}
+
+.pgn-viewer-host .lpv {
+  --c-lpv-font: var(--c-font);
+  --c-lpv-font-shy: var(--c-font-dim);
+  --c-lpv-border: var(--c-border);
+  border-radius: var(--box-radius);
+  box-shadow: var(--shadow-box);
+}

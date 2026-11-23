@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <string name="lichessMobileApp">Lichess Mobile App</string>
+  <string name="returningToApp" comment="Displayed on interstitial page that automatically opens the Lichess app">Returning to the Lichess app</string>
+  <string name="ifAppDoesNotOpenAutomatically">If the app does not open automatically, tap the "%s" button.</string>
+  <string name="openTheApp" comment="Button text to open the Lichess app on the device">Open the Lichess app</string>
+  <string name="viewAllReleases" comment="To view a list of all mobile app releases on Github">View %s on GitHub</string>
+  <string name="allReleases">all releases</string>
+  <string name="downloadOnAppleAppStore">Download on the Apple App Store</string>
+  <string name="downloadOnGooglePlay">Download on Google Play</string>
+  <string name="downloadOnFdroid">Download on F-Droid</string>
+  <string name="lichessMobileScreen" comment="Alt text for screenshot of the Lichess mobile app">Lichess mobile screen</string>
+  <string name="asFreeAsLichess">As free as Lichess</string>
+  <string name="builtForTheLoveOfChessNotMoney">Built for the love of chess, not money</string>
+  <string name="noAdsNoTracking">No ads, no tracking</string>
+  <string name="entirelyOpenSource" comment="Link to the mobile app source code">Entirely Open Source</string>
+  <string name="fullyFeatured">Fully featured</string>
+  <string name="phoneAndTablet">Phone and tablet</string>
+  <string name="bulletBlitzClassicalVariants">Bullet, blitz, classical, variants</string>
+  <string name="correspondenceChess">Correspondence chess</string>
+  <string name="unlimitedPuzzles">Unlimited puzzles</string>
+  <string name="gameAnalysis">Game analysis</string>
+</resources>

@@ -1,0 +1,18 @@
+Vendored from lila, the lichess.org server and UI: https://github.com/lichess-org/lila
+Commit: b071608bc4ce71b31cda36ffa493100e3dc3580f
+Commit date: 2026-11-22T13:36:40+01:00
+Script: scripts/vendor-lichess.sh (re-run it to reproduce this folder byte for byte)
+
+Contents (paths relative to lila/ui unless noted):
+  analyse/ lib/ keyboardMove/            whole packages, minus tests/
+  site/{src,css,types,package.json,tsconfig.json}
+  editor/{src,package.json,tsconfig.json}
+  @types/lichess/
+  tsconfig.base.json
+  translation/source/ (lila/translation/source, English XML)
+  COPYING.md (lila/COPYING.md)
+
+Licence: AGPL-3.0-or-later, (c) 2012-2026 the lila authors (see COPYING.md for the exceptions).
+These files are copied unchanged. Local changes live in scripts/lila-patches/*.patch and are
+re-applied by the vendoring script; never edit files here without adding a patch.
+Never merge upstream into this folder; re-vendor deliberately at a new pinned commit.

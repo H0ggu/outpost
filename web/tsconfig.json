@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "//": "Web app sources. web/vendor (lila) is excluded: it is vendored unchanged and type-checked by nobody here. The Studio module keeps its own imports of vendor/ out of this program (see src/studio/).",
+  "compilerOptions": {
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"]
+  },
+  "include": ["src", "test"],
+  "exclude": ["vendor", "dist", "node_modules"]
+}

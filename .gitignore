@@ -1,0 +1,29 @@
+# Dependencies and builds
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Runtime data (DATA_DIR defaults to ./data at the repo root). Anchored: server/data/openings is source.
+/data/
+*.db
+*.db-*
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# NOTE: web/vendor/lila and web/public/lichess are vendored on purpose and COMMITTED
+# (scripts/vendor-lichess.sh). Never ignore them.

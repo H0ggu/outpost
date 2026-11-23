@@ -1,0 +1,31 @@
+{
+  "name": "outpost",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted chess statistics and opponent preparation for Lichess and Chess.com players.",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=26.11"
+  },
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "trap 'kill $(jobs -p) 2>/dev/null' INT TERM; npm run dev -w @outpost/server & npm run dev -w @outpost/web & wait",
+    "build": "npm run build -w @outpost/web",
+    "start": "node --env-file-if-exists=.env server/src/main.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "npm run typecheck --workspaces",
+    "vendor": "bash scripts/vendor-lichess.sh"
+  },
+  "devDependencies": {
+    "@lichess-org/types": "2.0.180",
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2",
+    "vitest": "5.1.1"
+  }
+}

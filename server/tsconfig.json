@@ -1,0 +1,8 @@
+{
+  "extends": "../tsconfig.base.json",
+  "//": "Runs under Node type stripping: .ts import extensions, no enums / namespaces / parameter properties.",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}

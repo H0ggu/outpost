@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" data-theme="black">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="Self-hosted chess statistics and opponent preparation." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+    <link rel="preload" href="/lichess/font/lichess.woff2" as="font" type="font/woff2" crossorigin />
+    <title>Outpost</title>
+    <!-- Applies the stored theme before first paint (external file: the CSP forbids inline scripts). -->
+    <script src="/theme-init.js"></script>
+  </head>
+  <body data-board="brown">
+    <div id="root"></div>
+    <noscript>Outpost needs JavaScript.</noscript>
+    <script type="module" src="/src/app/main.tsx"></script>
+  </body>
+</html>

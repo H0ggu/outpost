@@ -1,0 +1,8 @@
+{
+  "extends": "../tsconfig.base.json",
+  "//": "Shared code must run in both Node and the browser: use only ES built-ins plus globals that exist in both (TextEncoder, btoa/atob, URLSearchParams).",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}

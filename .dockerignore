@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+.git
+.github
+.env
+.env.*
+!.env.example
+data
+**/*.db
+**/*.db-*
+docs
+**/test
+coverage
+.DS_Store

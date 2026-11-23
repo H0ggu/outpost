@@ -1,0 +1,126 @@
+import type { VNode } from 'snabbdom';
+
+import type { EnhanceOpts } from '@/richText';
+export type { ChatCtrl } from './chatCtrl';
+
+export interface ChatOpts {
+  data: ChatData;
+  writeable: boolean;
+  kobold: boolean; // a.k.a. troll
+  blind: boolean;
+  timeout: boolean;
+  enhance?: EnhanceOpts;
+  public: boolean;
+  permissions: Permissions;
+  timeoutReasons?: ModerationReason[];
+  preset?: string;
+  noteId?: string;
+  noteText?: string;
+  plugin?: ChatPlugin;
+  positionRef?: PositionRef;
+  kidMode: boolean;
+}
+
+// offers a button that prepends a reference to what the user is looking at
+// to the chat input, e.g. "board 5 23... Nf6", which `enhance` turns into a link
+export interface PositionRef {
+  title: string;
+  available(): boolean; // false when not looking at a position
+  text(): string | undefined; // undefined when not available
+  jump(board: number, ply?: number): void; // jump to a position when the user clicks the link in chat
+}
+
+export type Tab = { key: string; isDisabled?: () => boolean };
+
+export interface ChatPlugin extends Tab {
+  name: string;
+  view(): VNode;
+  kidSafe?: boolean; // default false
+  redraw?: () => void; // populated by chat module, not you.
+}
+
+export interface ChatData {
+  id: string;
+  name: string;
+  lines: Line[];
+  userId?: string;
+  resourceType: string; // team, swiss, tournament, watcher, etc.
+  resourceId: string; // team:<id>
+  loginRequired: boolean;
+  restricted: boolean;
+  hostIds?: string[];
+  opponentId?: string;
+}
+
+export interface Line {
+  u?: string; // username
+  t: string; // text
+  d: boolean; // deleted
+  c?: Color;
+  r?: boolean; // troll
+  pc?: PatronColor;
+  f?: Flair;
+  title?: string;
+}
+
+export interface Permissions {
+  local?: boolean;
+  broadcast?: boolean;
+  timeout?: boolean;
+  shadowban?: boolean;
+}
+
+export interface ViewModel {
+  loading: boolean;
+  autofocus: boolean;
+  timeout: boolean;
+  writeable: boolean;
+  domVersion: number;
+}
+
+export interface NoteOpts {
+  id: string;
+  text?: string;
+  redraw: Redraw;
+}
+
+export interface NoteCtrl {
+  id: string;
+  text(): string | undefined;
+  fetch(): void;
+  post(text: string): void;
+}
+
+export interface ModerationOpts {
+  reasons: ModerationReason[];
+  permissions: Permissions;
+  resourceId: string;
+  redraw: Redraw;
+}
+
+export interface ModerationCtrl {
+  loading(): boolean;
+  data(): ModerationData | undefined;
+  opts: ModerationOpts;
+  open(line: HTMLElement): void;
+  close(): void;
+  timeout(reason: ModerationReason, text: string): void;
+}
+
+export interface ModerationData extends LightUser {
+  text: string;
+  games?: number;
+  tos?: boolean;
+  history?: ModerationHistoryEntry[];
+}
+
+export interface ModerationReason {
+  key: string;
+  name: string;
+}
+
+export interface ModerationHistoryEntry {
+  reason: ModerationReason;
+  mod: string;
+  date: number;
+}
