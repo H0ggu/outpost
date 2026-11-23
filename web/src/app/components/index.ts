@@ -12,7 +12,7 @@ export { Button, ButtonLink, type ButtonVariant } from './Button.tsx';
 export { EmptyState, ErrorBox, errorMessage, Spinner } from './Feedback.tsx';
 export { countryName, FlagEmoji, flagEmoji } from './FlagEmoji.tsx';
 export { Icon, licon, type LiconValue } from './Icon.tsx';
-export { Page, StubPage, useDocumentTitle } from './Page.tsx';
+export { Page, useDocumentTitle } from './Page.tsx';
 export { Table, type Column, type TableProps } from './Table.tsx';
 export { Tabs, type TabItem } from './Tabs.tsx';
 export { TIME_CLASS_ICONS, TIME_CLASS_LABELS, TimeClassIcon } from './TimeClassIcon.tsx';
