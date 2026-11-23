@@ -101,7 +101,8 @@ function invalidateProfileLists(qc: QueryClient, slug?: string): Promise<unknown
     qc.invalidateQueries({ queryKey: ['profiles'] }),
     qc.invalidateQueries({ queryKey: queryKeys.bookmarks }),
     qc.invalidateQueries({ queryKey: ['search'] }),
-    qc.invalidateQueries({ queryKey: libraryKeys.prepList }),
+    // The list of sets only (it names the opponents); not every set and its report.
+    qc.invalidateQueries({ queryKey: libraryKeys.prepList, exact: true }),
     slug ? qc.invalidateQueries({ queryKey: queryKeys.profile(slug), exact: true }) : undefined,
   ]);
 }

@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { ProfileSummary } from '@outpost/shared/api';
 import BookmarksPage from '../src/app/pages/BookmarksPage.tsx';
+import { TOAST } from '../src/app/pages/components/library/controls.tsx';
 import { filterProfiles } from '../src/app/pages/components/library/ProfileList.tsx';
 import PlayersPage from '../src/app/pages/PlayersPage.tsx';
 import { apiError, profile, renderPage, session, USER, withFakeServer } from './web-library-helpers.tsx';
@@ -74,6 +75,43 @@ describe('PlayersPage', () => {
     await waitFor(() => expect(api().find('PUT', '/api/profiles/ben/bookmark')).toHaveLength(1));
   });
 
+  it('says when a bookmark could not be saved, and sends an ended session to sign-in', async () => {
+    api()
+      .on('GET', '/api/session', session(USER))
+      .on('PUT', '/api/profiles/ben/bookmark', apiError(500, 'internal', 'disk full'))
+      .on('PUT', '/api/profiles/ada/bookmark', apiError(401, 'unauthorized', 'Sign in first'));
+    lists();
+    renderPage(<PlayersPage />, { route: '/players' });
+    const star = await screen.findByRole('button', { name: 'Bookmark Ben Public' });
+    fireEvent.click(star);
+    // Flipped back, and said in a toast (a tooltip never reaches a touch screen).
+    const toast = await screen.findByRole('alert');
+    expect(toast.textContent).toContain('Could not bookmark Ben Public: disk full');
+    expect(star.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(within(toast).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bookmark Ada Public' }));
+    const ended = await screen.findByRole('alert');
+    expect(ended.textContent).toContain('Your session has ended.');
+    expect(within(ended).getByRole('link', { name: 'Sign in' }).getAttribute('href')).toBe('/login?next=%2Fplayers');
+  });
+
+  it('closes the toast by itself after a while', async () => {
+    const saved = TOAST.ms;
+    TOAST.ms = 30;
+    try {
+      api().on('GET', '/api/session', session(USER)).on('PUT', '/api/profiles/ben/bookmark', apiError(503, 'upstream_unavailable', 'later'));
+      lists();
+      renderPage(<PlayersPage />, { route: '/players' });
+      fireEvent.click(await screen.findByRole('button', { name: 'Bookmark Ben Public' }));
+      expect(await screen.findByRole('alert')).toBeTruthy();
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    } finally {
+      TOAST.ms = saved;
+    }
+  });
+
   it('gives anonymous visitors the public list only', async () => {
     api().on('GET', '/api/session', session(null, { anonymousBrowsing: true }));
     lists();
@@ -122,6 +160,28 @@ describe('BookmarksPage', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: 'Filter bookmarks' }), { target: { value: 'mark 6' } });
     expect(screen.queryByText('Mark 0')).toBeNull();
     expect(screen.getByText('Mark 6')).toBeTruthy();
+  });
+
+  it('keeps the filter box while a filter is applied, even when unstarring drops the list to 5', async () => {
+    let marks = Array.from({ length: 6 }, (_, i) => profile({ displayName: `Pal ${i + 1}`, slug: `pal-${i + 1}`, bookmarked: true }));
+    api()
+      .on('GET', '/api/session', session(USER))
+      .on('GET', '/api/bookmarks', () => ({ profiles: marks }))
+      .on('DELETE', '/api/profiles/pal-1/bookmark', () => {
+        marks = marks.filter(p => p.slug !== 'pal-1');
+        return { bookmarked: false };
+      });
+    renderPage(<BookmarksPage />, { route: '/bookmarks' });
+    await screen.findByText('Pal 6');
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter bookmarks' }), { target: { value: 'pal 1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Pal 1 from bookmarks' }));
+    expect(await screen.findByText(/No bookmark matches/)).toBeTruthy();
+    // Five left, but the box stays so the filter can be cleared.
+    const box = screen.getByRole('searchbox', { name: 'Filter bookmarks' });
+    fireEvent.change(box, { target: { value: '' } });
+    expect(screen.getByText('Pal 2')).toBeTruthy();
+    // With no filter and five bookmarks, the box goes.
+    expect(screen.queryByRole('searchbox', { name: 'Filter bookmarks' })).toBeNull();
   });
 
   it('shows errors with a retry', async () => {

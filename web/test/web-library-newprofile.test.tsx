@@ -115,6 +115,15 @@ describe('NewProfilePage', () => {
     });
   });
 
+  it('says who can read a public profile, by the anonymous-browsing setting', async () => {
+    signedIn();
+    renderPage(<NewProfilePage />, ROUTE);
+    expect(await screen.findByText('listed under Players for everyone signed in to this server')).toBeTruthy();
+    api().on('GET', '/api/session', session(USER, { anonymousBrowsing: true }));
+    renderPage(<NewProfilePage />, ROUTE);
+    expect(await screen.findByText('listed under Players; anyone who can reach this server can read it, signed in or not')).toBeTruthy();
+  });
+
   it('validates before sending', async () => {
     signedIn();
     renderPage(<NewProfilePage />, ROUTE);

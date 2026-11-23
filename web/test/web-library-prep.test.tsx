@@ -203,6 +203,80 @@ describe('PrepPage', () => {
     expect(api().find('PUT', '/api/prep/3')[1]!.body).toEqual({ profileIds: [33, 44] });
   });
 
+  it('holds removals while "Create & add" runs, and adds onto the set as saved by then', async () => {
+    const PAVEL = profile({ id: 12, displayName: 'Pavel Peer', slug: 'pavel' });
+    let current = set([OPP, PAVEL]);
+    base(() => current, () => report([]));
+    let release: () => void = () => undefined;
+    api()
+      .on('GET', '/api/search', req => ({
+        q: req.query.get('q'),
+        profiles: [],
+        lichess: [{ kind: 'lichess', username: 'Newbie', title: null, exists: true, known: false, profileSlug: null }],
+        chesscom: [],
+        reference: [],
+      }))
+      .on('POST', '/api/profiles', () => new Promise(resolve => (release = () => resolve(header({ id: 33, slug: 'newbie', displayName: 'Newbie' })))))
+      .on('PUT', '/api/prep/3', req => {
+        const ids = (req.body as { profileIds: number[] }).profileIds;
+        current = set(ids.map(id => [OPP, PAVEL].find(p => p.id === id) ?? profile({ id, displayName: `P${id}` })));
+        return current;
+      });
+    const { qc } = renderPage(<PrepPage />, ROUTE);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add opponents' }));
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Find an opponent' }), { target: { value: 'newb' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Create a profile for Newbie and add it' }));
+    await waitFor(() => expect(api().find('POST', '/api/profiles')).toHaveLength(1));
+    // While the profile is being created, the chips can't be removed…
+    expect((screen.getByRole('button', { name: 'Remove Olga Opponent' }) as HTMLButtonElement).disabled).toBe(true);
+    // …and whatever the set became meanwhile (another tab, say) is what the add builds on.
+    current = set([PAVEL]);
+    qc.setQueryData(['prep', 3], current);
+    release();
+    await waitFor(() => expect(api().find('PUT', '/api/prep/3')).toHaveLength(1));
+    expect(api().find('PUT', '/api/prep/3')[0]!.body).toEqual({ profileIds: [12, 33] });
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Remove Pavel Peer' }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('shows every period, describes date ranges, and drops filters a report does not use', async () => {
+    base();
+    const { location } = renderPage(<PrepPage />, { route: '/prep/:id', path: '/prep/3?period=24h&color=white&outcome=l&plies=12' });
+    await screen.findByRole('heading', { name: 'Olga Opponent' });
+    expect((screen.getByLabelText('Period') as HTMLSelectElement).value).toBe('24h');
+    await waitFor(() => expect(location()).toBe('/prep/3?plies=12&period=24h'));
+    const sent = api().find('GET', '/api/prep/3/report').at(-1)!.query;
+    expect([sent.get('period'), sent.get('color'), sent.get('outcome')]).toEqual(['24h', null, null]);
+    expect(document.querySelector('.lib-prep-printhead')!.textContent).toContain('Last 24 hours · lines of 6 moves');
+  });
+
+  it('keeps a from/to range from a link and says it', async () => {
+    base();
+    renderPage(<PrepPage />, { route: '/prep/:id', path: '/prep/3?from=2026-01-01&to=2026-06-30' });
+    await screen.findByRole('heading', { name: 'Olga Opponent' });
+    const period = screen.getByLabelText('Period') as HTMLSelectElement;
+    expect(period.selectedOptions[0]!.textContent).toBe('2026-01-01 to 2026-06-30');
+    const sent = api().find('GET', '/api/prep/3/report').at(-1)!.query;
+    expect([sent.get('from'), sent.get('to')]).toEqual(['2026-01-01', '2026-06-30']);
+    // Picking a preset replaces the range.
+    fireEvent.change(period, { target: { value: '3m' } });
+    await waitFor(() => expect(api().find('GET', '/api/prep/3/report').at(-1)!.query.get('period')).toBe('3m'));
+    expect(api().find('GET', '/api/prep/3/report').at(-1)!.query.get('from')).toBeNull();
+  });
+
+  it('does not refetch a set it just deleted', async () => {
+    base();
+    api().on('DELETE', '/api/prep/3', { ok: true });
+    const { location, qc } = renderPage(<PrepPage />, ROUTE);
+    await screen.findByRole('heading', { name: 'Olga Opponent' });
+    const before = api().find('GET', /^\/api\/prep\/3(\/report)?$/).length;
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete set' }));
+    await waitFor(() => expect(location()).toBe('/prep'));
+    await new Promise(r => setTimeout(r, 50));
+    expect(api().find('GET', /^\/api\/prep\/3(\/report)?$/).length).toBe(before);
+    await waitFor(() => expect(qc.getQueryCache().findAll({ queryKey: ['prep', 3] })).toHaveLength(0));
+  });
+
   it('renames, prints and deletes the set', async () => {
     let current = set();
     base(() => current);
@@ -254,6 +328,10 @@ describe('prep helpers', () => {
   it('describes filters in words', () => {
     expect(describeFilters({})).toBe('All time');
     expect(describeFilters({ period: '3m', tc: ['bullet'], rated: 'unrated' })).toBe('Last 3 months · Bullet · casual only');
+    expect(describeFilters({ period: '24h' })).toBe('Last 24 hours');
+    expect(describeFilters({ from: '2026-01-01' })).toBe('Since 2026-01-01');
+    expect(describeFilters({ to: '2026-02-01', color: 'white', outcome: 'w' })).toBe('Until 2026-02-01');
+    expect(describeFilters({ from: '2026-03-04', to: '2026-03-04' })).toBe('On 2026-03-04');
   });
 
   it('finds the busiest hours (wrapping midnight) and weekday', () => {

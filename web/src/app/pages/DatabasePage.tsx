@@ -5,7 +5,7 @@ import { ApiError } from '../api/client.ts';
 import { useProfiles, useSession } from '../api/hooks.ts';
 import { Box, Button, ButtonLink, Card, EmptyState, ErrorBox, licon, Page, Spinner, Table, type Column } from '../components/index.ts';
 import { paths } from '../paths.ts';
-import { ConfirmButton, Pagination, SearchField } from './components/library/controls.tsx';
+import { ConfirmButton, MAX_QUERY_LENGTH, Pagination, SearchField } from './components/library/controls.tsx';
 import { formatDate, fullNumber, movesFromPlies, resultLabel, timeAgo } from './components/library/format.ts';
 import { ImportPanel } from './components/library/ImportPanel.tsx';
 import { newProfileHref } from './components/library/newProfileQuery.ts';
@@ -198,7 +198,7 @@ function DatabaseHeader({ db }: { db: DatabaseInfo }) {
 
 function GamesBox({ db }: { db: DatabaseInfo }) {
   const [params, setParams] = useSearchParams();
-  const urlQ = params.get('q') ?? '';
+  const urlQ = (params.get('q') ?? '').slice(0, MAX_QUERY_LENGTH);
   const page = Math.max(1, Number(params.get('page')) || 1);
   const [q, setQ] = useState(urlQ);
   const term = useDebouncedValue(q, 300).trim();

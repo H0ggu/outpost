@@ -93,6 +93,19 @@ describe('DatabasesPage', () => {
   });
 });
 
+describe('DatabasesPage errors', () => {
+  it('says when a visibility change failed', async () => {
+    api()
+      .on('GET', '/api/session', session(USER))
+      .on('GET', '/api/databases', { databases: [database({ id: 1, name: 'Mine A' })] })
+      .on('PATCH', '/api/databases/1', apiError(500, 'internal', 'disk full'));
+    renderPage(<DatabasesPage />, { route: '/databases' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Mine A is private; make it public' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not make Mine A public: disk full');
+    expect(screen.getByRole('button', { name: 'Mine A is private; make it public' })).toBeTruthy();
+  });
+});
+
 describe('DatabasePage', () => {
   const ROUTE = { route: '/databases/:id', path: '/databases/5' };
 
@@ -309,6 +322,35 @@ describe('DatabasePage', () => {
     api().on('GET', '/api/session', session(USER)).on('GET', '/api/databases/5', apiError(404, 'not_found'));
     renderPage(<DatabasePage />, ROUTE);
     expect(await screen.findByText("This database doesn't exist, or it's private.")).toBeTruthy();
+  });
+
+  it('moves from a page past the end to the last page instead of saying "no games"', async () => {
+    const games = Array.from({ length: 60 }, (_, i) => dbGame(i + 1));
+    base(() => database({ gameCount: 60 }), games);
+    const { location } = renderPage(<DatabasePage />, { route: '/databases/:id', path: '/databases/5?page=4' });
+    await waitFor(() => expect(location()).toBe('/databases/5?page=2'));
+    expect(await screen.findByText('White 51')).toBeTruthy();
+    expect(screen.queryByText('No games yet')).toBeNull();
+    // A one-page result goes back to the first page.
+    const { location: loc2 } = renderPage(<DatabasePage />, { route: '/databases/:id', path: '/databases/5?page=3&q=White+7' });
+    await waitFor(() => expect(loc2()).toBe('/databases/5?q=White+7'));
+  });
+
+  it('says a page is empty while it moves there', async () => {
+    base(() => database({ gameCount: 60 }));
+    // The server reports 60 games but returns none for any page (another tab deleting, say).
+    api().on('GET', '/api/databases/5/games', req => ({ total: 60, page: Number(req.query.get('page') ?? 1), pageSize: 50, games: [] }));
+    renderPage(<DatabasePage />, { route: '/databases/:id', path: '/databases/5' });
+    expect(await screen.findByText('Page 1 is empty')).toBeTruthy();
+    expect(screen.getByText('This database has 2 pages.')).toBeTruthy();
+    expect(screen.queryByText('No games yet')).toBeNull();
+    expect(screen.getByRole('button', { name: '2' })).toBeTruthy();
+  });
+
+  it('caps the search box at the server limit', async () => {
+    base(() => database());
+    renderPage(<DatabasePage />, ROUTE);
+    expect((await screen.findByRole('searchbox', { name: 'Search games' })).getAttribute('maxlength')).toBe('100');
   });
 
   it('shows an empty database invitation', async () => {

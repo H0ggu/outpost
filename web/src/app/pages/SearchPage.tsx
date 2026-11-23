@@ -4,7 +4,7 @@ import type { ExternalPlayerHit } from '@outpost/shared/api';
 import { useSearch, useSession } from '../api/hooks.ts';
 import { Box, ButtonLink, EmptyState, licon, Page } from '../components/index.ts';
 import { paths } from '../paths.ts';
-import { SearchField } from './components/library/controls.tsx';
+import { MAX_QUERY_LENGTH, SearchField } from './components/library/controls.tsx';
 import { newProfileHref, sourceIdentity, type PickedSource } from './components/library/newProfileQuery.ts';
 import { ProfileRows } from './components/library/ProfileList.tsx';
 import { QueryView } from './components/library/QueryView.tsx';
@@ -29,7 +29,8 @@ import './SearchPage.css';
  */
 export default function SearchPage() {
   const [params, setParams] = useSearchParams();
-  const urlQ = params.get('q') ?? '';
+  // A longer link (the header box, a hand-typed URL) is cut to what the server accepts.
+  const urlQ = (params.get('q') ?? '').slice(0, MAX_QUERY_LENGTH);
   const [q, setQ] = useState(urlQ);
   const written = useRef(urlQ);
   const debounced = useDebouncedValue(q, 300).trim();

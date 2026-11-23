@@ -97,6 +97,18 @@ describe('SearchPage', () => {
     await waitFor(() => expect(api().find('GET', '/api/search').length).toBe(before + 1));
   });
 
+  it('caps the query at the server limit', async () => {
+    api()
+      .on('GET', '/api/session', session(USER))
+      .on('GET', '/api/search', req => results(req.query.get('q')!));
+    renderPage(<SearchPage />, { route: '/search', path: '/search' });
+    expect((await screen.findByRole('searchbox', { name: /search/i })).getAttribute('maxlength')).toBe('100');
+    // A longer link is cut to the limit rather than answered with a validation error.
+    renderPage(<SearchPage />, { route: '/search', path: `/search?q=${'x'.repeat(150)}` });
+    await waitFor(() => expect(api().find('GET', '/api/search').length).toBeGreaterThan(0));
+    expect(api().find('GET', '/api/search').every(c => c.query.get('q')!.length === 100)).toBe(true);
+  });
+
   it('says when nothing matches', async () => {
     api()
       .on('GET', '/api/session', session(USER))

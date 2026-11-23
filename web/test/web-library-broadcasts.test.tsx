@@ -1,11 +1,11 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BroadcastGamePreview, BroadcastRound, BroadcastSummary } from '@outpost/shared/api';
-import BroadcastRoundPage, { studioNavigation } from '../src/app/pages/BroadcastRoundPage.tsx';
+import BroadcastRoundPage, { OPEN_PGN_TIMEOUT, studioNavigation } from '../src/app/pages/BroadcastRoundPage.tsx';
 import BroadcastsPage, { defaultRound, shortDescription } from '../src/app/pages/BroadcastsPage.tsx';
 import { roundStatus } from '../src/app/pages/components/library/broadcast.tsx';
-import { inCheck, liveClock, turnOf } from '../src/app/pages/components/library/MiniGame.tsx';
-import { extractBroadcastGame } from '../src/app/pages/components/library/broadcastPgn.ts';
+import { inCheck, liveClock, playerTooltip, turnOf } from '../src/app/pages/components/library/MiniGame.tsx';
+import { extractBroadcastGame, indexRoundPgn } from '../src/app/pages/components/library/broadcastPgn.ts';
 import { formatClock } from '../src/app/pages/components/library/format.ts';
 import { isNoTokenError, POLL, roundRefetchInterval } from '../src/app/pages/library-hooks.ts';
 import { ApiError } from '../src/app/api/client.ts';
@@ -207,6 +207,72 @@ describe('BroadcastRoundPage', () => {
     expect(pgn).not.toContain('Bc4');
   });
 
+  it('downloads the round PGN once: a second click waits, a later board reuses it', async () => {
+    base();
+    let release: () => void = () => undefined;
+    api().on('GET', '/api/broadcasts/round/rnd00002.pgn', () => new Promise(resolve => (release = () => resolve(text(ROUND_PGN)))));
+    const go = vi.spyOn(studioNavigation, 'go').mockImplementation(() => undefined);
+    renderPage(<BroadcastRoundPage />, ROUTE);
+    const alpha = await screen.findByRole('link', { name: /Alpha – Beta/ });
+    fireEvent.click(alpha);
+    expect(await within(alpha).findByText('Opening…')).toBeTruthy();
+    // Clicks while a board is opening are ignored (no second download, no second navigation).
+    fireEvent.click(alpha);
+    fireEvent.click(screen.getByRole('link', { name: /Gamma – Delta/ }));
+    await waitFor(() => expect(api().find('GET', '/api/broadcasts/round/rnd00002.pgn')).toHaveLength(1));
+    release();
+    await waitFor(() => expect(go).toHaveBeenCalledOnce());
+    expect(new URL(go.mock.calls[0]![0], 'http://x').searchParams.get('pgn')).toContain('[White "Alpha"]');
+    expect(within(alpha).queryByText('Opening…')).toBeNull();
+    // Opening another board soon after uses the copy already downloaded.
+    fireEvent.click(screen.getByRole('link', { name: /Gamma – Delta/ }));
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(2));
+    expect(new URL(go.mock.calls[1]![0], 'http://x').searchParams.get('pgn')).toContain('Qh4# 0-1');
+    expect(api().find('GET', '/api/broadcasts/round/rnd00002.pgn')).toHaveLength(1);
+  });
+
+  it('settles for the position when the PGN is slow, and cancels the download', async () => {
+    const saved = OPEN_PGN_TIMEOUT.ms;
+    OPEN_PGN_TIMEOUT.ms = 40;
+    try {
+      base();
+      let aborted = false;
+      api().on(
+        'GET',
+        '/api/broadcasts/round/rnd00002.pgn',
+        () => new Promise((_resolve, reject) => {
+          const signal = api().fetch.mock.calls.at(-1)![1]!.signal!;
+          signal.addEventListener('abort', () => {
+            aborted = true;
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        }),
+      );
+      const go = vi.spyOn(studioNavigation, 'go').mockImplementation(() => undefined);
+      renderPage(<BroadcastRoundPage />, ROUTE);
+      fireEvent.click(await screen.findByRole('link', { name: /Alpha – Beta/ }));
+      await waitFor(() => expect(go).toHaveBeenCalledOnce());
+      expect(new URL(go.mock.calls[0]![0], 'http://x').searchParams.get('fen')).toBe(games[0]!.fen);
+      await waitFor(() => expect(aborted).toBe(true));
+    } finally {
+      OPEN_PGN_TIMEOUT.ms = saved;
+    }
+  });
+
+  it('does not leave for the Studio once the round page is gone', async () => {
+    base();
+    let release: () => void = () => undefined;
+    api().on('GET', '/api/broadcasts/round/rnd00002.pgn', () => new Promise(resolve => (release = () => resolve(text(ROUND_PGN)))));
+    const go = vi.spyOn(studioNavigation, 'go').mockImplementation(() => undefined);
+    const { unmount } = renderPage(<BroadcastRoundPage />, ROUTE);
+    fireEvent.click(await screen.findByRole('link', { name: /Alpha – Beta/ }));
+    await waitFor(() => expect(api().find('GET', '/api/broadcasts/round/rnd00002.pgn')).toHaveLength(1));
+    unmount();
+    release();
+    await new Promise(r => setTimeout(r, 30));
+    expect(go).not.toHaveBeenCalled();
+  });
+
   it('falls back to the position when the PGN is unavailable', async () => {
     base();
     api().on('GET', '/api/broadcasts/round/rnd00002.pgn', apiError(503, 'upstream_unavailable'));
@@ -259,6 +325,28 @@ describe('broadcast helpers', () => {
     expect(extractBroadcastGame(ROUND_PGN, { id: 'chap0002', white: player('x'), black: player('y') })).toContain('1. f3 e5 2. g4 Qh4# 0-1');
     expect(extractBroadcastGame(ROUND_PGN, { id: 'nope', white: player('alpha '), black: player('BETA') })).toContain('[White "Alpha"]');
     expect(extractBroadcastGame(ROUND_PGN, { id: 'nope', white: player('Q'), black: player('R') })).toBeNull();
+  });
+
+  it('indexes a round PGN by its tag lines without parsing moves', () => {
+    const entries = indexRoundPgn(`\uFEFF${ROUND_PGN.replaceAll('\n', '\r\n')}`);
+    expect(entries.map(e => e.headers.get('White'))).toEqual(['Gamma', 'Alpha']);
+    expect(entries[1]!.headers.get('WhiteElo')).toBe('2700');
+    expect(entries[0]!.text).toContain('Qh4# 0-1');
+    expect(entries[0]!.text).not.toContain('Alpha');
+    // Escaped quotes in tag values; comment lines that start with "[%" are moves, not tags.
+    const odd = indexRoundPgn('[Event "The \\"Big\\" Open"]\n[White "A"]\n\n1. e4\n[%clk 1:00:00]\ne5 *\n\n[White "B"]\n\n1. d4 *\n');
+    expect(odd).toHaveLength(2);
+    expect(odd[0]!.headers.get('Event')).toBe('The "Big" Open');
+    expect(odd[0]!.text).toContain('[%clk 1:00:00]');
+    expect(odd[1]!.headers.get('White')).toBe('B');
+    expect(indexRoundPgn('')).toEqual([]);
+    // Extracting from the index parses the matched game only.
+    expect(extractBroadcastGame(entries, { id: 'chap0001', white: player('x'), black: player('y') })).toContain('1. e4 e5 2. Nf3 *');
+  });
+
+  it('puts the whole player line in a tooltip', () => {
+    expect(playerTooltip(player('Alpha'))).toBe('GM Alpha (NOR), 2700');
+    expect(playerTooltip(player('', { title: null, fed: null, rating: null }))).toBe('?');
   });
 
   it('runs the clock of the side to move only', () => {
