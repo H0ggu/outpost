@@ -577,3 +577,129 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------------------------------------------------------------------------
+ * Search hits (search page, account picker, opponent picker)
+ * ------------------------------------------------------------------------ */
+
+.lib-hits {
+  margin-top: 1rem;
+}
+
+.lib-hits__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lib-hits__empty {
+  margin: 0;
+  font-size: 0.92em;
+}
+
+.lib-hits__unavailable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  margin-bottom: 0.4rem;
+  color: var(--c-warn);
+  font-size: 0.92em;
+}
+
+.lib-hit {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--c-border) 50%, transparent);
+  min-width: 0;
+}
+
+.lib-hit:last-child {
+  border-bottom: 0;
+}
+
+.lib-hit__kind {
+  flex: 0 0 5.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-font-dim);
+  border-inline-start: 3px solid var(--lib-source-color, var(--c-border-light));
+  padding-inline-start: 0.5rem;
+}
+
+.lib-hit__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.lib-hit__name {
+  color: var(--c-font-clear);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-hit__meta {
+  color: var(--c-font-dimmer);
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-hit__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+
+.lib-hits__plist {
+  list-style: none;
+}
+
+@media (max-width: 480px) {
+  .lib-hit {
+    flex-wrap: wrap;
+    gap: 0.35rem 0.6rem;
+  }
+
+  .lib-hit__kind {
+    flex-basis: 100%;
+  }
+
+  .lib-hit__main {
+    flex-basis: 8rem;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * List pages (players, bookmarks)
+ * ------------------------------------------------------------------------ */
+
+.lib-filterbar {
+  padding: 1rem var(--box-padding) 0.75rem;
+}
+
+.lib-listbody {
+  padding-bottom: 0.5rem;
+}
+
+.lib-listbody > .error-box,
+.lib-listbody > .empty-state {
+  margin: 0 var(--box-padding) var(--box-padding);
+}
+
+.lib-noresults {
+  margin: 0.5rem 0;
+}
+
+.lib-ptable .lib-sources {
+  max-width: 34rem;
+}

@@ -161,3 +161,15 @@ export function ProfileTable({
     });
   return <Table columns={columns} rows={profiles} rowKey={p => p.id} empty={empty} className="lib-ptable" />;
 }
+
+/** Case-insensitive match on the name, the address and every account name. */
+export function filterProfiles(profiles: readonly ProfileSummary[], text: string): ProfileSummary[] {
+  const t = text.trim().toLowerCase();
+  if (!t) return [...profiles];
+  return profiles.filter(
+    p =>
+      p.displayName.toLowerCase().includes(t) ||
+      p.slug.includes(t) ||
+      p.sources.some(s => s.displayName.toLowerCase().includes(t) || s.key.toLowerCase().includes(t)),
+  );
+}

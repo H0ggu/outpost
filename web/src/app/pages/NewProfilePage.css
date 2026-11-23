@@ -1,0 +1,134 @@
+/* New profile (`/profiles/new`). */
+
+.lib-newprofile {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.lib-picked {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.lib-picked li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.lib-picked .lib-source {
+  font-size: 0.95rem;
+  min-width: 0;
+}
+
+.lib-icon-btn {
+  margin-inline-start: auto;
+  background: none;
+  border: 0;
+  padding: 0.35rem;
+  border-radius: var(--box-radius);
+  color: var(--c-font-dim);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.lib-icon-btn::before {
+  margin: 0 !important;
+}
+
+.lib-icon-btn:hover {
+  color: var(--c-bad);
+  background: var(--c-bg-zebra);
+}
+
+.lib-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.lib-manual-source {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--c-border);
+}
+
+.lib-manual-source .form-error {
+  margin: 0.4rem 0 0;
+}
+
+.lib-hit__note {
+  font-size: 0.85em;
+}
+
+.lib-slug {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.lib-slug__prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 0.6rem;
+  border: 1px solid var(--c-border);
+  border-inline-end: 0;
+  border-radius: 3px 0 0 3px;
+  background: var(--c-bg-zebra2);
+  color: var(--c-font-dim);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.lib-slug input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0 3px 3px 0;
+  font-family: var(--font-mono);
+}
+
+.lib-slug input[aria-invalid='true'] {
+  border-color: var(--c-bad);
+}
+
+.lib-radios {
+  border: 0;
+  margin: 0 0 1.1rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.lib-radios legend {
+  color: var(--c-font-dim);
+  font-size: 0.9em;
+  margin-bottom: 0.35rem;
+  padding: 0;
+}
+
+.lib-radios .lib-checkbox {
+  align-items: flex-start;
+}
+
+.lib-radios .lib-checkbox input {
+  margin-top: 0.2rem;
+}
+
+.lib-radios i {
+  color: var(--c-font-dim);
+}
+
+.lib-autorefresh {
+  margin-bottom: 1rem;
+}
+
+.lib-submit {
+  margin-top: 0.5rem;
+}
