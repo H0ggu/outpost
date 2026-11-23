@@ -135,7 +135,7 @@ function visibleSourceRows(db: Db, profile: ViewableProfile): Array<SourceRow & 
   if (profile.sourceIds.length === 0) return [];
   return db.all<SourceRow & { hidden: number }>(
     `SELECT ${SOURCE_COLUMNS}, ps.hidden FROM profile_sources ps JOIN sources s ON s.id = ps.source_id
-      WHERE ps.profile_id = ? AND s.id IN (${placeholders(profile.sourceIds.length)}) ORDER BY s.id`,
+      WHERE ps.profile_id = ? AND s.id IN (${placeholders(profile.sourceIds.length)}) ORDER BY ps.position, s.id`,
     [profile.id, ...profile.sourceIds],
   );
 }
@@ -248,8 +248,10 @@ export function profileSummaries(db: Db, ids: readonly Id[], viewer: AuthUser | 
     const row = profileRow(db, id);
     const sources = profile.sourceIds.length
       ? db.all<{ kind: SourceKind; key: string; display_name: string; title: string | null; country: string | null; last_synced_at: EpochMs | null }>(
-          `SELECT kind, key, display_name, title, country, last_synced_at FROM sources WHERE id IN (${placeholders(profile.sourceIds.length)}) ORDER BY id`,
-          profile.sourceIds,
+          `SELECT s.kind, s.key, s.display_name, s.title, s.country, s.last_synced_at
+             FROM profile_sources ps JOIN sources s ON s.id = ps.source_id
+            WHERE ps.profile_id = ? AND s.id IN (${placeholders(profile.sourceIds.length)}) ORDER BY ps.position, s.id`,
+          [id, ...profile.sourceIds],
         )
       : [];
     const games = profile.sourceIds.length
@@ -468,8 +470,8 @@ export async function createProfile(ctx: ProfilesCtx, viewer: AuthUser, body: Cr
       [slug, body.displayName, viewer.id, body.visibility ?? 'private', body.autoRefresh ?? false, now, now],
     ).lastInsertRowid;
     const attached = resolved.map(r => insertSource(db, r));
-    for (const a of attached) {
-      db.run('INSERT OR IGNORE INTO profile_sources (profile_id, source_id, hidden) VALUES (?, ?, 0)', [profileId, a.id]);
+    for (const [i, a] of attached.entries()) {
+      db.run('INSERT OR IGNORE INTO profile_sources (profile_id, source_id, hidden, position) VALUES (?, ?, 0, ?)', [profileId, a.id, i]);
     }
     return { profileId, attached };
   });
@@ -605,7 +607,11 @@ export async function addProfileSource(ctx: ProfilesCtx, profile: ViewableProfil
   const attached = db.tx(() => {
     if (db.value('SELECT 1 FROM profiles WHERE id = ?', [profile.id]) === undefined) throw new HttpError(404, 'not_found', 'Profile not found');
     const a = insertSource(db, resolved);
-    const added = db.run('INSERT OR IGNORE INTO profile_sources (profile_id, source_id, hidden) VALUES (?, ?, 0)', [profile.id, a.id]);
+    const added = db.run(
+      `INSERT OR IGNORE INTO profile_sources (profile_id, source_id, hidden, position)
+       VALUES (?1, ?2, 0, (SELECT COALESCE(MAX(position), -1) + 1 FROM profile_sources WHERE profile_id = ?1))`,
+      [profile.id, a.id],
+    );
     if (added.changes === 0) throw conflict('This account is already part of the profile');
     db.run('UPDATE profiles SET updated_at = ? WHERE id = ?', [Date.now(), profile.id]);
     return a;

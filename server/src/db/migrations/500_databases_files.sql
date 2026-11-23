@@ -1,5 +1,8 @@
 -- 500_databases_files: profiles module tables (docs/PLAN.md §4 databases/files, §5).
 
+-- Display order of a profile's accounts (the order they were added).
+ALTER TABLE profile_sources ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+
 -- PGN imports into user databases: which job imported into which database, so DatabaseInfo can
 -- show the latest import (and its summary) without scanning `jobs` payloads. Rows go with their
 -- job (jobs.id) or their database. `file` is the upload's basename in DATA_DIR/uploads while it
