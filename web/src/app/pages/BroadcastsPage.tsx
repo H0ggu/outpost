@@ -37,23 +37,27 @@ export function shortDescription(text: string | null, max = 220): string | null 
 
 /**
  * PLAN §9 `/broadcasts`, §5 live broadcasts, §6 GET /api/broadcasts: official Lichess broadcasts,
- * ongoing first then recent, each with its rounds; a round opens the live boards. Without a Lichess
- * token on the server the page says so plainly.
+ * ongoing first, then upcoming (`BroadcastsResponse.upcoming`), then recent, each with the rounds
+ * the list carries (the latest with games and the current or next one; the round page shows every
+ * round); a round opens the live boards. Without a Lichess token on the server the page says so
+ * plainly.
  */
 export default function BroadcastsPage() {
   const q = useBroadcasts();
+  const upcoming = q.data?.upcoming ?? [];
   return (
     <Page title="Broadcasts">
       <Box title="Broadcasts">
         <p className="lib-lead">Official over-the-board events relayed by Lichess, with live boards and clocks.</p>
         {q.data ? (
-          q.data.active.length + q.data.recent.length === 0 ? (
+          q.data.active.length + upcoming.length + q.data.recent.length === 0 ? (
             <EmptyState icon={licon.RadioTower} title="No official broadcasts right now">
               <p>Check back when the next tournament starts.</p>
             </EmptyState>
           ) : (
             <>
               {q.data.active.length > 0 && <TourList title="Ongoing" tours={q.data.active} />}
+              {upcoming.length > 0 && <TourList title="Upcoming" tours={upcoming} />}
               {q.data.recent.length > 0 && <TourList title="Recent" tours={q.data.recent} />}
             </>
           )

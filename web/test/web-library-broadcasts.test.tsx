@@ -150,6 +150,18 @@ describe('BroadcastsPage', () => {
     expect(screen.queryByRole('link', { name: 'Admin → Settings' })).toBeNull();
   });
 
+  it('lists upcoming tournaments between the ongoing and the recent ones', async () => {
+    const next = tour({ tour: { ...tour().tour, id: 'tour0003', name: 'Future Cup', tier: null }, live: false, rounds: [{ ...tour().rounds[0]!, id: 'rnd00009', name: 'Round 1', ongoing: false, finished: false }], defaultRoundId: null });
+    api()
+      .on('GET', '/api/session', session(USER))
+      .on('GET', '/api/broadcasts', { active: [], upcoming: [next], recent: [tour({ tour: { ...tour().tour, id: 'tour0002', name: 'Old Masters' }, live: false })] });
+    renderPage(<BroadcastsPage />, { route: '/broadcasts' });
+    expect(await screen.findByText('Future Cup')).toBeTruthy();
+    const titles = screen.getAllByRole('heading', { level: 2 }).map(h => h.textContent);
+    expect(titles.filter(t => /Upcoming|Recent|Ongoing/.test(t ?? ''))).toEqual(['Upcoming 1', 'Recent 1']);
+    expect(screen.getByText('Future Cup').getAttribute('href')).toBe('/broadcasts/rnd00009');
+  });
+
   it('shows the empty state', async () => {
     api().on('GET', '/api/session', session(USER)).on('GET', '/api/broadcasts', { active: [], recent: [] });
     renderPage(<BroadcastsPage />, { route: '/broadcasts' });
