@@ -14,7 +14,7 @@ import { isActiveJob, useImportBroadcastMonths, useReferenceImport, useReference
 import { formatBytes, formatCount, useTimeFormat } from '../components/account/format.ts';
 import { describeError, Field, Flash, formErrors, RadioGroup, TextField } from '../components/account/forms.tsx';
 import { JobStatusBadge, ProgressBar, progressText } from '../components/account/JobProgress.tsx';
-import { groupMonthsByYear, MONTH_NAMES, monthLabel, selectableMonth } from '../components/account/months.ts';
+import { groupMonthsByYear, isBuiltinBroadcastDb, MONTH_NAMES, monthLabel, selectableMonth } from '../components/account/months.ts';
 import './admin.css';
 
 export default function AdminReferencePage() {
@@ -143,6 +143,9 @@ function BroadcastMonthsBox({ info }: { info: ReferenceInfo }) {
   const fmt = useTimeFormat();
 
   const months = info.broadcastMonths;
+  // The built-in database is the default ('' = let the server use or create it); list the others.
+  const others = info.databases.filter(d => !isBuiltinBroadcastDb(d));
+  const into = others.some(d => String(d.id) === target) ? target : '';
   const byYear = useMemo(() => groupMonthsByYear(months), [months]);
   const byMonth = useMemo(() => new Map(months.map(m => [m.month, m])), [months]);
   const imported = months.filter(m => m.status === 'imported');
@@ -167,7 +170,7 @@ function BroadcastMonthsBox({ info }: { info: ReferenceInfo }) {
     if (!chosen.length) return;
     setResult(null);
     importMonths.mutate(
-      { months: [...chosen].sort(), ...(target ? { databaseId: Number(target) } : {}) },
+      { months: [...chosen].sort(), ...(into ? { databaseId: Number(into) } : {}) },
       {
         onSuccess: res => {
           setSelected(new Set());
@@ -259,12 +262,12 @@ function BroadcastMonthsBox({ info }: { info: ReferenceInfo }) {
             <Button variant="empty" size="sm" disabled={!selected.size} onClick={() => setSelected(new Set())}>
               Clear
             </Button>
-            {info.databases.length > 1 && (
+            {others.length > 0 && (
               <label className="adm-inline-select">
                 <span>Into</span>
-                <select className="form-control" value={target} onChange={e => setTarget(e.target.value)}>
+                <select className="form-control" value={into} onChange={e => setTarget(e.target.value)}>
                   <option value="">Lichess broadcasts (built-in)</option>
-                  {info.databases.map(d => (
+                  {others.map(d => (
                     <option key={d.id} value={d.id}>
                       {d.name}
                     </option>
@@ -300,7 +303,7 @@ function ImportBox({ databases }: { databases: DatabaseInfo[] }) {
   const importRef = useReferenceImport();
   const [source, setSource] = useState<'file' | 'url'>('file');
   const [target, setTarget] = useState<'new' | 'existing'>(databases.length ? 'existing' : 'new');
-  const [databaseId, setDatabaseId] = useState<string>(databases[0] ? String(databases[0].id) : '');
+  const [databaseId, setDatabaseId] = useState<string>('');
   const [name, setName] = useState('');
   const [sourceLabel, setSourceLabel] = useState('');
   const [licence, setLicence] = useState('');
@@ -313,6 +316,9 @@ function ImportBox({ databases }: { databases: DatabaseInfo[] }) {
   const abortRef = useRef<AbortController | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
+  // The list can change under the form (a first import creates a database, another is deleted):
+  // the chosen id counts only while it is listed, else the first database is the one shown.
+  const effectiveId = databases.some(d => String(d.id) === databaseId) ? databaseId : databases[0] ? String(databases[0].id) : '';
   const useExisting = target === 'existing' && databases.length > 0;
   const { field, form } = formErrors(importRef.error, ['url', 'file', 'databaseId', 'databaseName', 'sourceLabel', 'licence'], problems);
   const cancelled = importRef.error instanceof DOMException && importRef.error.name === 'AbortError';
@@ -339,6 +345,7 @@ function ImportBox({ databases }: { databases: DatabaseInfo[] }) {
       else if (!/^https?:\/\/\S+$/i.test(u)) p.url = 'Use a full http(s):// address.';
     }
     if (!useExisting && !name.trim()) p.databaseName = 'Name the new reference database.';
+    if (useExisting && !(Number(effectiveId) > 0)) p.databaseId = 'Choose a reference database.';
     setProblems(p);
     if (Object.keys(p).length) return;
 
@@ -346,7 +353,7 @@ function ImportBox({ databases }: { databases: DatabaseInfo[] }) {
       ...(sourceLabel.trim() ? { sourceLabel: sourceLabel.trim() } : {}),
       ...(licence.trim() ? { licence: licence.trim() } : {}),
     };
-    const into = useExisting ? { databaseId: Number(databaseId) as Id } : { databaseName: name.trim() };
+    const into = useExisting ? { databaseId: Number(effectiveId) as Id } : { databaseName: name.trim() };
     const done = (res: ImportResponse) => {
       setQueued(res);
       setProgress(null);
@@ -454,7 +461,7 @@ function ImportBox({ databases }: { databases: DatabaseInfo[] }) {
         />
         {useExisting ? (
           <Field id="ref-db" label="Reference database" error={field.databaseId}>
-            <select id="ref-db" className="form-control" value={databaseId} onChange={e => setDatabaseId(e.target.value)}>
+            <select id="ref-db" className="form-control" value={effectiveId} onChange={e => setDatabaseId(e.target.value)}>
               {databases.map(d => (
                 <option key={d.id} value={d.id}>
                   {d.name} ({formatCount(d.gameCount)} games)

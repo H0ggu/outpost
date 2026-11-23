@@ -1,52 +1,50 @@
 /**
  * "Notices & attribution" from the footer: the repository's NOTICE.md (licences of Outpost, the
- * Lichess code and assets it reuses, and the data sources), bundled at build time as text and
- * rendered with a tiny Markdown subset (headings, paragraphs, nested lists, bold, code, links).
- * If a build has no NOTICE.md next to the sources, a short summary is shown instead.
+ * Lichess code and assets it reuses, and the data sources), bundled at build time as text in its
+ * own chunk and rendered with a tiny Markdown subset (headings, paragraphs, nested lists, bold,
+ * code, links).
+ *
+ * NOTICE.md is a required build input: the import below fails the build when it is missing (the
+ * Docker build stage copies it next to `web/` for this), so no build ships without the
+ * attributions that CC BY-SA data and the piece-set licences ask for.
  */
 import { useEffect, useState, type ReactNode } from 'react';
-import { Spinner } from '../../../components/index.ts';
+import { ErrorBox, Spinner } from '../../../components/index.ts';
 import { Modal } from './Dialog.tsx';
 import './account.css';
 
-// A glob (not a plain import) so a build without NOTICE.md still compiles: it then matches nothing.
-const noticeFiles = import.meta.glob<string>('../../../../../../NOTICE.md', { query: '?raw', import: 'default' });
-
-const FALLBACK = `# Notices and attribution
-
-Outpost is free software under the **GNU Affero General Public License v3.0 or later**. If you run a modified Outpost for other people over a network, the AGPL requires you to offer them its source code.
-
-It builds on the lichess.org open-source projects (https://github.com/lichess-org): chessground, chessops, pgn-viewer, stockfish-web and the lila analysis board (AGPL-3.0-or-later, the lila authors), plus lila's free piece sets, board images, sounds and fonts.
-
-Outpost is not affiliated with, endorsed by or sponsored by Chess.com or Lichess. See NOTICE.md in the source distribution for the full list.`;
-
-/** Loads NOTICE.md (or the fallback summary). */
+/** Loads NOTICE.md (a separate chunk, fetched when the dialog opens). */
 export async function loadNotice(): Promise<string> {
-  const load = Object.values(noticeFiles)[0];
-  if (!load) return FALLBACK;
-  try {
-    return await load();
-  } catch {
-    return FALLBACK;
-  }
+  return (await import('../../../../../../NOTICE.md?raw')).default;
 }
 
 export function NoticeDialog({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
-    void loadNotice().then(t => {
-      if (live) setText(t);
-    });
+    setError(null);
+    // The chunk can fail to load (offline, or a redeploy replaced it).
+    loadNotice().then(
+      t => live && setText(t),
+      e => live && setError(e),
+    );
     return () => {
       live = false;
     };
-  }, []);
+  }, [attempt]);
   // The first heading is the dialog title.
   const body = text?.replace(/^#\s+[^\n]*\n+/, '') ?? null;
   return (
     <Modal title="Notices and attribution" onClose={onClose} wide>
-      {body === null ? <Spinner center /> : <div className="acc-markdown">{renderMarkdown(body)}</div>}
+      {body !== null ? (
+        <div className="acc-markdown">{renderMarkdown(body)}</div>
+      ) : error ? (
+        <ErrorBox error={error} title="Could not load the notices" onRetry={() => setAttempt(a => a + 1)} />
+      ) : (
+        <Spinner center />
+      )}
     </Modal>
   );
 }

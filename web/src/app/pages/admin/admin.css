@@ -639,3 +639,15 @@
 .adm-job__side .button-secondary {
   padding: 0.35em 0.8em;
 }
+
+/* A message with a button (e.g. "Switch to invite only" in the invites box). */
+.adm-flash-action .acc-flash__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+}
+
+.adm-flash-action .acc-flash__body > span {
+  flex: 1 1 18rem;
+}

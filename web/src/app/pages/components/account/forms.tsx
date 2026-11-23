@@ -337,6 +337,22 @@ export function useTransient<T>(ms = 2500): [T | null, (value: T) => void] {
 /** Minimum password length checked in the browser (the server has the final say). */
 export const PASSWORD_MIN_LENGTH = 8;
 
+/**
+ * Outpost usernames, as the auth server checks them (the auth module's `ACCOUNT_USERNAME_RE` and
+ * 30-character limit): 2–30 letters, digits, `_` and `-`, starting with a letter or digit.
+ */
+export const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{1,29}$/;
+export const USERNAME_MAX_LENGTH = 30;
+
+/** Client-side check of a new username (already trimmed); undefined when it is fine. */
+export function usernameProblem(name: string): string | undefined {
+  if (!name) return 'Choose a username.';
+  if (name.length < 2) return 'Use at least 2 characters.';
+  if (name.length > USERNAME_MAX_LENGTH) return `Use at most ${USERNAME_MAX_LENGTH} characters.`;
+  if (!USERNAME_RE.test(name)) return 'Use only letters, digits, _ and -, starting with a letter or digit.';
+  return undefined;
+}
+
 /** Client-side check of a new password and its confirmation. */
 export function newPasswordProblems(password: string, confirm: string): { password?: string; confirm?: string } {
   const out: { password?: string; confirm?: string } = {};

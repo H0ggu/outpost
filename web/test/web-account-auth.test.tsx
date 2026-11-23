@@ -117,6 +117,36 @@ describe('LoginPage', () => {
     await waitFor(() => expect(location()).toBe('/'));
   });
 
+  it('goes home instead of crashing on a next target with a control character', async () => {
+    // `/\t/example.com/` reads as the off-site `//example.com/` once the tab is dropped.
+    api().on('GET', '/api/session', session(user()));
+    const errors: unknown[] = [];
+    const onError = (e: ErrorEvent) => errors.push(e.error);
+    window.addEventListener('error', onError);
+    try {
+      const { location } = renderAt(<LoginPage />, { path: '/login?next=/%09/example.com/' });
+      await waitFor(() => expect(location()).toBe('/'));
+      expect(errors).toEqual([]);
+    } finally {
+      window.removeEventListener('error', onError);
+    }
+  });
+
+  it('goes home after signing in from a next target with a newline', async () => {
+    let signedIn = false;
+    api()
+      .on('GET', '/api/session', () => session(signedIn ? user() : null))
+      .on('POST', '/api/login', () => {
+        signedIn = true;
+        return { user: user() };
+      });
+    const { location } = renderAt(<LoginPage />, { path: '/login?next=/%0A/example.com/' });
+    type(await screen.findByLabelText('Username').then(() => 'Username'), 'alice');
+    type('Password', 'secret-pass');
+    submit(/^sign in$/i);
+    await waitFor(() => expect(location()).toBe('/'));
+  });
+
   it('points to setup and hides sign-up when closed', async () => {
     api().on('GET', '/api/session', session(null, { setupRequired: true, signupMode: 'closed' }));
     renderAt(<LoginPage />, { path: '/login' });
@@ -137,6 +167,16 @@ describe('SignupPage', () => {
     renderAt(<SignupPage />, { path: '/signup' });
     expect(await screen.findByText('Sign-ups are closed')).toBeTruthy();
     expect(screen.queryByLabelText('Username')).toBeNull();
+    // Closed means closed: no hint that an invite link would help.
+    expect(screen.queryByText(/invite/i)).toBeNull();
+  });
+
+  it('says an invite link does not work while sign-ups are closed', async () => {
+    api().on('GET', '/api/session', session(null, { signupMode: 'closed' }));
+    renderAt(<SignupPage />, { path: '/signup?invite=INV-42' });
+    expect(await screen.findByText('Sign-ups are closed')).toBeTruthy();
+    expect(screen.getByText(/Invite links work only while sign-up is invite-only/)).toBeTruthy();
+    expect(screen.queryByLabelText('Invite code')).toBeNull();
   });
 
   it('sends people to setup before the first admin exists', async () => {
@@ -171,6 +211,24 @@ describe('SignupPage', () => {
     expect(screen.getByText('Use at least 2 characters.')).toBeTruthy();
     expect(screen.getByText('Use at least 8 characters.')).toBeTruthy();
     expect(screen.getByText('The passwords do not match.')).toBeTruthy();
+    expect(api().find('POST', '/api/signup')).toHaveLength(0);
+  });
+
+  it('follows the server username rules: 2-30 letters, digits, _ and -', async () => {
+    api().on('GET', '/api/session', session(null, { signupMode: 'open' }));
+    renderAt(<SignupPage />, { path: '/signup' });
+    const name = (await screen.findByLabelText('Username')) as HTMLInputElement;
+    expect(name.maxLength).toBe(30);
+    type('Password', 'long-password');
+    type('Confirm password', 'long-password');
+    for (const bad of ['al ice', '_alice', 'alice!', 'ünïcode']) {
+      type('Username', bad);
+      submit(/create account/i);
+      expect(await screen.findByText('Use only letters, digits, _ and -, starting with a letter or digit.')).toBeTruthy();
+    }
+    type('Username', 'a'.repeat(31));
+    submit(/create account/i);
+    expect(await screen.findByText('Use at most 30 characters.')).toBeTruthy();
     expect(api().find('POST', '/api/signup')).toHaveLength(0);
   });
 

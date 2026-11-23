@@ -979,6 +979,44 @@ html[data-theme='black'] .acc-dialog {
   height: 100%;
 }
 
+/*
+ * Coordinates inside the board, as lila draws them (ui/lib/css/theme/board/_coords-in.scss):
+ * ranks along the right edge, files along the bottom, in the square colours set by board.css.
+ * chessground.base.css alone puts them outside the board, offset for its own demo layout.
+ */
+.acc-preview-board coords {
+  font-family: inherit;
+  font-size: clamp(8px, 2.2vw, 11px);
+  font-weight: bold;
+  opacity: 1;
+  text-transform: none;
+  user-select: none;
+}
+
+.acc-preview-board coords.ranks {
+  top: 1px;
+  right: 0;
+  left: auto;
+  height: 100%;
+  width: 0.8em;
+}
+
+.acc-preview-board coords.ranks coord {
+  transform: none;
+}
+
+.acc-preview-board coords.files {
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 1.4em;
+  text-align: left;
+}
+
+.acc-preview-board coords.files coord {
+  padding-left: 4px;
+}
+
 .acc-appearance__preview figcaption {
   font-size: 0.85em;
   text-align: center;

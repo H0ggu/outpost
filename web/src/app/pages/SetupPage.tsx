@@ -16,7 +16,16 @@ import { useSession } from '../api/hooks.ts';
 import { Button, ButtonLink, EmptyState, ErrorBox, licon, Spinner } from '../components/index.ts';
 import { paths } from '../paths.ts';
 import { useSetup } from './account-hooks.ts';
-import { Flash, formErrors, newPasswordProblems, PASSWORD_MIN_LENGTH, PasswordField, TextField } from './components/account/forms.tsx';
+import {
+  Flash,
+  formErrors,
+  newPasswordProblems,
+  PASSWORD_MIN_LENGTH,
+  PasswordField,
+  TextField,
+  USERNAME_MAX_LENGTH,
+  usernameProblem,
+} from './components/account/forms.tsx';
 import { AuthCard } from './components/account/misc.tsx';
 
 export default function SetupPage() {
@@ -70,8 +79,8 @@ function SetupForm({ setup }: { setup: ReturnType<typeof useSetup> }) {
     e.preventDefault();
     const p: Record<string, string> = {};
     if (!token.trim()) p.token = 'Paste the setup token from the server log.';
-    if (!username.trim()) p.username = 'Choose a username.';
-    else if (username.trim().length < 2) p.username = 'Use at least 2 characters.';
+    const nameProblem = usernameProblem(username.trim());
+    if (nameProblem) p.username = nameProblem;
     Object.assign(p, newPasswordProblems(password, confirm));
     setProblems(p);
     if (Object.keys(p).length) return;
@@ -116,9 +125,10 @@ function SetupForm({ setup }: { setup: ReturnType<typeof useSetup> }) {
           autoComplete="username"
           autoCapitalize="none"
           spellCheck={false}
-          maxLength={64}
+          maxLength={USERNAME_MAX_LENGTH}
           value={username}
           onChange={e => setUsername(e.target.value)}
+          help="2–30 letters, digits, _ or -."
           error={field.username}
         />
         <PasswordField

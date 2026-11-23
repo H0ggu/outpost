@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { api as client } from '../src/app/api/client.ts';
 import NotFoundPage from '../src/app/pages/NotFoundPage.tsx';
 import { ADMIN, apiError, job, renderAt, session, user, withFakeApi } from './web-account-helpers.tsx';
@@ -197,6 +197,44 @@ describe('Layout', () => {
     expect(dialog.textContent).toContain('cburnett');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
+describe('Layout widths', () => {
+  // Vitest empties CSS imports (even `?raw`), so the stylesheet is read from disk. A computed
+  // specifier keeps Node's types out of this DOM-typed program.
+  let layoutCss = '';
+  beforeAll(async () => {
+    const fs = (await import(/* @vite-ignore */ ['node', 'fs'].join(':'))) as { readFileSync: (path: string, encoding: 'utf8') => string };
+    // (Not `new URL(…, import.meta.url)`: Vite rewrites that pattern into an asset URL.)
+    const testDir = decodeURIComponent(import.meta.url.replace(/^file:\/\//, '').replace(/\/[^/]*$/, ''));
+    layoutCss = fs.readFileSync(`${testDir}/../src/app/Layout.css`, 'utf8');
+  });
+
+  /** The rules of the `@media` block whose condition is `query`. */
+  const mediaBlock = (query: string): string => {
+    const start = layoutCss.indexOf(`@media ${query} {`);
+    if (start < 0) return '';
+    let depth = 0;
+    for (let i = layoutCss.indexOf('{', start); i < layoutCss.length; i++) {
+      if (layoutCss[i] === '{') depth++;
+      else if (layoutCss[i] === '}' && --depth === 0) return layoutCss.slice(start, i + 1);
+    }
+    return '';
+  };
+
+  // jsdom has no layout; the browser check (7 links + search + user menu need about 1180 px) is
+  // pinned here: the nav must collapse into the menu below that width, not only below 900 px.
+  it('collapses the nav into the menu below 1180 px', () => {
+    const block = mediaBlock('(max-width: 1179.98px)');
+    expect(block).toMatch(/\.menu-toggle\s*{[^}]*display:\s*block/);
+    expect(block).toMatch(/\.topnav\s*{[^}]*display:\s*none/);
+    expect(block).toMatch(/\.topnav\.open\s*{[^}]*display:\s*flex/);
+  });
+
+  it('keeps the search usable and the user name short where the full nav shows', () => {
+    expect(layoutCss).toMatch(/\.site-search\s*{[^}]*min-width:\s*9rem/);
+    expect(mediaBlock('(min-width: 1180px) and (max-width: 1439.98px)')).toMatch(/\.user-menu > button\s*{[^}]*max-width:\s*9rem/);
   });
 });
 

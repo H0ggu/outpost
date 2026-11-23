@@ -1,7 +1,7 @@
 /**
  * `/signup` (PLAN §9; §6 POST /api/signup with `SignupRequest`). Follows the instance's sign-up
- * mode from `/api/session`: `closed` explains that only the admin can add accounts, `invite`
- * asks for the invite code (prefilled from `?invite=`), `open` needs no code. Success signs the
+ * mode from `/api/session`: `closed` says no account can be created (invite links included),
+ * `invite` asks for the invite code (prefilled from `?invite=`), `open` needs no code. Success signs the
  * new user in and goes home.
  */
 import { useState, type FormEvent } from 'react';
@@ -12,11 +12,21 @@ import { useSession } from '../api/hooks.ts';
 import { Button, ButtonLink, EmptyState, ErrorBox, licon, Spinner } from '../components/index.ts';
 import { paths } from '../paths.ts';
 import { useSignup } from './account-hooks.ts';
-import { Flash, formErrors, newPasswordProblems, PASSWORD_MIN_LENGTH, PasswordField, TextField } from './components/account/forms.tsx';
+import {
+  Flash,
+  formErrors,
+  newPasswordProblems,
+  PASSWORD_MIN_LENGTH,
+  PasswordField,
+  TextField,
+  USERNAME_MAX_LENGTH,
+  usernameProblem,
+} from './components/account/forms.tsx';
 import { AuthCard, useGoTo } from './components/account/misc.tsx';
 
 export default function SignupPage() {
   const session = useSession();
+  const invite = useSearchParams()[0].get('invite');
   if (session.isPending) return <Spinner center />;
   if (session.isError) {
     return (
@@ -42,7 +52,8 @@ export default function SignupPage() {
     return (
       <AuthCard title="Create an account">
         <EmptyState icon={licon.Padlock} title="Sign-ups are closed">
-          <p>Accounts on this Outpost are created by its admin. Ask them for an account or an invite link.</p>
+          <p>New accounts cannot be created on this Outpost at the moment.</p>
+          {invite && <p>Invite links work only while sign-up is invite-only. Ask the admin who sent you this one to switch it on.</p>}
           <ButtonLink to={paths.login()} variant="secondary" icon={licon.User}>
             Sign in
           </ButtonLink>
@@ -75,8 +86,8 @@ function SignupForm({ info }: { info: SessionInfo }) {
     e.preventDefault();
     const p: Record<string, string> = {};
     const name = username.trim();
-    if (!name) p.username = 'Choose a username.';
-    else if (name.length < 2) p.username = 'Use at least 2 characters.';
+    const nameProblem = usernameProblem(name);
+    if (nameProblem) p.username = nameProblem;
     Object.assign(p, newPasswordProblems(password, confirm));
     if (inviteMode && !invite.trim()) p.invite = 'Enter the invite code you were given.';
     setProblems(p);
@@ -126,10 +137,10 @@ function SignupForm({ info }: { info: SessionInfo }) {
           autoCapitalize="none"
           spellCheck={false}
           autoFocus
-          maxLength={64}
+          maxLength={USERNAME_MAX_LENGTH}
           value={username}
           onChange={e => setUsername(e.target.value)}
-          help="Shown to the other users of this Outpost."
+          help="2–30 letters, digits, _ or -. Shown to the other users of this Outpost."
           error={field.username}
         />
         <PasswordField

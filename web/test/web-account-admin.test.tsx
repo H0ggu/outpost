@@ -183,6 +183,14 @@ describe('AdminSettingsPage', () => {
     expect((screen.getByLabelText('First import (months)') as HTMLInputElement).value).toBe('0');
   });
 
+  it('explains that closed sign-up refuses invite links too', async () => {
+    settingsServer(adminSettings({ signupMode: 'closed' }));
+    renderAt(<AdminSettingsPage />, { path: '/admin/settings' });
+    expect(await screen.findByText(/Nobody can create an account, not even with an invite link/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: 'Invite only' }));
+    expect(screen.getByText(/Only people with an invite link or code/)).toBeTruthy();
+  });
+
   it('offers broadcast auto-import only when the server reports it', async () => {
     settingsServer(adminSettings({ broadcastAutoImport: false }));
     renderAt(<AdminSettingsPage />, { path: '/admin/settings' });
@@ -296,6 +304,11 @@ describe('AdminUsersPage', () => {
     expect((screen.getByRole('menuitem', { name: 'Make regular user' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('menuitem', { name: 'Disable account' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('menuitem', { name: 'Delete account' }) as HTMLButtonElement).disabled).toBe(true);
+    // The server refuses admin resets of your own account: those go through Settings.
+    const password = screen.getByRole('menuitem', { name: 'Set a new password' }) as HTMLButtonElement;
+    expect(password.disabled).toBe(true);
+    expect(password.title).toMatch(/Settings/);
+    expect((screen.getByRole('menuitem', { name: 'Turn off two-factor' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('promotes, disables and enables users', async () => {
@@ -396,12 +409,28 @@ describe('AdminUsersPage', () => {
 
   it('creates never-expiring invites and notes when invites are not needed', async () => {
     usersServer();
-    api().on('GET', '/api/admin/settings', adminSettings({ signupMode: 'closed' }));
+    api().on('GET', '/api/admin/settings', adminSettings({ signupMode: 'open' }));
     renderAt(<AdminUsersPage />, { path: '/admin/users' });
-    expect(await screen.findByText(/Sign-up is closed/)).toBeTruthy();
+    expect(await screen.findByText(/Sign-up is open to anyone, so nobody needs an invite/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Expires after'), { target: { value: '0' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
     await waitFor(() => expect(api().find('POST', '/api/admin/invites')[0]?.body).toEqual({}));
+  });
+
+  it('warns that invite links do not work while sign-up is closed, and switches to invite only', async () => {
+    usersServer();
+    let settings = adminSettings({ signupMode: 'closed' });
+    api()
+      .on('GET', '/api/admin/settings', () => settings)
+      .on('PUT', '/api/admin/settings', req => {
+        settings = { ...settings, ...(req.body as object) };
+        return settings;
+      });
+    renderAt(<AdminUsersPage />, { path: '/admin/users' });
+    expect(await screen.findByText(/invite links do not work until sign-up is invite-only/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to invite only' }));
+    await waitFor(() => expect(screen.queryByText(/invite links do not work/)).toBeNull());
+    expect(api().find('PUT', '/api/admin/settings')[0]?.body).toEqual({ signupMode: 'invite' });
   });
 });
 
@@ -554,7 +583,7 @@ class FakeXhr {
 describe('AdminReferencePage', () => {
   const month = (m: string, status: BroadcastMonthStatus['status'], games = 0): BroadcastMonthStatus => ({ month: m, status, games, importedAt: status === 'imported' ? NOW : null });
   const info = (o: Partial<ReferenceInfo> = {}): ReferenceInfo => ({
-    databases: [referenceDb(), referenceDb({ id: 2, name: 'Club archive', licence: null, visibility: 'private', gameCount: 900 })],
+    databases: [referenceDb(), referenceDb({ id: 2, name: 'Club archive', sourceLabel: null, licence: null, visibility: 'private', gameCount: 900 })],
     totalGames: 120_900,
     broadcastMonths: [month('2026-10', 'importing'), month('2026-09', 'available'), month('2026-08', 'imported', 12_345), month('2026-07', 'error'), month('2025-12', 'available')],
     attribution: ['Lichess broadcast games, CC BY-SA 4.0.'],
@@ -593,6 +622,12 @@ describe('AdminReferencePage', () => {
       .on('POST', '/api/admin/reference/broadcast-months', { jobs: [job()] });
     renderAt(<AdminReferencePage />, { path: '/admin/reference' });
     fireEvent.click(await screen.findByRole('button', { name: 'Select all not imported (3)' }));
+    // The built-in database is the default choice, listed once.
+    const into = screen.getByLabelText('Into') as HTMLSelectElement;
+    expect([...into.options].map(o => [o.value, o.textContent])).toEqual([
+      ['', 'Lichess broadcasts (built-in)'],
+      ['2', 'Club archive'],
+    ]);
     fireEvent.change(screen.getByLabelText('Into'), { target: { value: '2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Import 3 months' }));
     await waitFor(() =>
@@ -639,6 +674,54 @@ describe('AdminReferencePage', () => {
       databaseName: 'TWIC',
       licence: 'With permission',
     });
+  });
+
+  it('imports into a database that appeared after the page loaded', async () => {
+    let created = false;
+    asAdmin()
+      .on('GET', '/api/reference', () => (created ? info({ databases: [referenceDb({ id: 7, gameCount: 345_678 })] }) : info({ databases: [], totalGames: 0 })))
+      .on('POST', '/api/admin/reference/broadcast-months', () => {
+        created = true;
+        return { jobs: [job({ id: 11 })] };
+      })
+      .on('POST', '/api/admin/reference/import', { job: job({ id: 32, kind: 'referenceImport' }) });
+    renderAt(<AdminReferencePage />, { path: '/admin/reference' });
+    // A fresh instance: no database yet, so the import form starts on "a new database".
+    expect(await screen.findByText('No reference database yet')).toBeTruthy();
+    expect((screen.getByRole('radio', { name: 'An existing database' }) as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /^Sep 2026: Not imported/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import 1 month' }));
+    // The first broadcast import creates the built-in database; the page refetches.
+    expect(await screen.findByRole('link', { name: 'Lichess broadcasts' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: 'A URL' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'An existing database' }));
+    expect((screen.getByLabelText('Reference database') as HTMLSelectElement).value).toBe('7');
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com/games.pgn' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    expect(await screen.findByText(/Import queued as job #32/)).toBeTruthy();
+    expect(api().find('POST', '/api/admin/reference/import')[0]?.body).toEqual({ url: 'https://example.com/games.pgn', databaseId: 7 });
+  });
+
+  it('falls back to a listed database when the chosen one disappears', async () => {
+    let gone = false;
+    asAdmin()
+      .on('GET', '/api/reference', () => (gone ? info({ databases: [referenceDb()] }) : info()))
+      .on('POST', '/api/admin/reference/broadcast-months', () => {
+        gone = true;
+        return { jobs: [job()] };
+      })
+      .on('POST', '/api/admin/reference/import', { job: job({ id: 33, kind: 'referenceImport' }) });
+    renderAt(<AdminReferencePage />, { path: '/admin/reference' });
+    fireEvent.click(await screen.findByRole('radio', { name: 'A URL' }));
+    fireEvent.change(screen.getByLabelText('Reference database'), { target: { value: '2' } });
+    // Something refetches the list without "Club archive" (deleted elsewhere).
+    fireEvent.click(screen.getByRole('button', { name: /^Sep 2026: Not imported/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import 1 month' }));
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Club archive' })).toBeNull());
+    expect((screen.getByLabelText('Reference database') as HTMLSelectElement).value).toBe('1');
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com/more.pgn' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(api().find('POST', '/api/admin/reference/import')[0]?.body).toEqual({ url: 'https://example.com/more.pgn', databaseId: 1 }));
   });
 
   it('explains a refused URL (no token for a broadcast round)', async () => {

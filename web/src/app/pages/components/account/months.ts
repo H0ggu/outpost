@@ -1,5 +1,14 @@
 /** Broadcast-month helpers of the admin reference page (PLAN §6 `BroadcastMonthStatus`). */
-import type { BroadcastMonthStatus, IsoMonth } from '@outpost/shared/api';
+import type { BroadcastMonthStatus, DatabaseInfo, IsoMonth } from '@outpost/shared/api';
+
+/** Source label of the built-in "Lichess broadcasts" database (fixed by the reference module). */
+const BUILTIN_BROADCAST_SOURCE = 'Lichess broadcasts (database.lichess.org)';
+
+/**
+ * The built-in broadcast database, which broadcast months go into by default. `DatabaseInfo` has
+ * no flag for it, but its source label is fixed.
+ */
+export const isBuiltinBroadcastDb = (d: DatabaseInfo): boolean => d.kind === 'reference' && d.sourceLabel === BUILTIN_BROADCAST_SOURCE;
 
 /** Short English month names, January first. */
 export const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;

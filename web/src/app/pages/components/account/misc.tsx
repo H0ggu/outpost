@@ -182,11 +182,26 @@ export function AuthCard({ title, intro, children, footer }: { title: string; in
   );
 }
 
-/** A safe in-app redirect target from `?next=` (same origin, absolute path), else `fallback`. */
-export function safeNext(next: string | null | undefined, fallback = paths.home): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return fallback;
-  if (/^\/(login|signup|setup)(\/|\?|$)/.test(next)) return fallback;
-  return next;
+/**
+ * A safe in-app redirect target from `?next=`, else `fallback`: an absolute path on this origin,
+ * normalised by the URL parser the way the router and the browser read it. Control characters
+ * and backslashes are refused outright: browsers drop tabs and newlines inside URLs, so
+ * `/\t/evil.example` would otherwise become the off-site `//evil.example` (which React Router
+ * refuses to navigate to, with an uncaught error).
+ */
+export function safeNext(next: string | null | undefined, fallback: string = paths.home): string {
+  if (!next || !next.startsWith('/') || /[\u0000-\u001f\u007f\\]/.test(next)) return fallback;
+  let url: URL;
+  try {
+    url = new URL(next, window.location.origin);
+  } catch {
+    return fallback;
+  }
+  if (url.origin !== window.location.origin) return fallback;
+  const target = `${url.pathname}${url.search}${url.hash}`;
+  // `//host` as a path would be read as off-site again by the next parser.
+  if (target.startsWith('//') || /^\/(login|signup|setup)(\/|\?|#|$)/.test(target)) return fallback;
+  return target;
 }
 
 /** Goes to an in-app path after sign-in; the Studio is a separate page and needs a document load. */

@@ -16,6 +16,7 @@ import {
   useDeleteAdminUser,
   useDeleteInvite,
   useInvites,
+  useUpdateAdminSettings,
   useUpdateAdminUser,
 } from '../account-hooks.ts';
 import { ConfirmDialog, Modal } from '../components/account/Dialog.tsx';
@@ -133,9 +134,25 @@ function UsersBox({ me }: { me: SessionUser | null }) {
                 title: self ? 'You cannot disable yourself' : lastAdmin ? 'The last admin cannot be disabled' : undefined,
                 onSelect: () => patch(u, { disabled: true }, `${u.username} is disabled and signed out.`),
               },
-          { label: 'Set a new password', icon: licon.Padlock, onSelect: () => setDialog({ kind: 'password', user: u }) },
+          // Your own password and two-factor change in Settings, with your current password (the
+          // server refuses an admin reset of your own account).
+          {
+            label: 'Set a new password',
+            icon: licon.Padlock,
+            disabled: self,
+            title: self ? 'Change your own password in Settings → Password' : undefined,
+            onSelect: () => setDialog({ kind: 'password', user: u }),
+          },
           ...(u.totpEnabled
-            ? [{ label: 'Turn off two-factor', icon: licon.Shield, onSelect: () => setDialog({ kind: 'totp', user: u }) } satisfies RowAction]
+            ? [
+                {
+                  label: 'Turn off two-factor',
+                  icon: licon.Shield,
+                  disabled: self,
+                  title: self ? 'Turn off your own two-factor in Settings → Two-factor' : undefined,
+                  onSelect: () => setDialog({ kind: 'totp', user: u }),
+                } satisfies RowAction,
+              ]
             : []),
           {
             label: 'Delete account',
@@ -309,6 +326,7 @@ function InvitesBox() {
   const create = useCreateInvite();
   const remove = useDeleteInvite();
   const settings = useAdminSettings();
+  const openInvites = useUpdateAdminSettings();
   const fmt = useTimeFormat();
   const [days, setDays] = useState<number>(7);
   const [fresh, setFresh] = useState<Invite | null>(null);
@@ -370,11 +388,28 @@ function InvitesBox() {
   return (
     <Box title="Invites" level={2} pad={false}>
       <div className="adm-pad">
-        {mode && mode !== 'invite' && (
+        {mode === 'closed' && (
+          <Flash kind="warning" className="adm-flash-action">
+            <span>
+              Sign-up is <strong>closed</strong>: nobody can create an account, so invite links do not work until sign-up is
+              invite-only.
+            </span>{' '}
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={licon.Envelope}
+              disabled={openInvites.isPending}
+              onClick={() => openInvites.mutate({ signupMode: 'invite' })}
+            >
+              {openInvites.isPending ? 'Switching…' : 'Switch to invite only'}
+            </Button>
+            {openInvites.isError && <span className="bad"> {describeError(openInvites.error)}</span>}
+          </Flash>
+        )}
+        {mode === 'open' && (
           <Flash kind="quiet">
-            Sign-up is {mode === 'open' ? 'open to anyone' : 'closed'}, so invite codes are only needed{' '}
-            {mode === 'open' ? 'if you switch to invite-only' : 'for the people you send a link to'}. Change the mode in{' '}
-            <Link to={paths.admin.settings}>Settings</Link>.
+            Sign-up is open to anyone, so nobody needs an invite. Links you create here only matter once sign-up is invite-only
+            (change it in <Link to={paths.admin.settings}>Settings</Link>).
           </Flash>
         )}
         <form

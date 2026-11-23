@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { BroadcastMonthStatus } from '@outpost/shared/api';
 import { ApiError } from '../src/app/api/client.ts';
 import { draftOf, settingsPatch, settingsProblems } from '../src/app/pages/components/account/adminSettings.ts';
-import { groupSecret } from '../src/app/pages/components/account/AccountSections.tsx';
+import { groupSecret, totpQrSrc } from '../src/app/pages/components/account/AccountSections.tsx';
 import {
   describeUserAgent,
   formatBytes,
@@ -12,13 +12,15 @@ import {
   relativeTime,
   timeFormat,
 } from '../src/app/pages/components/account/format.ts';
-import { describeError, fieldErrorsFrom, formErrors, newPasswordProblems } from '../src/app/pages/components/account/forms.tsx';
+import { describeError, fieldErrorsFrom, formErrors, newPasswordProblems, usernameProblem } from '../src/app/pages/components/account/forms.tsx';
 import { inviteLink, inviteState } from '../src/app/pages/components/account/invites.ts';
 import { progressCounts, progressPercent, progressText } from '../src/app/pages/components/account/JobProgress.tsx';
 import { safeNext } from '../src/app/pages/components/account/misc.tsx';
-import { groupMonthsByYear, monthLabel, selectableMonth } from '../src/app/pages/components/account/months.ts';
-import { renderInline, renderMarkdown } from '../src/app/pages/components/account/NoticeDialog.tsx';
-import { adminSettings, invite, job, NOW } from './web-account-helpers.tsx';
+import { groupMonthsByYear, isBuiltinBroadcastDb, monthLabel, selectableMonth } from '../src/app/pages/components/account/months.ts';
+import { loadNotice, renderInline, renderMarkdown } from '../src/app/pages/components/account/NoticeDialog.tsx';
+import { adminSettings, invite, job, NOW, referenceDb } from './web-account-helpers.tsx';
+// The repository's Dockerfile, as text.
+import dockerfile from '../../Dockerfile?raw';
 
 describe('format helpers', () => {
   it('formats bytes, durations and hours', () => {
@@ -113,6 +115,39 @@ describe('safeNext', () => {
     expect(safeNext('/signup')).toBe('/');
     expect(safeNext('/studio?game=3')).toBe('/studio?game=3');
   });
+
+  it('refuses targets that browsers or the router would read as off-site', () => {
+    // Browsers drop tabs and newlines in URLs: `/\t/evil.example` becomes `//evil.example`.
+    expect(safeNext('/\t/evil.example/')).toBe('/');
+    expect(safeNext('/\n/evil.example/')).toBe('/');
+    expect(safeNext('/\r/evil.example/')).toBe('/');
+    expect(safeNext('/\u0000x')).toBe('/');
+    expect(safeNext('/\u007f/x')).toBe('/');
+    expect(safeNext('/x\\y')).toBe('/');
+    // Dot segments are resolved before the auth-page check.
+    expect(safeNext('/./login')).toBe('/');
+    expect(safeNext('/u/../signup?x=1')).toBe('/');
+    expect(safeNext('/a/../u/magnus')).toBe('/u/magnus');
+    expect(safeNext('/login#x')).toBe('/');
+    // Fragments and encoded characters are kept.
+    expect(safeNext('/u/magnus/games?tc=blitz#top')).toBe('/u/magnus/games?tc=blitz#top');
+    expect(safeNext('/search?q=Magnus%20Carlsen')).toBe('/search?q=Magnus%20Carlsen');
+    expect(safeNext('/x', '/settings')).toBe('/x');
+    expect(safeNext('', '/settings')).toBe('/settings');
+  });
+});
+
+describe('usernames', () => {
+  it('follows the auth server: 2-30 letters, digits, _ and -, starting with a letter or digit', () => {
+    expect(usernameProblem('')).toBe('Choose a username.');
+    expect(usernameProblem('a')).toBe('Use at least 2 characters.');
+    expect(usernameProblem('a'.repeat(31))).toBe('Use at most 30 characters.');
+    expect(usernameProblem('-alice')).toMatch(/^Use only letters/);
+    expect(usernameProblem('al.ice')).toMatch(/^Use only letters/);
+    expect(usernameProblem('Magnus_Carlsen-2')).toBeUndefined();
+    expect(usernameProblem('a'.repeat(30))).toBeUndefined();
+    expect(usernameProblem('42')).toBeUndefined();
+  });
 });
 
 describe('admin settings draft', () => {
@@ -175,6 +210,12 @@ describe('invites, jobs and months', () => {
     expect(progressText(job({ progress: null }))).toBeNull();
   });
 
+  it('recognises the built-in broadcast database', () => {
+    expect(isBuiltinBroadcastDb(referenceDb())).toBe(true);
+    expect(isBuiltinBroadcastDb(referenceDb({ id: 2, name: 'TWIC', sourceLabel: 'theweekinchess.com' }))).toBe(false);
+    expect(isBuiltinBroadcastDb(referenceDb({ id: 3, sourceLabel: null }))).toBe(false);
+  });
+
   it('lays months out per year, newest first', () => {
     const m = (month: string, status: BroadcastMonthStatus['status'] = 'available'): BroadcastMonthStatus => ({ month, status, games: 0, importedAt: null });
     const rows = groupMonthsByYear([m('2026-02'), m('2025-12', 'imported'), m('2026-01'), m('bogus')]);
@@ -188,6 +229,32 @@ describe('invites, jobs and months', () => {
 
   it('groups TOTP secrets for reading', () => {
     expect(groupSecret('JBSWY3DPEHPK3PXP')).toBe('JBSW Y3DP EHPK 3PXP');
+  });
+
+  it('shows the server PNG QR code when it is a data: image, else the SVG', () => {
+    const base = { secret: 'S', otpauthUrl: 'otpauth://totp/x', qrSvg: '<svg/>' };
+    expect(totpQrSrc({ ...base, qrDataUrl: 'data:image/png;base64,AAAA' })).toBe('data:image/png;base64,AAAA');
+    expect(totpQrSrc(base)).toBe('data:image/svg+xml;charset=utf-8,%3Csvg%2F%3E');
+    // Never an external image (cross-origin isolation, and no third party learns the secret).
+    expect(totpQrSrc({ ...base, qrDataUrl: 'https://qr.example/?d=otpauth' })).toBe('data:image/svg+xml;charset=utf-8,%3Csvg%2F%3E');
+    expect(totpQrSrc({ ...base, qrDataUrl: 'data:text/html,<b>x</b>' })).toBe('data:image/svg+xml;charset=utf-8,%3Csvg%2F%3E');
+  });
+});
+
+describe('NOTICE.md', () => {
+  it('is bundled from the repository root', async () => {
+    const text = await loadNotice();
+    expect(text.startsWith('# Notices and attribution')).toBe(true);
+    expect(text).toContain('GNU Affero General Public License');
+    expect(text).toContain('CC BY-SA');
+  });
+
+  it('is copied into the Docker build stage before the web build', () => {
+    const build = /FROM\s+\S+\s+AS\s+build\n([\s\S]*?)(?=\nFROM\s)/.exec(dockerfile)?.[1] ?? '';
+    const copy = build.search(/^COPY\s+NOTICE\.md\s/m);
+    const run = build.search(/^RUN\s+npm run build/m);
+    expect(copy).toBeGreaterThanOrEqual(0);
+    expect(run).toBeGreaterThan(copy);
   });
 });
 

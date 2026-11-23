@@ -17,8 +17,8 @@ import { StatusPanel } from '../components/account/StatusPanel.tsx';
 import './admin.css';
 
 const SIGNUP_HELP: Record<SignupMode, string> = {
-  closed: 'Only admins add accounts (with an invite link from the Users page).',
-  invite: 'Anyone with an invite code can create an account.',
+  closed: 'Nobody can create an account, not even with an invite link. Choose “Invite only” to let the people you invite in.',
+  invite: 'Only people with an invite link or code from the Users page can create an account.',
   open: 'Anyone who can reach this Outpost can create an account.',
 };
 
