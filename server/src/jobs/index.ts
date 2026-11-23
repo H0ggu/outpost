@@ -33,6 +33,7 @@ export { notifyJobsQueued, onJobsQueued } from './notify.ts';
 export {
   cancelJob,
   claimNextJob,
+  JOB_KINDS,
   JOB_STATUSES,
   JobStateError,
   listAdminJobs,

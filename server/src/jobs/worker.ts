@@ -38,7 +38,7 @@ import {
 import type { JobRow } from './queue.ts';
 
 /** Every lane, one worker each. */
-export const JOB_LANES: readonly JobLane[] = ['lichess', 'chesscom', 'local'];
+export const JOB_LANES = ['lichess', 'chesscom', 'local'] as const satisfies readonly JobLane[];
 /** First retry delay after a network error / 5xx. */
 export const BACKOFF_BASE_MS = 30_000;
 /** Longest retry delay. */

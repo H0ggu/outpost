@@ -24,7 +24,21 @@ import { notifyJobsQueued } from './notify.ts';
 import { getJob, JOB_COLUMNS, toJobInfo, type JobRow } from './queue.ts';
 
 /** Every job status, in display order. */
-export const JOB_STATUSES: readonly JobStatus[] = ['queued', 'running', 'done', 'error', 'cancelled'];
+export const JOB_STATUSES = ['queued', 'running', 'done', 'error', 'cancelled'] as const satisfies readonly JobStatus[];
+/** Every job kind (JobKind). */
+export const JOB_KINDS = [
+  'sync',
+  'geo',
+  'pgnImport',
+  'referenceImport',
+  'broadcastMonth',
+  'broadcastRound',
+  'rebuild',
+] as const satisfies readonly JobKind[];
+// Compile-time check that the lists are complete.
+type Missing<A extends string, L extends readonly string[]> = Exclude<A, L[number]>;
+const _complete: [Missing<JobStatus, typeof JOB_STATUSES>, Missing<JobKind, typeof JOB_KINDS>] extends [never, never] ? true : never = true;
+void _complete;
 
 /**
  * Atomically claims the next runnable job of a lane: `queued`, `run_after` reached, highest
