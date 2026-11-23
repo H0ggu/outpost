@@ -13,17 +13,15 @@
  * Games without any named position are left out.
  *
  * Order: `most` (games), `best` / `worst` (score, then games). Best and worst only rank rows with
- * at least `BEST_WORST_MIN_GAMES` games (or `minGames` when higher), so one lucky game does not
- * top the table.
+ * at least `OPENINGS_RANK_MIN_GAMES` games (the contract's constant; or `minGames` when higher), so
+ * one lucky game does not top the table.
  */
-import type { Color, OpeningRow, OpeningsParams, OpeningsResponse } from '@outpost/shared/api';
+import { OPENINGS_RANK_MIN_GAMES, type Color, type OpeningRow, type OpeningsParams, type OpeningsResponse } from '@outpost/shared/api';
 import { colorFromChar, type ColorChar } from '@outpost/shared/chess';
 import { getOpeningBook, type OpeningBook, type OpeningEntry } from '../chess/openings.ts';
 import { posKey } from '../chess/posKey.ts';
 import { GAMES_STATS_INDEX, PLAYER_GAMES_BY_PK, round, scopeWhere, scoreOf, wdlColumns, type StatsScope } from './common.ts';
 
-/** Minimum games of a row ranked by `best` / `worst` (raised by a larger `minGames`). */
-export const BEST_WORST_MIN_GAMES = 5;
 /** Most rows returned per side. */
 export const OPENINGS_MAX_ROWS = 500;
 /** Deepest `minMoves` / `maxMoves` (classification looks at 40 plies). */
@@ -156,7 +154,7 @@ export function openingsStats(scope: StatsScope, opts: OpeningsOptions, book: Op
   }
 
   const minPlies = opts.minMoves !== undefined ? 2 * opts.minMoves - 1 : 0;
-  const minGames = Math.max(opts.minGames ?? 1, opts.order === 'most' ? 1 : BEST_WORST_MIN_GAMES);
+  const minGames = Math.max(opts.minGames ?? 1, opts.order === 'most' ? 1 : OPENINGS_RANK_MIN_GAMES);
   const out: OpeningsResponse = { white: [], black: [] };
   for (const a of groups.values()) {
     if (a.games < minGames) continue;

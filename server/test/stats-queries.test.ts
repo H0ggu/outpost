@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Outcome, TimeClass } from '@outpost/shared/api';
+import { OPENINGS_RANK_MIN_GAMES, type Outcome, type TimeClass } from '@outpost/shared/api';
 import { insertGame } from '../src/chess/store.ts';
 import {
-  BEST_WORST_MIN_GAMES,
   normalizeCountry,
   openingsStats,
   opponentsPage,
@@ -56,7 +55,7 @@ describe('openings ranking', () => {
       ['D30', 5],
       ['B20', 4],
     ]);
-    expect(BEST_WORST_MIN_GAMES).toBe(5);
+    expect(OPENINGS_RANK_MIN_GAMES).toBe(5);
     const best = openingsStats(scope, { side: 'white', order: 'best' });
     expect(best.white.map(r => r.eco)).toEqual(['C70', 'D30']);
     expect(best.black).toEqual([]);

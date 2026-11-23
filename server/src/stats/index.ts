@@ -28,7 +28,7 @@ export { activityStats, localActivity, recentDays } from './activity.ts';
 export { behaviourStats, outcomeBreakdown } from './behaviour.ts';
 export { canViewGame, loadGameForViewer } from './gameDetail.ts';
 export { GAME_LIST_ORDER, GAMES_MAX_PAGE_SIZE, GAMES_PAGE_SIZE, gamesPage, latestGames, selectGameRows } from './games.ts';
-export { BEST_WORST_MIN_GAMES, OPENINGS_MAX_MOVES, openingsStats, type OpeningsOptions } from './openings.ts';
+export { OPENINGS_MAX_MOVES, openingsStats, type OpeningsOptions } from './openings.ts';
 export { OPPONENTS_MAX_PAGE_SIZE, OPPONENTS_PAGE_SIZE, opponentsPage, profileSlugFor } from './opponents.ts';
 export { currentRatings, overviewStats } from './overview.ts';
 export { PGN_EXPORT_MAX, prepareProfilePgnExport, type PgnExport } from './pgnExport.ts';

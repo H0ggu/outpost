@@ -864,6 +864,12 @@ export interface OverviewStats {
   ratingSparkline: RatingSeries[];
 }
 
+/**
+ * `order: 'best' | 'worst'` only ranks openings with at least this many games (a higher `minGames`
+ * raises it), so one lucky game does not top the table. The page says "(min N games)" (decision 34).
+ */
+export const OPENINGS_RANK_MIN_GAMES = 5;
+
 /** Endpoint params of `GET /api/profiles/:slug/openings`. Move bounds are full moves (1–5 in the UI). */
 export interface OpeningsParams {
   side?: 'white' | 'black' | 'both';
