@@ -310,7 +310,9 @@ export async function search(deps: SearchDeps, q: string, viewer: AuthUser | nul
     profiles: searchProfiles(db, q, viewer),
     lichess: mergeHits(db, 'lichess', q, upstreamOf(lichess), LICHESS_USERNAME_RE.test(q) ? knownUsernames(db, 'lichess', q, viewer) : [], viewer),
     chesscom: mergeHits(db, 'chesscom', q, upstreamOf(chesscom), CHESSCOM_USERNAME_RE.test(q) ? knownUsernames(db, 'chesscom', q, viewer) : [], viewer),
-    reference: withProfileSlugs(db, searchReferencePlayers(db, q, { limit: SEARCH_LIMIT }), viewer),
+    // With the viewer: admins also find name-only players of private reference databases, and
+    // profileSlug counts the viewer's own private profiles.
+    reference: withProfileSlugs(db, searchReferencePlayers(db, q, { limit: SEARCH_LIMIT, viewer }), viewer),
   };
   if (unavailable.length) result.unavailable = unavailable;
   return result;

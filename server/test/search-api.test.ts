@@ -1,6 +1,7 @@
 import type { SearchResults } from '@outpost/shared/api';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { insertGame } from '../src/chess/store.ts';
+import { insertGame, pgnSourceKey } from '../src/chess/store.ts';
+import { foldName } from '../src/reference/players.ts';
 import type { AuthUser } from '../src/http/types.ts';
 import { knownUsernames, search as runSearch, SearchCache, visibleProfileSlugFor } from '../src/search/index.ts';
 import { writeSettings } from '../src/settings.ts';
@@ -89,6 +90,32 @@ describe('search API', () => {
     ]);
     expect(r.reference).toEqual([]);
     expect(r.unavailable).toBeUndefined();
+  });
+
+  it('finds reference players for the viewer: private reference databases for admins, own profiles', async () => {
+    const admin = createUserSession(t.db, { username: 'boss', role: 'admin' });
+    const refDb = (name: string, visibility: 'public' | 'private') =>
+      t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES (?, 'reference', ?, 0)", [name, visibility]).lastInsertRowid;
+    const player = (databaseId: number, name: string) => {
+      const id = t.db.run(
+        `INSERT INTO reference_players (database_id, name_key, name, search_name, games, updated_at) VALUES (?, ?, ?, ?, 3, 0)`,
+        [databaseId, foldName(name), name, foldName(name)],
+      ).lastInsertRowid;
+      for (const w of foldName(name).split(' ')) t.db.run('INSERT INTO reference_player_words (word, player_id) VALUES (?, ?)', [w, id]);
+    };
+    const open = refDb('Open archive', 'public');
+    const licensed = refDb('Licensed OTB', 'private');
+    player(open, 'Zebulon Openhand');
+    player(licensed, 'Zebulon Closedhand');
+    const src = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(open, 'Zebulon Openhand'), displayName: 'Zebulon Openhand', databaseId: open });
+    addProfile('my-zebulon', 'My Zebulon', me.userId, 'private', [[src, false]]);
+
+    const names = (r: SearchResults) => r.reference.map(p => p.name).sort();
+    expect(names(await results(me, 'zebulon'))).toEqual(['Zebulon Openhand']);
+    expect(names(await results(admin, 'zebulon'))).toEqual(['Zebulon Closedhand', 'Zebulon Openhand']);
+    // My private profile with that pgn source is the player's profile for me, not for others.
+    expect((await results(me, 'zebulon')).reference[0]!.profileSlug).toBe('my-zebulon');
+    expect((await results(other, 'zebulon')).reference[0]!.profileSlug).toBeNull();
   });
 
   it('puts the exact match first and confirms Chess.com accounts', async () => {
