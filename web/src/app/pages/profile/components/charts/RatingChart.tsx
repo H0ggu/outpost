@@ -43,6 +43,30 @@ function ratingAt(points: ChartSeries['points'], t: number): readonly [number, n
   return i >= 0 ? points[i]! : null;
 }
 
+/** Rough width of an 11px axis label (`.chart-axis-text`), in px. */
+const labelWidth = (label: string): number => label.length * 6.5 + 6;
+
+/**
+ * The x ticks whose labels don't overlap. d3's day ticks restart on each month (… 29, 31, then the
+ * 1st, labelled with the month's name), so two can land a few pixels apart; of two colliding
+ * ticks the coarser one (a month or year start) stays, otherwise the earlier one.
+ */
+export function spacedTicks(ticks: readonly Date[], pos: (t: Date) => number, label: (t: Date) => string, utc: boolean): Date[] {
+  const monthStart = (t: Date) =>
+    (utc ? t.getUTCDate() : t.getDate()) === 1 &&
+    (utc ? t.getUTCHours() + t.getUTCMinutes() : t.getHours() + t.getMinutes()) === 0;
+  const kept: Date[] = [];
+  for (const t of ticks) {
+    const prev = kept[kept.length - 1];
+    if (prev && pos(t) - pos(prev) < (labelWidth(label(prev)) + labelWidth(label(t))) / 2) {
+      if (monthStart(t) && !monthStart(prev)) kept[kept.length - 1] = t;
+      continue;
+    }
+    kept.push(t);
+  }
+  return kept;
+}
+
 /** A responsive rating chart. */
 export function RatingChart({ series, height = 300, xDomain, timeZone, title, compact = false }: RatingChartProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -81,8 +105,8 @@ export function RatingChart({ series, height = 300, xDomain, timeZone, title, co
   const path = line<readonly [number, number]>()
     .x(d => x(d[0]))
     .y(d => y(d[1]));
-  const xTicks = x.ticks(Math.max(2, Math.floor(innerW / (compact ? 110 : 90))));
   const xFmt = x.tickFormat();
+  const xTicks = spacedTicks(x.ticks(Math.max(2, Math.floor(innerW / (compact ? 110 : 90)))), x, xFmt, utc);
   const yTicks = y.ticks(compact ? 3 : 5);
 
   const onMove = (e: PointerEvent<SVGSVGElement>) => {

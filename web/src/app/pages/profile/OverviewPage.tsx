@@ -124,7 +124,11 @@ function RatingCard({ slug, o, header, timeZone }: { slug: string; o: OverviewSt
     ),
     header.sources,
   );
+  // The axis spans the games of the last year (to today), not always a whole year, so a profile
+  // with a month of games isn't squashed against the right edge.
   const now = Date.now();
+  const firstT = Math.min(now - 7 * 86_400_000, ...series.map(s => s.points[0]?.[0] ?? now));
+  const xDomain: [number, number] = [Math.max(now - 365 * 86_400_000, firstT), now];
   return (
     <Card
       title="Rating · last year"
@@ -139,7 +143,7 @@ function RatingCard({ slug, o, header, timeZone }: { slug: string; o: OverviewSt
         <EmptyState icon={licon.LineGraph} title="No rating history in the last year" />
       ) : (
         <>
-          <RatingChart series={series} height={180} timeZone={timeZone} title="Rating over the last year" compact xDomain={[now - 365 * 86_400_000, now]} />
+          <RatingChart series={series} height={180} timeZone={timeZone} title="Rating over the last year" compact xDomain={xDomain} />
           {series.length > 1 && (
             <ul className="series-legend">
               {series.map(s => (

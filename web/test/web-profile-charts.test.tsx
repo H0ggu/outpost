@@ -4,7 +4,9 @@
  */
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { scaleTime, scaleUtc } from 'd3-scale';
 import { browserTimeZone } from '../src/app/api/hooks.ts';
+import { spacedTicks } from '../src/app/pages/profile/components/charts/RatingChart.tsx';
 import { activity, CHESSCOM_ID, LICHESS_ID, profileHeader, worldMap } from './web-profile-fixtures.ts';
 import { renderProfile, searchOf } from './web-profile-render.tsx';
 
@@ -308,5 +310,27 @@ describe('Rating tab', () => {
     renderProfile(`${SLUG}/rating`, { patch: { rating: () => ({ series: [], averages: [{ n: null, games: 0, avgRating: null, avgOppRating: null, score: null }] }) } });
     expect(await screen.findByText('No rated games in this selection')).toBeTruthy();
     expect(screen.getByText('No games in this selection')).toBeTruthy();
+  });
+});
+
+describe('rating chart axis', () => {
+  it('drops a day tick that would overlap the next month’s label', () => {
+    // A month of games (Oct 23 – Nov 23) on a 1,100 px axis in the browser's zone: d3 ticks every
+    // other day of the month, so Oct 31 and Nov 1 ("November") land 35 px apart.
+    const x = scaleTime().domain([new Date(2026, 9, 23), new Date(2026, 10, 23)]).range([0, 1100]);
+    const fmt = x.tickFormat();
+    const raw = x.ticks(12);
+    expect(raw.map(fmt)).toContain('Sat 31');
+    const kept = spacedTicks(raw, x, fmt, false);
+    const labels = kept.map(fmt);
+    expect(labels).toContain('November');
+    expect(labels).not.toContain('Sat 31');
+    for (let i = 1; i < kept.length; i++) {
+      const gap = x(kept[i]!) - x(kept[i - 1]!);
+      expect(gap).toBeGreaterThanOrEqual((fmt(kept[i]!).length * 6.5 + 6 + fmt(kept[i - 1]!).length * 6.5 + 6) / 2);
+    }
+    // Ticks that already fit are all kept.
+    const wide = scaleUtc().domain([Date.UTC(2025, 0, 1), Date.UTC(2026, 0, 1)]).range([0, 1100]);
+    expect(spacedTicks(wide.ticks(12), wide, wide.tickFormat(), true)).toHaveLength(wide.ticks(12).length);
   });
 });
