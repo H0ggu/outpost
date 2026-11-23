@@ -6,11 +6,16 @@
  * map counts those as `pendingLookups`). After a sync, `queueOpponentLookups` adds the source's
  * new opponents and enqueues one `geo` job per site (dedupe key `geo:<site>`, background priority).
  * The job works through every pending row of its site:
- * - Lichess: `POST /api/users` with up to 300 ids per request (country from `profile.flag`);
- * - Chess.com: `/pub/player/{u}` one at a time (serial, as the PubAPI asks).
+ * - Lichess: `POST /api/users` with up to 300 ids per request (country from `profile.flag`), no
+ *   limit per run;
+ * - Chess.com: `/pub/player/{u}` one at a time (serial, as the PubAPI asks), the most recently met
+ *   opponents first, at most `CHESSCOM_LOOKUPS_PER_JOB` per run (decision 20: a very active
+ *   player's first import would otherwise send thousands of requests in one go). A capped run ends
+ *   normally (`counts.capped`); Chess.com lookups then pause for `CHESSCOM_CAP_PAUSE_MS`, and the
+ *   next scheduled sweep continues where it stopped.
  * It yields its lane (`RequeueJob`) after a chunk so syncs don't wait behind thousands of
- * lookups; a scheduler sweep re-queues lookups that no job is handling. Unknown and closed
- * accounts are stored as looked up with no country. Chess.com titles found here are also
+ * lookups; a scheduler sweep (hourly) re-queues lookups that no job is handling. Unknown and
+ * closed accounts are stored as looked up with no country. Chess.com titles found here are also
  * written to the games of that site (`backfillPlayerTitle`), which carry none.
  */
 import type { EpochMs, JobInfo } from '@outpost/shared/api';
@@ -33,6 +38,10 @@ export const LICHESS_USERS_BATCH = 300;
 export const LICHESS_BATCHES_PER_RUN = 10;
 /** Chess.com profiles per run before the job yields its lane. */
 export const CHESSCOM_LOOKUPS_PER_RUN = 50;
+/** Chess.com profile requests per job, over all its runs (decision 20); the rest wait for the next sweep. */
+export const CHESSCOM_LOOKUPS_PER_JOB = 1_000;
+/** After a job stopped at `CHESSCOM_LOOKUPS_PER_JOB`, no Chess.com lookup job starts for this long. */
+export const CHESSCOM_CAP_PAUSE_MS = 50 * 60_000;
 /** After a lookup job failed, the sweep leaves the site alone this long. */
 export const GEO_RETRY_AFTER_ERROR_MS = 60 * 60_000;
 
@@ -41,9 +50,25 @@ export function pendingLookupCount(db: Db, site: GeoSite): number {
   return db.value<number>('SELECT COUNT(*) FROM players_cache WHERE kind = ? AND fetched_at IS NULL', [site]) ?? 0;
 }
 
-/** Enqueues the site's lookup job when rows are pending (deduplicated). Returns it, or null. */
-export function enqueuePendingLookups(db: Db, site: GeoSite): JobInfo | null {
+/** Whether a Chess.com lookup job stopped at its cap less than `CHESSCOM_CAP_PAUSE_MS` ago. */
+function chesscomCapPaused(db: Db, now: EpochMs): boolean {
+  return (
+    db.value(
+      `SELECT 1 FROM jobs WHERE kind = 'geo' AND dedupe_key = ? AND status = 'done' AND finished_at > ?
+          AND json_extract(progress_json, '$.counts.capped') = 1
+        LIMIT 1`,
+      [geoDedupeKey('chesscom'), now - CHESSCOM_CAP_PAUSE_MS],
+    ) !== undefined
+  );
+}
+
+/**
+ * Enqueues the site's lookup job when rows are pending (deduplicated). Returns it, or null (also
+ * while Chess.com lookups pause after a capped run).
+ */
+export function enqueuePendingLookups(db: Db, site: GeoSite, now: EpochMs = Date.now()): JobInfo | null {
   if (pendingLookupCount(db, site) === 0) return null;
+  if (site === 'chesscom' && chesscomCapPaused(db, now)) return null;
   return enqueueJob(db, 'geo', { kind: site, keys: [] }, { priority: JOB_PRIORITY.background, dedupeKey: geoDedupeKey(site), userId: null });
 }
 
@@ -74,7 +99,7 @@ export function sweepPendingLookups(db: Db, now: EpochMs): JobInfo[] {
       [geoDedupeKey(site), now - GEO_RETRY_AFTER_ERROR_MS],
     );
     if (recentError) continue;
-    const job = enqueuePendingLookups(db, site);
+    const job = enqueuePendingLookups(db, site, now);
     if (job) out.push(job);
   }
   return out;
@@ -142,39 +167,36 @@ async function lookUpLichess(ctx: JobContext<'geo'>): Promise<void> {
   }
 }
 
+/**
+ * Pending Chess.com opponents, the most recently met first (by their latest game with any source;
+ * opponents without games last), then by name.
+ */
+function nextChesscomKeys(db: Db, limit: number): string[] {
+  return db
+    .all<{ key: string }>(
+      `SELECT pc.key FROM players_cache pc
+        WHERE pc.kind = 'chesscom' AND pc.fetched_at IS NULL
+        ORDER BY (SELECT MAX(pg.ended_at) FROM player_games pg WHERE pg.opp_source_kind = 'chesscom' AND pg.opp_key = pc.key) DESC NULLS LAST,
+                 pc.key
+        LIMIT ?`,
+      [limit],
+    )
+    .map(r => r.key);
+}
+
+/**
+ * One run of the Chess.com lookup job: a chunk of `CHESSCOM_LOOKUPS_PER_RUN` players, then it
+ * yields the lane (`RequeueJob`) while players are pending, or ends once the job has made
+ * `CHESSCOM_LOOKUPS_PER_JOB` lookups over all its runs (`counts.capped`).
+ */
 async function lookUpChesscom(ctx: JobContext<'geo'>): Promise<void> {
-  const { db, upstream, signal } = ctx;
+  const { db, signal } = ctx;
   let done = previousDone(ctx);
   let found = 0;
-  for (let n = 0; ; n++) {
+  const room = CHESSCOM_LOOKUPS_PER_JOB - done;
+  for (const key of room > 0 ? nextChesscomKeys(db, Math.min(CHESSCOM_LOOKUPS_PER_RUN, room)) : []) {
     throwIfAborted(signal);
-    const row = db.get<{ key: string }>("SELECT key FROM players_cache WHERE kind = 'chesscom' AND fetched_at IS NULL ORDER BY key LIMIT 1");
-    if (!row) break;
-    if (n >= CHESSCOM_LOOKUPS_PER_RUN) throw new RequeueJob(`Looked up ${done} Chess.com players; yielding the lane`);
-    const key = row.key;
-    if (!CHESSCOM_USERNAME_RE.test(key)) markUnknown(db, 'chesscom', key, Date.now());
-    else {
-      const res = await upstream.fetch(`${UPSTREAM.chesscom}/pub/player/${encodeURIComponent(key)}`, {
-        signal,
-        allowStatuses: [404, 410],
-        headers: { accept: 'application/json' },
-      });
-      if (res.status === 404 || res.status === 410) {
-        void res.body?.cancel().catch(() => {});
-        markUnknown(db, 'chesscom', key, Date.now());
-      } else {
-        const p = await readJsonBody<ChesscomProfile>(res, CHESSCOM_HOST, signal);
-        if (!p || typeof p.username !== 'string') markUnknown(db, 'chesscom', key, Date.now());
-        else {
-          found++;
-          const title = titleOrNull(p.title);
-          db.tx(() => {
-            upsertPlayerCache(db, 'chesscom', key, { country: countryFromChesscom(p.country), title, name: chesscomDisplayName(p) }, Date.now());
-            if (title) backfillPlayerTitle(db, 'chesscom', key, title);
-          });
-        }
-      }
-    }
+    if (await lookUpChesscomPlayer(ctx, key)) found++;
     done++;
     ctx.progress({
       done,
@@ -183,6 +205,45 @@ async function lookUpChesscom(ctx: JobContext<'geo'>): Promise<void> {
       counts: { found },
     });
   }
+  const pending = pendingLookupCount(db, 'chesscom');
+  if (pending === 0) return;
+  if (done < CHESSCOM_LOOKUPS_PER_JOB) throw new RequeueJob(`Looked up ${done} Chess.com players; yielding the lane`);
+  ctx.progress({
+    done,
+    total: done + pending,
+    message: `Looked up ${done} Chess.com players; ${pending} more continue at the next scheduled run`,
+    counts: { found, capped: 1 },
+  });
+}
+
+/** Looks one Chess.com player up and stores the answer. Returns whether the account exists. */
+async function lookUpChesscomPlayer(ctx: JobContext<'geo'>, key: string): Promise<boolean> {
+  const { db, upstream, signal } = ctx;
+  if (!CHESSCOM_USERNAME_RE.test(key)) {
+    markUnknown(db, 'chesscom', key, Date.now());
+    return false;
+  }
+  const res = await upstream.fetch(`${UPSTREAM.chesscom}/pub/player/${encodeURIComponent(key)}`, {
+    signal,
+    allowStatuses: [404, 410],
+    headers: { accept: 'application/json' },
+  });
+  if (res.status === 404 || res.status === 410) {
+    void res.body?.cancel().catch(() => {});
+    markUnknown(db, 'chesscom', key, Date.now());
+    return false;
+  }
+  const p = await readJsonBody<ChesscomProfile>(res, CHESSCOM_HOST, signal);
+  if (!p || typeof p.username !== 'string') {
+    markUnknown(db, 'chesscom', key, Date.now());
+    return false;
+  }
+  const title = titleOrNull(p.title);
+  db.tx(() => {
+    upsertPlayerCache(db, 'chesscom', key, { country: countryFromChesscom(p.country), title, name: chesscomDisplayName(p) }, Date.now());
+    if (title) backfillPlayerTitle(db, 'chesscom', key, title);
+  });
+  return true;
 }
 
 /**

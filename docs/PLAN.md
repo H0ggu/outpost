@@ -307,7 +307,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 - **After inserting games:**
   1. Classify the opening: the deepest ply among the first 40 whose EPD matches lichess chess-openings.
   2. Write `positions` (50 plies) and `player_games` (one row per source that appears in the game).
-  3. Queue opponent geo lookups: Lichess `POST /api/users` (300 ids per batch); Chess.com `/pub/player/{u}` serially at low priority.
+  3. Queue opponent geo lookups: Lichess `POST /api/users` (300 ids per batch, no limit per run); Chess.com `/pub/player/{u}` serially at low priority, most recently met opponents first, at most 1,000 requests per run (the hourly sweep continues after a pause).
 - **Scheduling.** Daily auto refresh at `autoRefreshHourUtc` for profiles with `auto_refresh`. Manual updates enforce `updateCooldownMinutes`. The initial import can be limited to the last N months (`initialSyncMonths`).
 
 ## 8. Studio (vendored lila analyse)

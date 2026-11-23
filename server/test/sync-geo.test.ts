@@ -7,7 +7,14 @@ import {
   queueOpponentLookups,
   sweepPendingLookups,
 } from '../src/sync/index.ts';
-import { CHESSCOM_LOOKUPS_PER_RUN, LICHESS_BATCHES_PER_RUN, LICHESS_USERS_BATCH } from '../src/sync/geo.ts';
+import {
+  CHESSCOM_CAP_PAUSE_MS,
+  CHESSCOM_LOOKUPS_PER_JOB,
+  CHESSCOM_LOOKUPS_PER_RUN,
+  enqueuePendingLookups,
+  LICHESS_BATCHES_PER_RUN,
+  LICHESS_USERS_BATCH,
+} from '../src/sync/geo.ts';
 import { createSource, makeJobContext, makeTestApp, testGame, type TestApp } from './helpers.ts';
 import { fakeFetch, fixtureJson, jsonResponse, statusResponse, type FakeFetch } from './sync-fakes.ts';
 
@@ -91,10 +98,11 @@ describe('opponent geo lookups', () => {
     for (const key of ['titled', 'gone', 'plainuser']) t.db.run("INSERT INTO players_cache (kind, key, fetched_at) VALUES ('chesscom', ?, NULL)", [key]);
     const { ctx } = makeJobContext(t, 'geo', { kind: 'chesscom', keys: [] });
     await geoHandler(ctx);
+    // The opponent of a stored game first (decision 20: most recent first), then by name.
     expect(fake.callsTo(/^\/pub\/player\//).map(c => c.url.pathname)).toEqual([
+      '/pub/player/titled',
       '/pub/player/gone',
       '/pub/player/plainuser',
-      '/pub/player/titled',
     ]);
     expect(t.db.all("SELECT key, country, title, name FROM players_cache WHERE kind = 'chesscom' ORDER BY key")).toEqual([
       { key: 'gone', country: null, title: null, name: null },
@@ -119,6 +127,49 @@ describe('opponent geo lookups', () => {
     const second = makeJobContext(t, 'geo', { kind: 'chesscom', keys: [] }, { jobId });
     await geoHandler(second.ctx);
     expect(second.updates.at(-1)).toMatchObject({ done: CHESSCOM_LOOKUPS_PER_RUN + 3, total: CHESSCOM_LOOKUPS_PER_RUN + 3 });
+  });
+
+  it('looks the most recently met Chess.com opponents up first', async () => {
+    createSource(t.db, { kind: 'chesscom', key: 'hikaru' });
+    const day = (d: number) => Date.UTC(2026, 0, d);
+    const game = (id: string, opp: string, d: number) =>
+      insertGame(t.db, testGame({ origin: 'chesscom', originId: id, white: { name: 'Hikaru' }, black: { name: opp }, startedAt: day(d) - 600_000, endedAt: day(d) }));
+    game('o1', 'oldfoe', 1);
+    game('o2', 'newfoe', 20);
+    game('o3', 'midfoe', 10);
+    game('o4', 'oldfoe', 5); // its latest game counts
+    for (const key of ['aaa-nogames', 'midfoe', 'newfoe', 'oldfoe']) t.db.run("INSERT INTO players_cache (kind, key, fetched_at) VALUES ('chesscom', ?, NULL)", [key]);
+    await geoHandler(makeJobContext(t, 'geo', { kind: 'chesscom', keys: [] }).ctx);
+    expect(fake.callsTo(/^\/pub\/player\//).map(c => c.url.pathname.split('/').pop())).toEqual(['newfoe', 'midfoe', 'oldfoe', 'aaa-nogames']);
+  });
+
+  it(`stops a Chess.com job after ${CHESSCOM_LOOKUPS_PER_JOB} lookups and pauses until the next sweep`, async () => {
+    t.db.tx(() => {
+      for (let i = 0; i < 20; i++) t.db.run("INSERT INTO players_cache (kind, key, fetched_at) VALUES ('chesscom', ?, NULL)", [`user${String(i).padStart(3, '0')}`]);
+    });
+    // A job that already made all but 10 of its lookups in earlier runs.
+    const already = CHESSCOM_LOOKUPS_PER_JOB - 10;
+    const jobId = t.db.run(
+      "INSERT INTO jobs (kind, lane, payload_json, status, created_at, dedupe_key, progress_json) VALUES ('geo', 'chesscom', '{}', 'running', 0, 'geo:chesscom', ?)",
+      [JSON.stringify({ done: already, total: already + 20, message: null })],
+    ).lastInsertRowid;
+    const run = makeJobContext(t, 'geo', { kind: 'chesscom', keys: [] }, { jobId });
+    await geoHandler(run.ctx); // ends normally: no RequeueJob
+    expect(fake.callsTo(/^\/pub\/player\//)).toHaveLength(10);
+    expect(pendingLookupCount(t.db, 'chesscom')).toBe(10);
+    const last = run.updates.at(-1)!;
+    expect(last).toMatchObject({ done: CHESSCOM_LOOKUPS_PER_JOB, total: CHESSCOM_LOOKUPS_PER_JOB + 10, counts: { found: 10, capped: 1 } });
+    expect(last.message).toMatch(/10 more continue at the next scheduled run/);
+
+    // The worker marks it done with that progress; Chess.com lookups then pause (Lichess does not).
+    const now = Date.now();
+    t.db.run("UPDATE jobs SET status = 'done', finished_at = ?, progress_json = ? WHERE id = ?", [now, JSON.stringify(last), jobId]);
+    t.db.run("INSERT INTO players_cache (kind, key, fetched_at) VALUES ('lichess', 'somebody', NULL)");
+    expect(enqueuePendingLookups(t.db, 'chesscom', now)).toBeNull();
+    expect(sweepPendingLookups(t.db, now + 30 * 60_000).map(j => j.lane)).toEqual(['lichess']);
+    const next = sweepPendingLookups(t.db, now + CHESSCOM_CAP_PAUSE_MS + 1).find(j => j.lane === 'chesscom');
+    expect(next).toMatchObject({ kind: 'geo', priority: -10 });
+    expect(next!.id).not.toBe(jobId);
   });
 
   it('looks explicit keys up again and stops when cancelled', async () => {
