@@ -203,7 +203,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 ### Session, account and admin
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/session` | `{user|null, setupRequired, signupMode, anonymousBrowsing, version, sourceUrl?}` |
+| GET | `/api/session` | `{user|null, setupRequired, signupMode, anonymousBrowsing, hasLichessToken, version, sourceUrl?}`; `hasLichessToken` says whether a token is configured (never the token), so the UI explains the Lichess explorer and broadcasts instead of asking for a 503 |
 | POST | `/api/setup` | `{token, username, password}` creates the first admin |
 | POST | `/api/login` | `{username, password, totp?}` |
 | POST | `/api/logout` | |
@@ -226,7 +226,7 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 ### Search and profiles
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/search?q=` | `{profiles, lichess, chesscom, reference, unavailable?}`; `q` is 2–100 characters (`SEARCH_QUERY_MIN/MAX_LENGTH`) |
+| GET | `/api/search?q=` | `{profiles, lichess, chesscom, reference, unavailable?, notSearched?}`; `q` is 2–100 characters (`SEARCH_QUERY_MIN/MAX_LENGTH`). Each list is best hit first (exact username, has a profile here, seen in imported games, titled); `notSearched` names the sites `q` was not sent to because it can't be a username there |
 | GET | `/api/profiles` | `?scope=mine\|public\|recent` |
 | POST | `/api/profiles` | `{displayName, slug?, sources:[{kind,key,databaseId?}]}`; for `pgn`, `key` is the player's name as written in the PGN and `databaseId` is required |
 | GET | `/api/profiles/:slug` | `ProfileHeader`: name, sources with sync status, visibility, owner?, bookmarked, totals, current ratings per source and time class, lastUpdated, queue info |

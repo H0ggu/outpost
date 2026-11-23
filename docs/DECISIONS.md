@@ -69,6 +69,17 @@ I12. **The broadcasts page lists upcoming tours** (`BroadcastsResponse.upcoming`
 I13. **Kit fixes the page modules had worked around**: icon-font glyphs out of accessible names (CSS alt text), the tab underline clipped by the scrolling tab bar, the doubled search box in the header, a `HydrateFallback`; `useDebouncedValue` moved into the kit; the unused `StubPage` removed.
 I14. **Wording follows the server**: the Lichess token is needed for the Lichess opening explorer and broadcasts, not for Outpost's own player explorer (decision 23); the settings page names the Studio's layout presets as the Studio does; the auth throttles' wait (`retryAfterSec`) is shown; job counters are worded; the PGN download says each side is named after its account (decision 28).
 
+## Taken after the end-to-end run (2026-11-23)
+Fixes of the live end-to-end test's findings where more than one fix was possible. Same format.
+
+E1. **CSP `font-src 'self' data:`** (PLAN §10): pgn-viewer embeds its control icons as a data-URI font. A data: font can't fetch or run anything, and the alternative (overriding the font face with a self-hosted copy) would have to track pgn-viewer's glyph set.
+E2. **`SessionInfo.hasLichessToken`**: whether a token is configured, never the token. The Studio explorer, `/explorer` and the broadcasts pages explain a missing token instead of asking for a 503; anyone could already learn it from a 503 `no_token`.
+E3. **`precheck()` before a query**: hooks for endpoints that need a session (or the token) answer the 401 / 503 `no_token` the server would give from the cached session, without the request (a "no" older than 30 s is checked once more). Pages already rendered those errors; the browser no longer logs failed requests for them.
+E4. **Search order**: each site list is best hit first (exact username, a profile here, seen in imported games, titled, then upstream order), and the list with the best hit is shown first; `SearchResults.notSearched` tells "not asked" from "no match".
+E5. **W/D/L bar labels are always percentages**, shown where they fit (a container query per segment) instead of lila's fixed 12% / 20% rule, which wrote "16" next to a count of 13 draws.
+E6. **Openings tables page locally** (20 lines a page): the endpoint's rows are bounded by the openings book, so the contract keeps returning them all.
+E7. **Expected upstream states are not errors in the log**: 503 `no_token` is info, other upstream 502/503s are warnings without a stack.
+
 ### Kept as the modules left them (open for the owner)
 - Chess.com geo lookups: after a capped run (1,000 requests) no new Chess.com lookup job starts for 50 minutes, so the hourly sweep continues; a fresh sync's new opponents wait for that too (about 1,000 lookups per hour at most).
 - Decision 8 is met at setup: `POST /api/me/totp/setup` needs the password, `enable` only a code for the secret that call created.
