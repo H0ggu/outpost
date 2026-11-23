@@ -2,7 +2,7 @@ import type { ProfileHeader } from '@outpost/shared/api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { insertGame } from '../src/chess/store.ts';
 import { collectOrphanGames } from '../src/profiles/service.ts';
-import { fideRatings, snapshotRatings, sourceUrl } from '../src/profiles/sources.ts';
+import { chesscomDisplayName, fideRatings, snapshotRatings, sourceUrl } from '../src/profiles/sources.ts';
 import { createUserSession, makeTestApp, mutationHeaders, testGame, type TestApp } from './helpers.ts';
 import { fakeUpstream, json, networkDown } from './fixtures/profiles/upstream.ts';
 
@@ -101,6 +101,10 @@ describe('FIDE sources and source helpers', () => {
     expect(snapshotRatings('fide', JSON.stringify(lichess)).size).toBe(0);
     expect(sourceUrl('chesscom', 'hikaru', 'Hikaru')).toBe('https://www.chess.com/member/Hikaru');
     expect(sourceUrl('pgn', '1:x', 'x')).toBeNull();
+    expect(chesscomDisplayName('https://www.chess.com/member/Hikaru', 'hikaru')).toBe('Hikaru');
+    expect(chesscomDisplayName('https://www.chess.com/member/%E0%A4%A', 'hikaru')).toBe('hikaru');
+    expect(chesscomDisplayName('https://www.chess.com/member/Someone', 'hikaru')).toBe('hikaru');
+    expect(chesscomDisplayName(undefined, 'hikaru')).toBe('hikaru');
   });
 
   it('collects orphaned games in batches, keeping referenced and database games', async () => {

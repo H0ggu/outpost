@@ -257,9 +257,7 @@ async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: stri
   } catch {
     stats = null;
   }
-  // `url` keeps the display case (https://www.chess.com/member/Hikaru); `username` is lowercase.
-  const fromUrl = typeof player.url === 'string' ? /\/member\/([^/?#]+)$/.exec(player.url)?.[1] : undefined;
-  const display = fromUrl && playerKey(decodeURIComponent(fromUrl)) === key ? decodeURIComponent(fromUrl) : player.username;
+  const display = chesscomDisplayName(player.url, player.username);
   const countryCode = typeof player.country === 'string' ? player.country.slice(player.country.lastIndexOf('/') + 1) : null;
   return {
     kind: 'chesscom',
@@ -310,6 +308,22 @@ async function checkFideId(db: Db, upstream: Upstream, fideId: string, fail: (m:
     profileJson: fide ? JSON.stringify(fide) : null,
     existingId: null,
   };
+}
+
+/**
+ * Display-case Chess.com username: `url` keeps it (https://www.chess.com/member/Hikaru) while
+ * `username` is lowercase. Falls back to `username` when the URL doesn't name the same account.
+ */
+export function chesscomDisplayName(url: unknown, username: string): string {
+  const fromUrl = typeof url === 'string' ? /\/member\/([^/?#]+)$/.exec(url)?.[1] : undefined;
+  if (!fromUrl) return username;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(fromUrl);
+  } catch {
+    return username;
+  }
+  return playerKey(decoded) === playerKey(username) ? decoded : username;
 }
 
 /** Inserts a resolved source (or finds the row another request created meanwhile). */

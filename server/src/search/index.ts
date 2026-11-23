@@ -18,7 +18,7 @@ import { isTitle, playerKey } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
 import type { AuthUser } from '../http/types.ts';
 import { UPSTREAM, type Upstream } from '../http/upstream.ts';
-import { CHESSCOM_USERNAME_RE, LICHESS_USERNAME_RE } from '../profiles/sources.ts';
+import { CHESSCOM_USERNAME_RE, chesscomDisplayName, LICHESS_USERNAME_RE } from '../profiles/sources.ts';
 import { profileSummaries } from '../profiles/service.ts';
 import { searchReferencePlayers } from '../reference/index.ts';
 import { likeContains } from '../stats/index.ts';
@@ -120,9 +120,7 @@ async function chesscomExact(deps: SearchDeps, q: string): Promise<UpstreamHit[]
   if (res.status === 200) {
     const player = (await res.json()) as { username?: unknown; url?: unknown; title?: unknown } | null;
     if (player && typeof player.username === 'string') {
-      const fromUrl = typeof player.url === 'string' ? /\/member\/([^/?#]+)$/.exec(player.url)?.[1] : undefined;
-      const display = fromUrl ? decodeURIComponent(fromUrl) : player.username;
-      hits = [{ username: playerKey(display) === lower ? display : player.username, title: titleOf(player.title) }];
+      hits = [{ username: chesscomDisplayName(player.url, player.username), title: titleOf(player.title) }];
     }
   } else void res.body?.cancel().catch(() => {});
   deps.cache.set(key, hits);
