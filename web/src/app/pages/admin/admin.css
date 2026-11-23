@@ -1,0 +1,653 @@
+/*
+ * Admin pages (/admin/*): settings sections, users and invites, jobs, reference DB month grid
+ * and import. Prefixed `adm-`; tokens only (lichess-theme.css), built on the kit's .box/.slist.
+ */
+
+.adm-pad {
+  padding: 0 var(--box-padding) 1rem;
+}
+
+.adm-pad--top {
+  padding-top: 1rem;
+}
+
+.adm-pad > .acc-flash:last-child {
+  margin-bottom: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Settings
+ * ------------------------------------------------------------------------ */
+
+.adm-section {
+  padding: 0 0 0.6rem;
+  margin-bottom: 1.4rem;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.adm-section:last-of-type {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+
+.adm-section > h3 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--c-font-dim);
+  margin: 0 0 1rem;
+}
+
+.adm-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 0 1.25rem;
+}
+
+.adm-secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.adm-secret .form-control {
+  flex: 1 1 16rem;
+  width: auto;
+  min-width: 0;
+}
+
+.adm-secret__value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-basis: 100%;
+  font-family: var(--font-mono);
+  color: var(--c-font-clear);
+}
+
+.adm-savebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin: 0 calc(-1 * var(--box-padding)) calc(-1 * var(--box-padding));
+  padding: 0.8rem var(--box-padding);
+  border-top: 1px solid var(--c-border);
+  border-radius: 0 0 var(--box-radius) var(--box-radius);
+  background: var(--c-bg-box);
+}
+
+.adm-savebar > .muted {
+  margin-right: auto;
+}
+
+.adm-savebar--dirty {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  box-shadow: 0 -6px 16px rgb(0 0 0 / 0.25);
+}
+
+.adm-savebar--dirty > .muted {
+  color: var(--c-brag);
+}
+
+/* ---------------------------------------------------------------------------
+ * Users and invites
+ * ------------------------------------------------------------------------ */
+
+.adm-user {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.adm-user__name {
+  color: var(--c-font-clear);
+  overflow-wrap: anywhere;
+}
+
+.adm-user__name > i {
+  color: var(--c-font-dim);
+  margin-right: 0.35em;
+}
+
+.adm-user__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.adm-user__tags:empty {
+  display: none;
+}
+
+.adm-users td,
+.adm-invites td {
+  vertical-align: middle;
+}
+
+.adm-invite-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.adm-invite-form label {
+  color: var(--c-font-dim);
+}
+
+.adm-invite-form .form-control {
+  width: auto;
+}
+
+.adm-fresh {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--c-good) 50%, transparent);
+  border-radius: var(--box-radius);
+  background: color-mix(in srgb, var(--c-good) 10%, var(--c-bg-box));
+}
+
+.adm-fresh > span {
+  flex-basis: 100%;
+  color: var(--c-font-clear);
+}
+
+.adm-fresh .form-control {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.adm-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.adm-invite__code {
+  font-family: var(--font-mono);
+  color: var(--c-font-clear);
+  overflow-wrap: anywhere;
+}
+
+.adm-invite__state {
+  font-size: 0.85em;
+}
+
+.adm-invite__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.3rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Jobs
+ * ------------------------------------------------------------------------ */
+
+.adm-jobs-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.adm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.adm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: var(--c-bg-zebra);
+  color: var(--c-font);
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.adm-chip:hover {
+  border-color: var(--c-border-light);
+  color: var(--c-font-clear);
+}
+
+.adm-chip.active {
+  border-color: var(--c-secondary);
+  background: var(--c-secondary);
+  color: #fff;
+}
+
+.adm-chip__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--c-font-dim);
+}
+
+.adm-chip.active .adm-chip__count {
+  color: rgb(255 255 255 / 0.85);
+}
+
+.adm-chip--error:not(.active) .adm-chip__count {
+  color: var(--c-bad);
+}
+
+.adm-chip--running:not(.active) .adm-chip__count {
+  color: var(--c-primary);
+}
+
+.adm-selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+}
+
+.adm-selects label,
+.adm-inline-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--c-font-dim);
+  font-size: 0.9em;
+}
+
+.adm-selects .form-control,
+.adm-inline-select .form-control {
+  width: auto;
+  max-width: 100%;
+}
+
+.adm-jobs td {
+  vertical-align: top;
+}
+
+.adm-job {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 12rem;
+  max-width: 38rem;
+}
+
+.adm-job__label {
+  color: var(--c-font-clear);
+  overflow-wrap: anywhere;
+}
+
+.adm-job__meta {
+  font-size: 0.82em;
+  color: var(--c-font-dimmer);
+}
+
+.adm-job__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+
+.adm-job__text {
+  font-size: 0.85em;
+  color: var(--c-font-dim);
+  overflow-wrap: anywhere;
+}
+
+.adm-job__error {
+  font-size: 0.85em;
+  color: var(--c-bad);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+
+.adm-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  padding: 1rem;
+  border-top: 1px solid var(--c-border);
+}
+
+.box__top__actions .acc-toggle-row {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Reference DB
+ * ------------------------------------------------------------------------ */
+
+.adm-refdb {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 10rem;
+}
+
+.adm-refdb__name {
+  font-weight: 500;
+}
+
+.adm-refdb__src {
+  font-size: 0.85em;
+  color: var(--c-font-dim);
+}
+
+.adm-refdb__job {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+  max-width: 26rem;
+}
+
+.adm-refdb__job .acc-badge {
+  align-self: flex-start;
+}
+
+.adm-licence {
+  overflow-wrap: anywhere;
+}
+
+.adm-attribution h3 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--c-font-dim);
+  margin-bottom: 0.4rem;
+}
+
+.adm-attribution p {
+  font-size: 0.88em;
+  color: var(--c-font-dim);
+  margin-bottom: 0.4rem;
+  overflow-wrap: anywhere;
+}
+
+/* Month picker: one row of twelve per year. */
+.adm-months {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0.8rem;
+}
+
+.adm-months__year {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.adm-months__label {
+  font-variant-numeric: tabular-nums;
+  color: var(--c-font-dim);
+  font-weight: 600;
+}
+
+.adm-months__row {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.adm-month {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.6rem;
+  padding: 0.15rem 0;
+  border: 1px solid var(--c-border);
+  border-radius: 3px;
+  background: var(--c-bg-zebra);
+  color: var(--c-font);
+  font-size: 0.8rem;
+  line-height: 1.2;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.adm-month:hover:not(:disabled) {
+  border-color: var(--c-border-light);
+  color: var(--c-font-clear);
+}
+
+.adm-month:disabled {
+  cursor: default;
+}
+
+.adm-month--none {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--c-border) 50%, transparent);
+  background: transparent;
+  cursor: default;
+}
+
+.adm-month__state {
+  min-height: 1.1em;
+  font-size: 0.72rem;
+  color: var(--c-font-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.adm-month__state i::before {
+  margin: 0 !important;
+  font-size: 0.95rem;
+}
+
+.adm-month--imported {
+  background: color-mix(in srgb, var(--c-good) 18%, var(--c-bg-box));
+  border-color: color-mix(in srgb, var(--c-good) 45%, transparent);
+}
+
+.adm-month--imported .adm-month__state {
+  color: var(--c-good);
+}
+
+.adm-month--queued,
+.adm-month--importing {
+  background: color-mix(in srgb, var(--c-primary) 14%, var(--c-bg-box));
+  border-color: color-mix(in srgb, var(--c-primary) 45%, transparent);
+}
+
+.adm-month--queued .adm-month__state,
+.adm-month--importing .adm-month__state {
+  color: var(--c-primary);
+}
+
+.adm-month--error {
+  border-color: color-mix(in srgb, var(--c-bad) 60%, transparent);
+}
+
+.adm-month--error .adm-month__state {
+  color: var(--c-bad);
+}
+
+.adm-month--on,
+.adm-month--on:hover:not(:disabled) {
+  background: var(--c-secondary);
+  border-color: var(--c-secondary);
+  color: #fff;
+}
+
+.adm-month--on .adm-month__state {
+  color: rgb(255 255 255 / 0.85);
+}
+
+.adm-spin {
+  display: inline-block;
+  animation: adm-spin 1.6s linear infinite;
+}
+
+@keyframes adm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adm-spin {
+    animation: none;
+  }
+}
+
+.adm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  font-size: 0.82em;
+  color: var(--c-font-dim);
+}
+
+.adm-legend li::before {
+  content: '';
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.4em;
+  border-radius: 2px;
+  vertical-align: -0.05em;
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-zebra);
+}
+
+.adm-legend__imported::before {
+  background: color-mix(in srgb, var(--c-good) 35%, var(--c-bg-box)) !important;
+}
+
+.adm-legend__importing::before {
+  background: color-mix(in srgb, var(--c-primary) 35%, var(--c-bg-box)) !important;
+}
+
+.adm-legend__error::before {
+  border-color: var(--c-bad) !important;
+}
+
+.adm-months__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.adm-months__spacer {
+  flex: 1;
+}
+
+@media (max-width: 560px) {
+  .adm-months__year {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.2rem;
+  }
+
+  .adm-months__row {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+/* Upload drop zone. */
+.adm-drop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.9rem;
+  padding: 1.1rem 1.2rem;
+  border: 2px dashed var(--c-border);
+  border-radius: var(--box-radius);
+  background: var(--c-bg-zebra);
+  color: var(--c-font);
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.adm-drop > i {
+  font-size: 1.6rem;
+  color: var(--c-font-dim);
+}
+
+.adm-drop > span {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.adm-drop--over {
+  border-color: var(--c-primary);
+  background: color-mix(in srgb, var(--c-primary) 10%, var(--c-bg-box));
+}
+
+.adm-drop--picked {
+  border-style: solid;
+}
+
+.adm-drop__pick {
+  cursor: pointer;
+}
+
+.adm-drop__pick:has(input:focus-visible) {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
+
+.adm-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+.adm-upload .acc-progress {
+  height: 8px;
+}
+
+.adm-job__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.adm-job__side .button {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.adm-job__side .button-secondary {
+  padding: 0.35em 0.8em;
+}
+
+/* A message with a button (e.g. "Switch to invite only" in the invites box). */
+.adm-flash-action .acc-flash__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+}
+
+.adm-flash-action .acc-flash__body > span {
+  flex: 1 1 18rem;
+}

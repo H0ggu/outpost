@@ -20,6 +20,8 @@ COPY web/package.json web/
 FROM manifests AS build
 RUN npm ci
 COPY tsconfig.base.json ./
+# The footer's "Notices and attribution" dialog bundles NOTICE.md (the web build fails without it).
+COPY NOTICE.md ./
 COPY shared shared
 COPY web web
 RUN npm run build

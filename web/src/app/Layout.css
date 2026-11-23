@@ -1,0 +1,485 @@
+/*
+ * Site chrome additions on top of the kit's header/footer rules (src/styles/components.css):
+ * skip link, phone menu with search, job indicator (lila's `data-count` bubble), banners and the
+ * footer. Tokens only, so dark / true black / light all work.
+ */
+
+/* Skip link: visible only when focused. */
+.site-skip {
+  position: absolute;
+  left: 8px;
+  top: -100px;
+  z-index: 300;
+  padding: 0.5rem 1rem;
+  background: var(--c-primary);
+  color: var(--c-over);
+  border-radius: var(--box-radius);
+}
+
+.site-skip:focus {
+  top: 8px;
+  color: var(--c-over);
+}
+
+.site-main:focus {
+  outline: none;
+}
+
+/*
+ * Header layout: every item on one line. Widths (see the media queries at the end):
+ *   ≥ 1440 px  full nav, search up to 14rem, user name up to 14rem;
+ *   1180–1439  tighter nav links, shorter user name;
+ *   ≤ 1179     the nav moves into the hamburger panel (the kit does this only at ≤ 900 px,
+ *              where 7 links, the search and the user menu no longer fit);
+ *   ≤ 480      the search moves into the panel too and the user menu shows its icon only.
+ * The search pill never shrinks below a usable width, and the title never shrinks.
+ */
+.site-header {
+  gap: clamp(0.4rem, 1.5vw, 1rem);
+}
+
+.site-title,
+.site-jobs {
+  flex-shrink: 0;
+}
+
+.site-search {
+  flex: 0 1 auto;
+  min-width: 9rem;
+}
+
+.site-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The kit's generic input[type=search] rule would draw a second box inside the pill. */
+.site-search input[type='search'] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.25rem 0;
+  color: var(--c-font-clear);
+}
+
+/* Search inside the phone menu: hidden while the header has room for its own. */
+.site-search--menu {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Running jobs (lila's notification bell with `data-count`)
+ * ------------------------------------------------------------------------ */
+
+.site-jobs {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.site-jobs__toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--box-radius);
+  background: none;
+  color: var(--c-font-page);
+  cursor: pointer;
+}
+
+.site-jobs__toggle:hover,
+.site-jobs__toggle[aria-expanded='true'] {
+  color: var(--c-font-clear);
+  background: var(--c-bg-zebra);
+}
+
+.site-jobs__toggle [data-icon]::before {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.site-jobs__toggle::after {
+  content: attr(data-count);
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 1.3em;
+  height: 1.3em;
+  padding: 0 0.3em;
+  border-radius: 0.65em;
+  background: var(--c-accent);
+  color: var(--c-over);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.3em;
+  text-align: center;
+}
+
+.site-jobs__spin {
+  display: inline-block;
+  animation: site-spin 1.6s linear infinite;
+}
+
+@keyframes site-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-jobs__spin {
+    animation: none;
+  }
+}
+
+.site-jobs__panel {
+  width: min(22rem, calc(100vw - 24px));
+  padding: 0;
+  cursor: default;
+}
+
+.site-jobs__head {
+  padding: 0.6rem 1rem;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--c-font-dim);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.site-jobs__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(60vh, 26rem);
+  overflow-y: auto;
+}
+
+.site-jobs__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--c-border) 50%, transparent);
+}
+
+.site-jobs__item:last-child {
+  border-bottom: 0;
+}
+
+.site-jobs__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.site-jobs__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-font-clear);
+}
+
+.site-jobs__text {
+  font-size: 0.85em;
+  color: var(--c-font-dim);
+  overflow-wrap: anywhere;
+}
+
+.dropdown a.site-jobs__all {
+  border-top: 1px solid var(--c-border);
+  padding: 0.6rem 1rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * User menu
+ * ------------------------------------------------------------------------ */
+
+.user-menu {
+  flex-shrink: 0;
+}
+
+.user-menu > button {
+  max-width: 14rem;
+}
+
+.user-menu__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-menu--anon {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.user-menu > a.user-menu__signup {
+  color: var(--c-primary);
+}
+
+.user-menu__who {
+  padding: 0.5rem 1rem 0.6rem;
+  font-size: 0.85em;
+  color: var(--c-font-dim);
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: 0.3rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu__who strong {
+  color: var(--c-font-clear);
+  font-weight: 500;
+}
+
+.dropdown button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* ---------------------------------------------------------------------------
+ * Banners above the page
+ * ------------------------------------------------------------------------ */
+
+.site-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 0.9rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--c-brag) 55%, transparent);
+  border-radius: var(--box-radius);
+  background: color-mix(in srgb, var(--c-brag) 12%, var(--c-bg-box));
+  color: var(--c-font-clear);
+}
+
+.site-banner > i {
+  color: var(--c-brag);
+  font-size: 1.2rem;
+}
+
+.site-banner > span {
+  flex: 1 1 16rem;
+}
+
+.site-banner--bad {
+  border-color: color-mix(in srgb, var(--c-bad) 60%, transparent);
+  background: color-mix(in srgb, var(--c-bad) 12%, var(--c-bg-box));
+}
+
+.site-banner--bad > i {
+  color: var(--c-bad);
+}
+
+/* ---------------------------------------------------------------------------
+ * Footer
+ * ------------------------------------------------------------------------ */
+
+.site-footer {
+  border-top: 1px solid var(--c-border-page);
+  margin-top: 1rem;
+}
+
+.site-footer p {
+  margin: 0 0 0.4rem;
+}
+
+.site-footer strong {
+  color: var(--c-font-dim);
+  font-weight: 500;
+}
+
+.site-footer__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--c-font-dim);
+  font-size: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.site-footer__link:hover {
+  color: var(--c-link-hover);
+}
+
+/* Theme choice for visitors (lila's dasher background picker, inline). */
+.site-theme {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.site-theme__label {
+  margin-right: 0.2rem;
+}
+
+.site-theme button {
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--c-font-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.site-theme button:hover {
+  color: var(--c-font-clear);
+  border-color: var(--c-border-light);
+}
+
+.site-theme button[aria-pressed='true'] {
+  border-color: var(--c-secondary);
+  background: var(--c-secondary);
+  color: #fff;
+}
+
+/* ---------------------------------------------------------------------------
+ * Narrower screens
+ * ------------------------------------------------------------------------ */
+
+/* Laptops: the full nav still fits with tighter links and a shorter user name. */
+@media (min-width: 1180px) and (max-width: 1439.98px) {
+  .site-header {
+    gap: 0.75rem;
+  }
+
+  .topnav a {
+    padding: 0 0.6rem;
+  }
+
+  .user-menu > button {
+    max-width: 9rem;
+  }
+}
+
+/*
+ * Below 1180 px the nav becomes the hamburger panel (the kit's ≤ 900 px rules, repeated for the
+ * wider range): a column of links under the header.
+ */
+@media (max-width: 1179.98px) {
+  .menu-toggle {
+    display: block;
+    flex-shrink: 0;
+  }
+
+  .topnav {
+    display: none;
+    position: absolute;
+    top: var(--site-header-height);
+    left: 0;
+    right: 0;
+    height: auto;
+    max-height: calc(100dvh - var(--site-header-height));
+    overflow-y: auto;
+    z-index: 150;
+    flex-direction: column;
+    background: var(--c-bg-popup);
+    border-bottom: 1px solid var(--c-border);
+    box-shadow: var(--shadow-box);
+  }
+
+  .topnav.open {
+    display: flex;
+  }
+
+  .topnav a {
+    padding: 0.9rem 1.2rem;
+    border-bottom: 0;
+    border-left: 3px solid transparent;
+    font-size: 1rem;
+  }
+
+  .topnav a.active {
+    border-left-color: var(--c-accent);
+  }
+}
+
+/* Tablets and small laptops: the panel is a drop-down under the toggle, not a full-width sheet. */
+@media (min-width: 481px) and (max-width: 1179.98px) {
+  .topnav {
+    right: auto;
+    width: 17rem;
+    border-right: 1px solid var(--c-border);
+    border-bottom-right-radius: var(--box-radius);
+  }
+}
+
+@media (max-width: 900px) {
+  .user-menu > button {
+    max-width: 10rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .site-header {
+    padding-inline: max(8px, env(safe-area-inset-left)) max(8px, env(safe-area-inset-right));
+    gap: 0.35rem;
+  }
+
+  .site-title {
+    font-size: 1.35rem;
+  }
+
+  .site-title img {
+    width: 24px;
+    height: 24px;
+  }
+
+  .site-search--menu {
+    display: flex;
+    margin: 0.8rem 1rem 0.4rem;
+    border-radius: var(--box-radius);
+  }
+
+  .site-search--menu input {
+    width: 100%;
+    max-width: none;
+    font-size: 16px; /* no zoom on focus in iOS Safari */
+  }
+
+  .user-menu > button,
+  .user-menu > a {
+    padding: 0.4rem;
+  }
+
+  .user-menu > button[data-icon]::before {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .user-menu__name,
+  .user-menu > a.user-menu__signup {
+    display: none;
+  }
+
+  .site-banner {
+    margin-inline: 8px;
+  }
+
+  /* Full-width job list under the header (the toggle is not at the screen edge). */
+  .site-jobs__panel {
+    position: fixed;
+    top: calc(var(--site-header-height) - 2px);
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+}
