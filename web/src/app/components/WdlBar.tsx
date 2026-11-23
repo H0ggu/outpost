@@ -1,7 +1,9 @@
 /**
  * Win/draw/loss bar in the style of lila's explorer `resultBar()`
- * (ui/analyse/src/explorer/explorerView.ts): widths rounded to 0.1%, a percentage label only
- * when a share is over 12%, with a `%` sign only over 20%.
+ * (ui/analyse/src/explorer/explorerView.ts): widths rounded to 0.1%. Every label is a percentage
+ * with its `%` sign (lila drops the sign under 20%, which reads like a game count next to W/D/L
+ * numbers); a label shows only where its segment has room for it (a container query in
+ * components.css), so narrow table bars stay clean and wide ones label every share.
  */
 
 /** One segment of the bar. */
@@ -30,7 +32,7 @@ export function wdlSegments(w: number, d: number, l: number): WdlSegment[] {
       key,
       count,
       width: Math.round((count * 1000) / sum) / 10,
-      label: percent > 12 ? `${Math.round(percent)}${percent > 20 ? '%' : ''}` : '',
+      label: Math.round(percent) >= 1 ? `${Math.round(percent)}%` : '',
     };
   });
 }
@@ -71,7 +73,7 @@ export function WdlBar({ w, d, l, mode = 'player', className }: WdlBarProps) {
       {segments.map(s =>
         s.count === 0 ? null : (
           <span key={s.key} className={CLASSES[mode][s.key]} style={{ width: `${s.width}%` }}>
-            {s.label}
+            {s.label && <span className="wdl-bar__label">{s.label}</span>}
           </span>
         ),
       )}

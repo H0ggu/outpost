@@ -6,14 +6,17 @@ import { flagEmoji } from '../src/app/components/FlagEmoji.tsx';
 import { WdlBar, wdlSegments } from '../src/app/components/WdlBar.tsx';
 import { paths, studioPlayerExplorer } from '../src/app/paths.ts';
 
-describe('wdlSegments (lila explorer bar rules)', () => {
-  it('labels only shares over 12%, with % only over 20%', () => {
+describe('wdlSegments (lila explorer bar widths)', () => {
+  it('labels every share as a percentage, with its % sign', () => {
+    // lila writes "70% | 15 | 15", which reads like game counts next to W/D/L numbers; whether a
+    // label fits is left to the stylesheet (container query), not to a fixed 12% / 20% rule.
     const [w, d, l] = wdlSegments(70, 15, 15);
     expect(w).toMatchObject({ key: 'w', width: 70, label: '70%' });
-    expect(d).toMatchObject({ key: 'd', width: 15, label: '15' });
-    expect(l).toMatchObject({ key: 'l', width: 15, label: '15' });
-    const [, small] = wdlSegments(88, 12, 0);
-    expect(small?.label).toBe('');
+    expect(d).toMatchObject({ key: 'd', width: 15, label: '15%' });
+    expect(l).toMatchObject({ key: 'l', width: 15, label: '15%' });
+    const [, small, none] = wdlSegments(995, 5, 0);
+    expect(small?.label).toBe('1%');
+    expect(none?.label).toBe('');
   });
 
   it('rounds widths to one decimal and handles no games', () => {

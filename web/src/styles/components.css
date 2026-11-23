@@ -579,7 +579,7 @@ textarea:focus {
   overflow: hidden;
 }
 
-.wdl-bar span {
+.wdl-bar > span {
   display: block;
   text-align: center;
   overflow: hidden;
@@ -589,6 +589,19 @@ textarea:focus {
   border-color: rgb(from var(--c-font) r g b / 0.17);
   background-clip: padding-box;
   transition: width 0.6s;
+  /* The segment's width is set inline, so its label can ask how much room there is. */
+  container-type: inline-size;
+}
+
+/* A share's label ("16%") only where it fits whole. */
+.wdl-bar__label {
+  display: none;
+}
+
+@container (min-width: 2.6em) {
+  .wdl-bar__label {
+    display: inline;
+  }
 }
 
 .wdl-bar .white,
