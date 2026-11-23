@@ -38,7 +38,7 @@ describe('app (no web build)', () => {
 
   it('CSP matches PLAN §10 exactly', () => {
     expect(CONTENT_SECURITY_POLICY).toBe(
-      "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' data: blob:; " +
+      "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' data: blob:; font-src 'self' data:; " +
         "style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'",
     );
   });

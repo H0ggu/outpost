@@ -369,7 +369,8 @@ Follow `docs/research/lila-ui-extraction.md`, option A.
 - **Setup.** The first admin is created with `SETUP_TOKEN` (printed to the log once if it was generated).
 - **Signup** modes: `closed`, `invite` or `open`.
 - **Headers:**
-  - CSP: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'`
+  - CSP: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'`
+    (`font-src` allows `data:` for pgn-viewer's embedded icon font, `lpv-fontello`)
   - COOP/COEP as in §8
   - `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`
 - **Access.** Public profiles and their stats can be read anonymously only when `anonymousBrowsing` is on. Everything else needs a session, and owners or admins for mutations.

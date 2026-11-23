@@ -16,12 +16,16 @@ import { CSRF_HEADER, CSRF_HEADER_VALUE } from '@outpost/shared/api';
 import type { Config } from '../config.ts';
 import { HttpError } from './errors.ts';
 
-/** Content-Security-Policy, exactly as PLAN §10. */
+/**
+ * Content-Security-Policy, exactly as PLAN §10. `font-src` allows `data:` because pgn-viewer's
+ * stylesheet embeds its control icons (the `lpv-fontello` font) as a data URI.
+ */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self' 'wasm-unsafe-eval'",
   "worker-src 'self' blob:",
   "img-src 'self' data: blob:",
+  "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   "connect-src 'self'",
   "frame-ancestors 'self'",
