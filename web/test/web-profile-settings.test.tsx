@@ -62,7 +62,8 @@ describe('Settings tab', () => {
     expect(requests(PROFILE, 'PATCH')[0]!.body).toEqual({ slug: 'the-tester' });
     await waitFor(() => expect(location().pathname).toBe('/u/the-tester/settings'));
     expect(await screen.findByLabelText('Page address')).toBeTruthy();
-    // The old address is not asked for again once it is gone (it would answer 404).
+    // The old address is not asked for again once it is gone (it would answer 404). The end-to-end
+    // run's 404 for the old address came from its own probe of that address, not from the app.
     const patchAt = requests(PROFILE).findIndex(c => c.method === 'PATCH');
     expect(requests(PROFILE, 'GET').filter(c => requests(PROFILE).indexOf(c) > patchAt)).toEqual([]);
   });

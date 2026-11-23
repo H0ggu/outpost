@@ -91,13 +91,7 @@ export function usePatchProfile(slug: string) {
     mutationFn: (body: UpdateProfileRequest) => api.patch<ProfileHeader>(API_ROUTES.profile(slug), body),
     onSuccess: (h, body) => {
       storeHeader(qc, h);
-      if (h.slug !== slug) {
-        // The old address is gone. Its cached queries are marked stale without a refetch: the page
-        // is still mounted there until the caller navigates, and removing them would make it
-        // refetch the old address at once (a 404). A later visit to it asks the server again.
-        void qc.cancelQueries({ queryKey: queryKeys.profile(slug) });
-        void qc.invalidateQueries({ queryKey: queryKeys.profile(slug), refetchType: 'none' });
-      }
+      if (h.slug !== slug) qc.removeQueries({ queryKey: queryKeys.profile(slug) });
       // Hiding or showing a source changes every statistic.
       else if (body.hiddenSourceIds) void qc.invalidateQueries({ queryKey: queryKeys.profile(slug) });
       void qc.invalidateQueries({ queryKey: ['profiles'] });
