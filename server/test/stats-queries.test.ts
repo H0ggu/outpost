@@ -78,6 +78,30 @@ describe('openings ranking', () => {
     expect(line.white.map(r => r.name)).toEqual(['Sicilian Defense']);
     expect(line.black.map(r => [r.eco, r.games])).toEqual([['B20', 7]]);
   });
+
+  it('gives a row the line its games reached, also through a transposition', async () => {
+    const t2 = await makeTestApp();
+    try {
+      const me = createSource(t2.db, { kind: 'lichess', key: 'me' });
+      const s2: StatsScope = { db: t2.db, sourceIds: [me], filters: {} };
+      // 1.d4 d5 2.Bf4 c5 3.e3 cxd4 4.exd4 transposes into the Caro-Kann Exchange's "4.Bf4" position;
+      // it never passes through the name's shortest line (1.e4 c6 2.d4 d5 3.exd5).
+      for (const moves of [
+        ['d4', 'd5', 'Bf4', 'c5', 'e3', 'cxd4', 'exd4', 'a6'],
+        ['d4', 'd5', 'Bf4', 'c5', 'e3', 'cxd4', 'exd4', 'h6'],
+        ['d4', 'd5', 'Nf3', 'c5', 'e3', 'cxd4', 'exd4', 'Nc6', 'a3'],
+      ]) {
+        insertGame(t2.db, testGame({ white: { name: 'me' }, black: { name: 'opp' }, moves }));
+      }
+      const row = openingsStats(s2, { side: 'white', order: 'most' }).white.find(r => r.name === 'Caro-Kann Defense: Exchange Variation')!;
+      expect(row).toMatchObject({ eco: 'B13', games: 3, line: 'e2e4,c7c6,d2d4,d7d5,e4d5,c6d5,c1f4' });
+      // The line filter (by position) finds the games that reached it.
+      const filtered = openingsStats({ ...s2, filters: { line: row.line.split(',') } }, { side: 'white', order: 'most' });
+      expect(filtered.white.find(r => r.eco === 'B13')?.games).toBe(2);
+    } finally {
+      await t2.close();
+    }
+  });
 });
 
 describe('opponents', () => {
