@@ -1,0 +1,27 @@
+diff --git a/analyse/tsconfig.json b/analyse/tsconfig.json
+index bb75f61..9e0ccbb 100644
+--- a/analyse/tsconfig.json
++++ b/analyse/tsconfig.json
+@@ -2,8 +2,6 @@
+   "extends": "../tsconfig.base.json",
+   "compilerOptions": { "noEmit": true, "isolatedDeclarations": false },
+   "references": [
+-    { "path": "../bits/tsconfig.json" },
+-    { "path": "../chart/tsconfig.json" },
+     { "path": "../lib/tsconfig.json" },
+     { "path": "../editor/tsconfig.json" },
+     { "path": "../keyboardMove/tsconfig.json" }
+diff --git a/site/tsconfig.json b/site/tsconfig.json
+index ebf8a11..9703c31 100644
+--- a/site/tsconfig.json
++++ b/site/tsconfig.json
+@@ -2,8 +2,6 @@
+   "extends": "../tsconfig.base.json",
+   "compilerOptions": { "noEmit": true, "isolatedDeclarations": false },
+   "references": [
+-    { "path": "../bits/tsconfig.json" },
+-    { "path": "../lib/tsconfig.json" },
+-    { "path": "../dasher/tsconfig.json" }
++    { "path": "../lib/tsconfig.json" }
+   ]
+ }

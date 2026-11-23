@@ -81,6 +81,16 @@ const CSS_ENTRIES: Readonly<Record<string, { file: string } | { source: string }
   keyboardMove: { file: 'keyboardMove/css/build/keyboardMove.scss' },
   // ui/bits/css/build/bits.dialog.scss upstream (loaded by lib/view/dialog for every dialog).
   'bits.dialog': { source: "@import 'lib/css/plugin';\n@import 'lib/css/component/dialog';\n" },
+  // lila components the Studio chrome reuses: form3 for its dialogs, the study glyph/comment panels.
+  'studio.lila': {
+    source: [
+      "@import 'lib/css/plugin';",
+      "@import 'lib/css/form/form3';",
+      "@import 'analyse/css/study/panel/glyph';",
+      "@import 'analyse/css/study/panel/comment';",
+      '',
+    ].join('\n'),
+  },
 };
 
 /** Engine files served to lila's ceval (lib/ceval/engines). */
@@ -103,6 +113,26 @@ const ENGINE_PACKAGES = [
   },
   { key: 'stockfishJs', name: 'stockfish.js', files: ['stockfish.js', 'stockfish.wasm.js', 'stockfish.wasm'] },
 ] as const;
+
+/**
+ * npm modules the vendored lila code imports. Pre-bundled up front in dev: the dependency scan does
+ * not see through lila's bare `lib/…` imports, so without this list Vite discovers them on first load
+ * and reloads the page halfway.
+ */
+const LILA_NPM_DEPS = [
+  'snabbdom',
+  'cash-dom',
+  '@badrap/result',
+  'debounce-promise',
+  'idb-keyval',
+  'tablesort',
+  '@lichess-org/chessground',
+  ...['api', 'config', 'draw', 'glyph', 'types', 'util'].map(m => `@lichess-org/chessground/${m}`),
+  'chessops',
+  ...['attacks', 'board', 'chess', 'compat', 'fen', 'pgn', 'san', 'setup', 'squareSet', 'types', 'util', 'variant'].map(
+    m => `chessops/${m}`,
+  ),
+];
 
 const MIME: Readonly<Record<string, string>> = {
   '.js': 'text/javascript; charset=utf-8',
@@ -260,6 +290,10 @@ export default defineConfig({
       // tsc maps the same specifier to hand-written declarations instead (tsconfig.studio.json, PLAN §1).
       { find: /^lila\/([^/]+)\/(.+)$/, replacement: `${VENDOR}/$1/src/$2` },
     ],
+  },
+  optimizeDeps: {
+    entries: ['index.html', 'studio.html'],
+    include: LILA_NPM_DEPS,
   },
   server: {
     port: 5173,

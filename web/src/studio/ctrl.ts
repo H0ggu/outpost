@@ -18,6 +18,7 @@ import {
   type StudioLayout,
 } from '@outpost/shared/api';
 import { fromExplorerGameId } from '@outpost/shared/api';
+import { withQuery } from '@outpost/shared/filters';
 import { ApiError, api } from '../app/api/client.ts';
 import { paths } from '../app/paths.ts';
 import type { AnalyseCtrl, AnalyseData, ExplorerDb, Glyph, TreeNode } from 'lila/analyse/interfaces';
@@ -36,7 +37,7 @@ import {
   treeToPgn,
 } from './pgn.ts';
 import { savePrefs, applyStudioPrefs, type StudioPrefs } from './prefs.ts';
-import type { StudioParams } from './query.ts';
+import { cleanFen, type StudioParams } from './query.ts';
 import { isDirty, markSaved, newTabId, TabList, type StudioTab, type TabSource } from './tabs.ts';
 
 /** lila `AnalysePref` for Studio boards (lila's defaults: inner coordinates, click or drag). */
@@ -105,11 +106,16 @@ export class StudioCtrl {
   /** Last live export of the shown game, refreshed by `checkDirty`. */
   private livePgn?: string;
   private readonly dirtyIds = new Set<string>();
-  menu: 'settings' | null = null;
+  /** Open dropdown of the Studio bar. */
+  menu: 'file' | null = null;
+  /** View of the side panel. */
+  sidePanel: 'files' | 'annotate' | 'games' = 'files';
   /** Chrome redraw, set by boot.ts. */
   redraw: () => void = () => undefined;
   /** Shows a tab's game on the board, set by boot.ts once lila is mounted. */
   private loader?: (tab: StudioTab) => void;
+  /** A jump asked for before lila was mounted. */
+  private pendingJump?: { fen?: string; ply?: number };
 
   constructor(params: StudioParams, prefs: StudioPrefs, storage: Storage | null) {
     this.params = params;
@@ -185,6 +191,11 @@ export class StudioCtrl {
 
   get anyDirty(): boolean {
     return this.dirtyIds.size > 0;
+  }
+
+  /** Tabs of My Files files with changes not saved yet (leaving the page asks first). */
+  get unsavedFiles(): StudioTab[] {
+    return this.tabs.tabs.filter(t => t.source.kind === 'file' && this.dirtyIds.has(t.id));
   }
 
   /** Called once lila is mounted with the active tab's game. */
@@ -333,16 +344,21 @@ export class StudioCtrl {
     if (changed) this.redraw();
   }
 
-  /** Keeps the address bar on the active tab's source, so the URL can be shared or reloaded. */
+  /**
+   * Keeps the address bar on the active tab's source, so the URL can be shared or reloaded. The
+   * explorer parameters stay (the filters segment lives only there); one-shot ones (`pgn`, `fen`)
+   * go, since the tab itself survives a reload.
+   */
   syncUrl(): void {
     if (this.params.embed) return;
     const src = this.activeTab?.source;
-    const url =
-      src?.kind === 'file'
-        ? paths.studio({ file: src.fileId })
-        : src?.kind === 'game'
-          ? paths.studio({ game: src.gameId })
-          : paths.studio();
+    const p = this.params;
+    const url = withQuery('/studio', {
+      ...(src?.kind === 'file' ? { file: src.fileId } : src?.kind === 'game' ? { game: src.gameId } : {}),
+      ...(p.explorer ? { explorer: p.explorer.db === 'player' ? `player:${p.explorer.player}` : p.explorer.db } : {}),
+      ...(p.explorer && p.color ? { color: p.color } : {}),
+      ...(p.filters ? { filters: p.filters } : {}),
+    });
     if (location.pathname + location.search !== url) history.replaceState(history.state, '', url + location.hash);
   }
 
@@ -389,15 +405,65 @@ export class StudioCtrl {
     if (opts.fen) this.jumpToFen(opts.fen);
   }
 
-  /** Jumps to the first mainline ply that reaches `fen`. */
+  /** Jumps to the first mainline ply that reaches `fen` (once lila is mounted). */
   jumpToFen(fen: string): void {
     const a = this.analyse;
-    if (!a) return;
+    if (!a) {
+      this.pendingJump = { fen };
+      return;
+    }
     const ply = mainlinePlyOf(a.tree.root, fen);
     if (ply !== undefined) {
       a.jumpToMain(ply);
       a.redraw();
+      this.syncActive();
     }
+  }
+
+  /** Applies a jump requested before lila was mounted (`?game=…&fen=…`, `?file=…` search hits). */
+  applyPendingJump(): void {
+    const jump = this.pendingJump;
+    this.pendingJump = undefined;
+    if (!jump || !this.analyse) return;
+    if (jump.fen) this.jumpToFen(jump.fen);
+    else if (jump.ply !== undefined) {
+      this.analyse.jumpToMain(jump.ply);
+      this.analyse.redraw();
+    }
+  }
+
+  /**
+   * Opens what the query names (PLAN §8.4), before lila is mounted: `?game=` (at `?fen=` when given),
+   * `?file=`, `?pgn=` (at `?fen=`), or `?fen=` alone for a new position. A game or file that is
+   * already open in a restored tab is focused instead of opened twice.
+   */
+  async openFromQuery(): Promise<void> {
+    const p = this.params;
+    if (p.game !== undefined) await this.openGame(p.game, { fen: p.fen, orientation: p.color });
+    else if (p.file !== undefined) await this.openFile(p.file);
+    else if (p.pgn) {
+      this.openPgnText(p.pgn);
+      if (p.fen) this.jumpToFen(p.fen);
+    } else if (p.fen) this.newTab(p.fen);
+  }
+
+  /** `?explorer=masters|lichess|reference|player:<spec>` (+ `&color=`): opens lila's explorer there. */
+  openExplorerFromQuery(): void {
+    const a = this.analyse;
+    const want = this.params.explorer;
+    if (!a || !a.explorer.allowed()) return;
+    if (!want) {
+      // the profile Explorer tab (embed) always shows the explorer
+      if (this.params.embed && !a.explorer.enabled()) a.toggleExplorer();
+      return;
+    }
+    const config = a.explorer.config;
+    if (want.db === 'player') {
+      config.selectPlayer(want.player);
+      if (this.params.color) config.data.color(this.params.color);
+    } else config.data.db(want.db);
+    if (!a.explorer.enabled()) a.toggleExplorer();
+    else a.explorer.reload();
   }
 
   /** Game links in lila's explorer (scripts/lila-patches/002). */
@@ -434,6 +500,102 @@ export class StudioCtrl {
       orientation,
     });
     this.jumpToFen(fen);
+  }
+
+  /**
+   * Opens pasted or uploaded text in a new tab: a FEN sets up the position, anything else is read as
+   * PGN (several games become the tab's game list). Returns an error message instead of opening.
+   */
+  importText(text: string, title?: string): string | null {
+    const t = text.trim();
+    if (!t) return 'Paste a PGN or a FEN first.';
+    const fen = cleanFen(t);
+    if (fen && !t.includes('\n')) {
+      try {
+        fenToPgn(fen);
+      } catch (e) {
+        return errorMessage(e);
+      }
+      this.newTab(fen);
+      return null;
+    }
+    let games: string[];
+    try {
+      games = splitPgnGames(t);
+      games.forEach(g => pgnImport(g));
+    } catch (e) {
+      return `This PGN could not be read: ${errorMessage(e)}`;
+    }
+    if (!games.length) return 'No game found in this PGN.';
+    this.openPgnText(t, title);
+    return null;
+  }
+
+  /** Adds an empty game to the active tab (a file with several games) and shows it. */
+  addGame(): void {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.syncActive();
+    tab.games.push(emptyGamePgn());
+    tab.baseline.push('');
+    this.selectGame(tab.games.length - 1);
+    this.checkDirty();
+  }
+
+  /** Renames a tab; for a file, renames the file in My Files. */
+  async renameTab(tab: StudioTab, name: string): Promise<void> {
+    if (tab.source.kind === 'file') {
+      const src = tab.source;
+      const meta = this.files.list.find(f => f.id === src.fileId);
+      await this.updateFileMeta(
+        meta ?? {
+          id: src.fileId,
+          folder: src.folder,
+          name: src.name,
+          kind: src.fileKind,
+          color: src.color,
+          createdAt: 0,
+          updatedAt: src.updatedAt,
+          deletedAt: null,
+        },
+        { name },
+      );
+    } else {
+      tab.title = name;
+      this.tabs.save();
+      this.redraw();
+    }
+  }
+
+  /** The active tab's PGN (every game of a file), with the board's latest moves. */
+  activePgn(): string {
+    this.syncActive();
+    const tab = this.activeTab;
+    return tab ? joinPgnGames(tab.games) : '';
+  }
+
+  /** Saves the active tab's PGN as a file in the browser's downloads. */
+  downloadPgn(): void {
+    const tab = this.activeTab;
+    if (!tab) return;
+    const blob = new Blob([this.activePgn()], { type: 'application/x-chess-pgn' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(tab.title || 'game').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').slice(0, 100)}.pgn`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  }
+
+  /** Copies the active tab's PGN to the clipboard. */
+  async copyPgn(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(this.activePgn());
+      await alert('PGN copied to the clipboard.');
+    } catch {
+      await alert('The browser did not allow copying. Use Download PGN instead.');
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -541,9 +703,13 @@ export class StudioCtrl {
     }
     if (at) {
       this.selectGame(at.gameIndex);
-      if (at.ply !== undefined && this.analyse) {
-        this.analyse.jumpToMain(at.ply);
-        this.analyse.redraw();
+      if (at.ply !== undefined) {
+        if (!this.analyse) this.pendingJump = { ply: at.ply };
+        else {
+          this.analyse.jumpToMain(at.ply);
+          this.analyse.redraw();
+          this.syncActive();
+        }
       }
     }
   }

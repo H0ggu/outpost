@@ -7,8 +7,9 @@
  *   - `loadI18n` → the generated English catalogs;
  *   - `redirect('/analysis')` → the Studio itself.
  *
- * Import this after main.ts has set `<body data-sound-set>` and the piece variables: lila's sound and
- * asset modules read them when they load.
+ * It installs itself when this module is evaluated, so boot.ts imports it before any other lila
+ * module (several read `site.asset` while they load). Import it only after main.ts has set
+ * `<body data-sound-set>` and the piece variables: lila's sound and asset modules read them then.
  */
 import * as asset from 'lila/site/asset';
 import Mousetrap from 'lila/site/mousetrap';
@@ -22,7 +23,7 @@ type EsmModule = { initModule?: (o: unknown) => unknown; default?: (o: unknown) 
 
 /** lila modules `site.asset.loadEsm` can load in Outpost. */
 const ESM: Readonly<Record<string, () => Promise<EsmModule>>> = {
-  keyboardMove: () => import('lila/keyboardMove/keyboardMove'),
+  keyboardMove: () => import('lila/keyboardMove/keyboardMove').then(m => ({ initModule: m.initModule })),
 };
 
 /** Shown instead of lila's server-side or unvendored tools. */
@@ -58,7 +59,7 @@ const randomToken = (): string => {
 };
 
 /** Fills `window.site` (created empty by globals.ts) before lila's analyse modules load. */
-export function installSite(): Site {
+function installSite(): Site {
   const site = window.site;
   // Only the move sounds of the free sets are vendored: lila's other named sounds stay silent.
   const resolvePath = sound.resolvePath.bind(sound);
@@ -109,3 +110,5 @@ export function installSite(): Site {
   } satisfies Partial<Site> & Record<string, unknown>);
   return site;
 }
+
+installSite();

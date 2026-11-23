@@ -214,6 +214,8 @@ export interface AnalyseCtrl {
   nodeList: TreeNode[];
   mainline: TreeNode[];
   synthetic: boolean;
+  /** Board turned relative to `data.orientation`. */
+  flipped: boolean;
   pgnError?: string;
   chessground?: ChessgroundApi;
   explorer: ExplorerCtrl;
