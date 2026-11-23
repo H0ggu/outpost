@@ -130,34 +130,40 @@ export function useSetup() {
 
 const PREFS_MUTATION = ['me', 'prefs'] as const;
 
+/** Order of prefs saves on this page, shared by every `useSavePrefs` (appearance and display). */
+let prefsSeq = 0;
+
 /**
  * `PUT /api/me/prefs` with an optimistic update of the cached session, so the theme, board and
- * pieces change at once (Layout applies the session's prefs). Quick successive picks may overlap:
- * only the last save to settle writes the server's answer back (or, on failure, rolls back and
- * refetches the session), so the page never flickers back to an older choice.
+ * pieces change at once (Layout applies the session's prefs). Quick successive picks may overlap
+ * and answer out of order: only the newest save writes the server's answer back (an older answer
+ * would undo a newer pick), and a failure rolls back and refetches the session.
  */
 export function useSavePrefs() {
   const qc = useQueryClient();
-  const othersPending = () => qc.isMutating({ mutationKey: PREFS_MUTATION }) > 1;
   return useMutation({
     mutationKey: PREFS_MUTATION,
     mutationFn: (patch: UpdatePrefsRequest) => api.put<UserPrefs>(API_ROUTES.me.prefs, patch),
     onMutate: async patch => {
+      const seq = ++prefsSeq;
+      // A session refetch in flight would bring back the old prefs (cancel before writing: a
+      // cancelled fetch reverts the query to its state from before the fetch).
       await qc.cancelQueries({ queryKey: queryKeys.session, exact: true });
       const before = qc.getQueryData<SessionInfo>(queryKeys.session)?.user?.prefs;
       qc.setQueryData<SessionInfo>(queryKeys.session, s =>
         s?.user ? { ...s, user: { ...s.user, prefs: { ...s.user.prefs, ...patch } } } : s,
       );
-      return { before };
+      return { before, seq };
     },
     onError: async (_e, _patch, ctx) => {
-      if (othersPending()) return;
-      const before = ctx?.before;
-      if (before) qc.setQueryData<SessionInfo>(queryKeys.session, s => (s?.user ? { ...s, user: { ...s.user, prefs: before } } : s));
-      await qc.invalidateQueries({ queryKey: queryKeys.session });
+      if (ctx?.seq === prefsSeq && ctx.before) {
+        const before = ctx.before;
+        qc.setQueryData<SessionInfo>(queryKeys.session, s => (s?.user ? { ...s, user: { ...s.user, prefs: before } } : s));
+      }
+      if (qc.isMutating({ mutationKey: PREFS_MUTATION }) <= 1) await qc.invalidateQueries({ queryKey: queryKeys.session });
     },
-    onSuccess: prefs => {
-      if (othersPending()) return;
+    onSuccess: (prefs, _patch, ctx) => {
+      if (ctx.seq !== prefsSeq) return;
       qc.setQueryData<SessionInfo>(queryKeys.session, s => (s?.user ? { ...s, user: { ...s.user, prefs } } : s));
     },
   });

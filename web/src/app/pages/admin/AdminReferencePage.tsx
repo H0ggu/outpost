@@ -274,7 +274,7 @@ function BroadcastMonthsBox({ info }: { info: ReferenceInfo }) {
             )}
             <span className="adm-months__spacer" />
             <Button type="submit" icon={licon.Download} disabled={!chosen.length || importMonths.isPending}>
-              {importMonths.isPending ? 'Queueing…' : chosen.length ? `Import ${chosen.length} month${chosen.length === 1 ? '' : 's'}` : 'Import'}
+              {importMonths.isPending ? 'Queueing…' : chosen.length ? `Import ${chosen.length} month${chosen.length === 1 ? '' : 's'}` : 'Import months'}
             </Button>
           </div>
           {importMonths.isError && <Flash kind="failure">{describeError(importMonths.error)}</Flash>}
