@@ -323,7 +323,7 @@ export function FormError({ message }: { message: string | null | undefined }) {
   return <Flash kind="failure">{message}</Flash>;
 }
 
-/** Shows `children` for `ms` after `trigger` changes to a new truthy value (e.g. "Saved"). */
+/** A value that clears itself `ms` after it was last set (for short-lived notes such as "Saved"). */
 export function useTransient<T>(ms = 2500): [T | null, (value: T) => void] {
   const [value, setValue] = useState<{ v: T; n: number } | null>(null);
   useEffect(() => {
