@@ -7,7 +7,7 @@ import { bisector, extent } from 'd3-array';
 import { scaleLinear, scaleTime, scaleUtc } from 'd3-scale';
 import { line } from 'd3-shape';
 import { useId, useRef, useState, type PointerEvent } from 'react';
-import { fmtDate, fmtInt } from '../../format.ts';
+import { fmtDate, fmtRating } from '../../format.ts';
 import { useElementWidth } from '../../hooks.ts';
 import { ChartTooltip, clamp, TipRow, type TooltipState } from './common.tsx';
 
@@ -116,7 +116,7 @@ export function RatingChart({ series, height = 300, xDomain, timeZone, title, co
           {rows
             .sort((a, b) => b.p[1] - a.p[1])
             .map(({ s, p }) => (
-              <TipRow key={s.key} swatch={s.color} dash={s.dash} label={s.label} value={fmtInt(p[1])} />
+              <TipRow key={s.key} swatch={s.color} dash={s.dash} label={s.label} value={fmtRating(p[1])} />
             ))}
         </>
       ),
