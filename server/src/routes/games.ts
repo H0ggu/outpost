@@ -1,4 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { API_ROUTES, type GameResponse } from '@outpost/shared/api';
+import { requireViewer } from '../auth/session.ts';
+import { idParams, parseParams } from '../http/validate.ts';
+import { loadGameForViewer } from '../stats/index.ts';
 
 /**
  * Games routes — PLAN §6 "Games, explorer and proxies" (GET /api/games/:id).
@@ -6,16 +10,15 @@ import type { FastifyPluginAsync } from 'fastify';
  * Endpoints (request/response types in @outpost/shared/api):
  *   - GET /api/games/:id (GameResponse: GameDetail + PGN)
  *
- * Access: the game must belong to a source of a profile the viewer may see, a database the viewer may see, or the reference DB
- * (loadProfileForViewer / loadDatabaseForViewer in src/profiles/access.ts).
- *
- * TODO(stats): implement. Keep this file thin: validate with src/http/validate.ts, check access
- * with the preHandlers in src/auth/session.ts, call into the module, return contract types, and
- * throw HttpError (src/http/errors.ts) for failures. Build paths from API_ROUTES (pass ':param'
- * placeholders, e.g. API_ROUTES.profile(':slug')).
+ * Access: requireViewer, then the game must be in a database the viewer may see (reference
+ * databases included) or have been played by a source of a profile the viewer may see; otherwise
+ * 404 (src/stats/gameDetail.ts).
  */
-const gameRoutes: FastifyPluginAsync = async _app => {
-  // TODO(stats)
+const gameRoutes: FastifyPluginAsync = async app => {
+  app.get(API_ROUTES.game(':id'), { preHandler: requireViewer }, async (req): Promise<GameResponse> => {
+    const { id } = parseParams(idParams, req.params);
+    return loadGameForViewer(app.db, id, req.user);
+  });
 };
 
 export default gameRoutes;
