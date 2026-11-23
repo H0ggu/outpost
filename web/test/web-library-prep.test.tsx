@@ -330,7 +330,7 @@ describe('prep helpers', () => {
     expect(describeFilters({ period: '3m', tc: ['bullet'], rated: 'unrated' })).toBe('Last 3 months · Bullet · casual only');
     expect(describeFilters({ period: '24h' })).toBe('Last 24 hours');
     expect(describeFilters({ from: '2026-01-01' })).toBe('Since 2026-01-01');
-    expect(describeFilters({ to: '2026-02-01', color: 'white', outcome: 'w' })).toBe('Until 2026-02-01');
+    expect(describeFilters({ to: '2026-02-01', color: 'white', outcome: ['w'] })).toBe('Until 2026-02-01');
     expect(describeFilters({ from: '2026-03-04', to: '2026-03-04' })).toBe('On 2026-03-04');
   });
 
