@@ -13,6 +13,7 @@ import {
   SEARCH_QUERY_MIN_LENGTH,
   type Color,
   type DatabaseInfo,
+  type DatabasesResponse,
   type ProfileHeader,
   type ProfileListResponse,
   type SearchResults,
@@ -112,18 +113,32 @@ export function makeExplorerOpts(deps: ExplorerDeps): ExplorerOpts {
         labels.set(p.slug, p.displayName);
         return { spec: p.slug, label: p.displayName, hint };
       });
+    // "My DBs" (PLAN §5): the PGN databases this user may read (theirs and public ones) as
+    // `db:<id>` players, after the profiles.
+    const toDbChoices = (r: DatabasesResponse): ExplorerPlayerChoice[] =>
+      (Array.isArray(r?.databases) ? r.databases : [])
+        .filter(d => d.kind === 'games' && d.gameCount > 0)
+        .map(d => {
+          const spec = `db:${d.id}`;
+          labels.set(spec, d.name);
+          return { spec, label: d.name, hint: d.canEdit ? 'my database' : 'database' };
+        });
     Promise.allSettled([
       api.get<ProfileListResponse>(API_ROUTES.bookmarks),
       api.get<ProfileListResponse>(API_ROUTES.profiles, { scope: 'mine' }),
       api.get<ProfileListResponse>(API_ROUTES.profiles, { scope: 'recent' }),
-    ]).then(([bookmarks, mine, recent]) => {
-      const all = [
+      api.get<DatabasesResponse>(API_ROUTES.databases),
+    ]).then(([bookmarks, mine, recent, databases]) => {
+      const profiles = [
         ...(bookmarks.status === 'fulfilled' ? toChoices(bookmarks.value, 'bookmarked') : []),
         ...(mine.status === 'fulfilled' ? toChoices(mine.value, 'mine') : []),
         ...(recent.status === 'fulfilled' ? toChoices(recent.value, 'recent') : []),
       ];
       const seen = new Set<string>();
-      suggestions = all.filter(c => !seen.has(c.spec) && seen.add(c.spec)).slice(0, 12);
+      suggestions = [
+        ...profiles.filter(c => !seen.has(c.spec) && seen.add(c.spec)).slice(0, 12),
+        ...(databases.status === 'fulfilled' ? toDbChoices(databases.value).slice(0, 8) : []),
+      ];
       suggestionsState = 'ready';
       const redraws = [...waiting];
       waiting.clear();

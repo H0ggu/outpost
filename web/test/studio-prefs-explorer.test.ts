@@ -152,9 +152,17 @@ describe('explorer options', () => {
     ]);
   });
 
-  it('suggests bookmarks and own profiles once, when signed in', async () => {
+  it('suggests bookmarks, own profiles and readable PGN databases once, when signed in', async () => {
     const fetchMock = vi.fn(async (url: string) =>
-      jsonResponse({ profiles: url.includes('bookmarks') ? [{ slug: 'a', displayName: 'A' }] : [{ slug: 'a', displayName: 'A' }, { slug: 'b', displayName: 'B' }] }),
+      url.includes('/api/databases')
+        ? jsonResponse({
+            databases: [
+              { id: 7, name: 'Club games', kind: 'games', gameCount: 120, canEdit: true },
+              { id: 8, name: 'Shared archive', kind: 'games', gameCount: 40, canEdit: false },
+              { id: 9, name: 'Empty', kind: 'games', gameCount: 0, canEdit: true },
+            ],
+          })
+        : jsonResponse({ profiles: url.includes('bookmarks') ? [{ slug: 'a', displayName: 'A' }] : [{ slug: 'a', displayName: 'A' }, { slug: 'b', displayName: 'B' }] }),
     );
     vi.stubGlobal('fetch', fetchMock);
     const o = makeExplorerOpts(deps());
@@ -164,11 +172,15 @@ describe('explorer options', () => {
     expect(o.outpost.suggestedPlayers()).toEqual([
       { spec: 'a', label: 'A', hint: 'bookmarked' },
       { spec: 'b', label: 'B', hint: 'mine' },
+      // "My DBs": the player explorer reads a database as db:<id>.
+      { spec: 'db:7', label: 'Club games', hint: 'my database' },
+      { spec: 'db:8', label: 'Shared archive', hint: 'database' },
     ]);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(o.outpost.playerLabel('db:7')).toBe('Club games');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     const anon = makeExplorerOpts(deps({ signedIn: () => false }));
     anon.outpost.suggestedPlayers();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('redraws a player dialog that opened before the suggestions arrived', async () => {
