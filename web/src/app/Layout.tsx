@@ -1,9 +1,10 @@
 /**
  * Site chrome in Lichess's layout: top bar with the Outpost wordmark (our own icon, never the
- * Lichess logo), main navigation (a drop-down panel on phones, with the search box inside),
+ * Lichess logo), main navigation (a drop-down panel below 1180 px, where the seven links, the
+ * search and the user menu no longer fit on one line; on phones with the search box inside),
  * player search, my running jobs, and the user menu; content outlet; footer with the AGPL notice
  * and the NOTICE.md attribution. Applies the theme, board and piece preferences (true black by
- * default).
+ * default). Widths are in Layout.css.
  */
 import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router';
