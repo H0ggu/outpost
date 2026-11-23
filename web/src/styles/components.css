@@ -565,6 +565,22 @@ textarea:focus {
 }
 
 /* ---------------------------------------------------------------------------
+ * Horizontal scrollers: fade out at an edge with more content beyond it (useScrollEdges)
+ * ------------------------------------------------------------------------ */
+
+.scroll-fade--left {
+  mask-image: linear-gradient(to right, transparent, #000 1.75rem);
+}
+
+.scroll-fade--right {
+  mask-image: linear-gradient(to left, transparent, #000 1.75rem);
+}
+
+.scroll-fade--left.scroll-fade--right {
+  mask-image: linear-gradient(to right, transparent, #000 1.75rem, #000 calc(100% - 1.75rem), transparent);
+}
+
+/* ---------------------------------------------------------------------------
  * W/D/L bar (lila explorer .bar)
  * ------------------------------------------------------------------------ */
 

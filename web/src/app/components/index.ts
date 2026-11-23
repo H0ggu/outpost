@@ -13,6 +13,7 @@ export { EmptyState, ErrorBox, errorMessage, Spinner } from './Feedback.tsx';
 export { countryName, FlagEmoji, flagEmoji } from './FlagEmoji.tsx';
 export { Icon, licon, type LiconValue } from './Icon.tsx';
 export { Page, useDocumentTitle } from './Page.tsx';
+export { scrollEdgesOf, scrollFadeClass, useScrollEdges, type ScrollEdges } from './scrollEdges.ts';
 export { Table, type Column, type TableProps } from './Table.tsx';
 export { Tabs, type TabItem } from './Tabs.tsx';
 export { TIME_CLASS_ICONS, TIME_CLASS_LABELS, TimeClassIcon } from './TimeClassIcon.tsx';

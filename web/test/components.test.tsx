@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { Tabs } from '../src/app/components/Tabs.tsx';
 import { flagEmoji } from '../src/app/components/FlagEmoji.tsx';
 import { WdlBar, wdlSegments } from '../src/app/components/WdlBar.tsx';
+import { scrollEdgesOf, scrollFadeClass } from '../src/app/components/scrollEdges.ts';
 import { paths, studioPlayerExplorer } from '../src/app/paths.ts';
 
 describe('wdlSegments (lila explorer bar widths)', () => {
@@ -67,5 +68,15 @@ describe('paths and helpers', () => {
   it('turns country codes into flag emoji', () => {
     expect(flagEmoji('no')).toBe('🇳🇴');
     expect(flagEmoji('GB-ENG')).toBeNull();
+  });
+});
+
+describe('scroll edges', () => {
+  it('fades the edges that have more content beyond them', () => {
+    expect(scrollEdgesOf({ scrollLeft: 0, scrollWidth: 300, clientWidth: 300 })).toEqual({ left: false, right: false });
+    expect(scrollEdgesOf({ scrollLeft: 0, scrollWidth: 379, clientWidth: 346 })).toEqual({ left: false, right: true });
+    expect(scrollEdgesOf({ scrollLeft: 266, scrollWidth: 560, clientWidth: 294 })).toEqual({ left: true, right: false });
+    expect(scrollEdgesOf({ scrollLeft: 100, scrollWidth: 560, clientWidth: 294 })).toEqual({ left: true, right: true });
+    expect(scrollFadeClass('chart-scroll', { left: true, right: false })).toBe('chart-scroll scroll-fade--left');
   });
 });

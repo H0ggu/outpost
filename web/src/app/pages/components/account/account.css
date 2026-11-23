@@ -92,6 +92,23 @@
     border-radius: 1em;
     background: var(--c-accent);
   }
+
+  /* Four admin sections fit a 360px row with a little less air around each link. */
+  @media (max-width: 400px) {
+    .acc-subnav__inner {
+      gap: 0;
+    }
+
+    .acc-subnav__inner a {
+      padding: 0.6rem 0.42rem;
+      gap: 3px;
+    }
+
+    .acc-subnav__inner a.active::after {
+      left: 0.42rem;
+      right: 0.42rem;
+    }
+  }
 }
 
 @media (min-width: 800px) {

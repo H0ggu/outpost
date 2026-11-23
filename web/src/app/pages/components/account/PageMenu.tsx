@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Link } from 'react-router';
-import type { LiconValue } from '../../../components/index.ts';
+import { scrollFadeClass, useScrollEdges, type LiconValue } from '../../../components/index.ts';
 import './account.css';
 
 /** One subnav entry. */
@@ -30,6 +30,8 @@ export function PageMenu({
 }) {
   const innerRef = useRef<HTMLDivElement>(null);
   const activeTo = items.find(i => i.active)?.to;
+  // A phone row that doesn't fit fades out where more links are.
+  const edges = useScrollEdges(innerRef);
 
   // On phones the menu is a scrolling row: keep the current section in view (without moving
   // the page vertically, which scrollIntoView could do).
@@ -45,7 +47,7 @@ export function PageMenu({
   return (
     <div className="acc-page-menu">
       <nav className="acc-subnav" aria-label={label}>
-        <div className="acc-subnav__inner" ref={innerRef}>
+        <div className={scrollFadeClass('acc-subnav__inner', edges)} ref={innerRef}>
           {items.map(item => (
             <Link
               key={item.to}

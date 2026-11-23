@@ -1610,8 +1610,13 @@ html[data-theme='light'] {
     padding: 0.45rem 0.4rem;
   }
 
+  /* Name, games, score and the games link share a 360px screen: long names give way first. */
   .profile-page .opp-name .player-name {
-    max-width: 11rem;
+    max-width: min(11rem, 38vw);
+  }
+
+  .profile-page .opponents-table td.align-right {
+    padding-left: 0;
   }
 }
 
@@ -1705,6 +1710,20 @@ html[data-theme='light'] {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+}
+
+/* The calendar's weekday labels stay put beside its scrolling weeks. */
+.profile-page .heat-calendar__body {
+  display: flex;
+}
+
+.profile-page .heat-calendar__days {
+  flex: none;
+}
+
+.profile-page .heat-calendar__body .chart-scroll {
+  flex: 1;
+  min-width: 0;
 }
 
 .profile-page .chart-grid {

@@ -4,6 +4,7 @@
  * or tapping a cell shows its numbers.
  */
 import { useLayoutEffect, useRef, useState } from 'react';
+import { scrollFadeClass, useScrollEdges } from '../../../../components/index.ts';
 import type { ActivityCell, ActivityDay } from '@outpost/shared/api';
 import { fmtHour, fmtIsoDay, WEEKDAYS, WEEKDAYS_SHORT } from '../../format.ts';
 import { useElementWidth } from '../../hooks.ts';
@@ -46,20 +47,30 @@ export interface CalendarHeatmapProps {
   weeks?: number;
 }
 
-/** The last year as a calendar of days. Scrolls inside its box on narrow screens. */
+/** Width of the weekday labels' column, which stays put while the calendar scrolls. */
+const DAY_LABELS_W = 30;
+/** Room a month label needs (11px "Sep"). */
+const MONTH_LABEL_W = 26;
+
+/**
+ * The last year as a calendar of days. On narrow screens it scrolls inside its box, starting at
+ * today; the weekday labels stay put, the first visible month keeps its label, and the edges with
+ * more weeks beyond them fade out.
+ */
 export function CalendarHeatmap({ days, end, timeZone, mode, weeks = 53 }: CalendarHeatmapProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const width = useElementWidth(scrollRef);
+  const width = useElementWidth(scrollRef) + DAY_LABELS_W;
+  const edges = useScrollEdges(scrollRef);
+  const [scrollX, setScrollX] = useState(0);
   const [tip, setTip] = useState<TooltipState | null>(null);
 
   const endN = dayNumber(end ?? isoToday(timeZone));
   const startN = endN - (weeks - 1) * 7 - weekdayOf(endN);
   const cols = Math.ceil((endN - startN + 1) / 7);
-  const left = 30;
   const top = 16;
-  const size = clamp(Math.floor((width - left - 2) / cols), 10, 20);
+  const size = clamp(Math.floor((width - DAY_LABELS_W - 2) / cols), 10, 20);
   const gap = size >= 13 ? 3 : 2;
-  const svgW = left + cols * size;
+  const svgW = cols * size;
   const svgH = top + 7 * size;
 
   const byDate = new Map(days.map(d => [d.date, d]));
@@ -68,7 +79,9 @@ export function CalendarHeatmap({ days, end, timeZone, mode, weeks = 53 }: Calen
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollLeft = el.scrollWidth;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+    setScrollX(el.scrollLeft);
   }, [svgW]);
 
   // Month labels: at each column whose Monday starts a new month (kept 3 columns apart).
@@ -84,6 +97,22 @@ export function CalendarHeatmap({ days, end, timeZone, mode, weeks = 53 }: Calen
     if (col > cols - 2) continue;
     months.push({ col, label: MONTHS[Number(monday.slice(5, 7)) - 1]! });
   }
+  // Scrolled into the year, a month label left of the view slides along its edge until the next
+  // month's label reaches it (it would be cut otherwise).
+  const monthLabels = months.map((m, i) => {
+    const next = months[i + 1];
+    const x = m.col * size;
+    if (x >= scrollX) return { ...m, x };
+    if (next && next.col * size - scrollX < MONTH_LABEL_W + 4) return null;
+    return { ...m, x: scrollX };
+  });
+  // The first, partial month before the first label: named too once that label scrolls away.
+  const firstCol = Math.ceil(scrollX / size);
+  if (scrollX > 0 && months[0] && firstCol < months[0].col) {
+    const monday = isoOfDayNumber(startN + firstCol * 7);
+    if (months[0].col * size - scrollX >= MONTH_LABEL_W + 4)
+      monthLabels.unshift({ col: firstCol, label: MONTHS[Number(monday.slice(5, 7)) - 1]!, x: scrollX });
+  }
 
   const cells = [];
   for (let n = startN; n <= endN; n++) {
@@ -91,7 +120,7 @@ export function CalendarHeatmap({ days, end, timeZone, mode, weeks = 53 }: Calen
     const col = Math.floor((n - startN) / 7);
     const row = weekdayOf(n);
     const d = byDate.get(iso) ?? { date: iso, games: 0, score: null };
-    const cx = left + col * size;
+    const cx = col * size;
     const cy = top + row * size;
     cells.push(
       <rect
@@ -104,10 +133,10 @@ export function CalendarHeatmap({ days, end, timeZone, mode, weeks = 53 }: Calen
         rx={2}
         style={{ fill: cellFill(mode, d, max) }}
         onPointerEnter={() =>
-          setTip({ x: cx + size / 2 - (scrollRef.current?.scrollLeft ?? 0), y: cy - 4, content: <ActivityTip title={fmtIsoDay(iso)} games={d.games} score={d.score} /> })
+          setTip({ x: DAY_LABELS_W + cx + size / 2 - (scrollRef.current?.scrollLeft ?? 0), y: cy - 4, content: <ActivityTip title={fmtIsoDay(iso)} games={d.games} score={d.score} /> })
         }
         onClick={() =>
-          setTip({ x: cx + size / 2 - (scrollRef.current?.scrollLeft ?? 0), y: cy - 4, content: <ActivityTip title={fmtIsoDay(iso)} games={d.games} score={d.score} /> })
+          setTip({ x: DAY_LABELS_W + cx + size / 2 - (scrollRef.current?.scrollLeft ?? 0), y: cy - 4, content: <ActivityTip title={fmtIsoDay(iso)} games={d.games} score={d.score} /> })
         }
       />,
     );
@@ -115,20 +144,34 @@ export function CalendarHeatmap({ days, end, timeZone, mode, weeks = 53 }: Calen
 
   return (
     <div className="chart heat-calendar">
-      <div ref={scrollRef} className="chart-scroll" onScroll={() => setTip(null)}>
-        <svg width={svgW} height={svgH} role="img" aria-label="Games per day over the last year" onPointerLeave={() => setTip(null)}>
-          {months.map(m => (
-            <text key={`${m.col}-${m.label}`} className="chart-axis-text" x={left + m.col * size} y={10}>
-              {m.label}
-            </text>
-          ))}
+      <div className="heat-calendar__body">
+        <svg className="heat-calendar__days" width={DAY_LABELS_W} height={svgH} aria-hidden>
           {[0, 2, 4].map(r => (
             <text key={r} className="chart-axis-text" x={0} y={top + r * size + (size - gap) / 2} dy="0.32em">
               {WEEKDAYS_SHORT[r]}
             </text>
           ))}
-          {cells}
         </svg>
+        <div
+          ref={scrollRef}
+          className={scrollFadeClass('chart-scroll', edges)}
+          onScroll={e => {
+            setTip(null);
+            setScrollX(e.currentTarget.scrollLeft);
+          }}
+        >
+          <svg width={svgW} height={svgH} role="img" aria-label="Games per day over the last year" onPointerLeave={() => setTip(null)}>
+            {monthLabels.map(
+              m =>
+                m && (
+                  <text key={`${m.col}-${m.label}`} className="chart-axis-text" x={m.x} y={10}>
+                    {m.label}
+                  </text>
+                ),
+            )}
+            {cells}
+          </svg>
+        </div>
       </div>
       <ChartTooltip tip={tip} width={width} />
     </div>
