@@ -52,8 +52,9 @@ import { parseBody, parseParams, parseQuery } from '../http/validate.ts';
  *     src/auth/admin.ts.
  *   - GET/POST /api/admin/invites (InvitesResponse / CreateInviteRequest → Invite)
  *   - DELETE /api/admin/invites/:code (OkResponse; 404 when unknown)
- *   - GET /api/admin/status (AdminStatus; `?refresh=1` re-runs the cached token check and probes,
- *     which go through app.upstream — src/auth/status.ts)
+ *   - GET /api/admin/status (AdminStatus; `?refresh=1` re-runs the cached token check, probes and
+ *     row counts, at most once per 10 s; probes go through app.upstream, row counts run in a worker
+ *     thread — src/auth/status.ts)
  *
  * Job admin endpoints live in routes/jobs.ts, reference admin endpoints in routes/reference.ts.
  */

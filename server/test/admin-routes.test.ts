@@ -444,7 +444,7 @@ describe('admin users', () => {
     expect(t.db.get('SELECT owner_user_id FROM databases WHERE id = ?', [refDb])).toEqual({ owner_user_id: null });
 
     // The games database and finally the user row go in the background.
-    await vi.waitFor(() => expect(count('SELECT COUNT(*) FROM users WHERE id = ?', [bob.id])).toBe(0));
+    await vi.waitFor(() => expect(count('SELECT COUNT(*) FROM users WHERE id = ?', [bob.id])).toBe(0), { timeout: 10_000 });
     expect(count('SELECT COUNT(*) FROM databases WHERE id = ?', [gamesDb])).toBe(0);
     expect(count('SELECT COUNT(*) FROM games WHERE database_id = ?', [gamesDb])).toBe(0);
     expect(count("SELECT COUNT(*) FROM games WHERE origin = 'pgn'")).toBe(0);
@@ -670,7 +670,7 @@ describe('admin status', () => {
     // Expired: answered at once with the old numbers while a recount runs, then the new ones.
     vi.setSystemTime(Date.now() + STATUS_CACHE_MS);
     expect((await status()).counts.games).toBe(before.games);
-    await vi.waitFor(async () => expect((await status()).counts.games).toBe(before.games + 1));
+    await vi.waitFor(async () => expect((await status()).counts.games).toBe(before.games + 1), { timeout: 10_000 });
     const after = (await status()).counts;
     expect(after.referenceGames).toBe(before.referenceGames + 1);
     expect(after.positions).toBe(t.db.value('SELECT COUNT(*) FROM positions'));

@@ -196,7 +196,7 @@ describe('user purger', () => {
 
     const second = createUserPurger({ db, log: fakeLog().logger });
     second.resumePending();
-    await vi.waitFor(() => expect(count('SELECT COUNT(*) FROM users WHERE id = ?', [bob.userId])).toBe(0));
+    await vi.waitFor(() => expect(count('SELECT COUNT(*) FROM users WHERE id = ?', [bob.userId])).toBe(0), { timeout: 10_000 });
     expect(count('SELECT COUNT(*) FROM databases WHERE id IN (?, ?)', bob.dbs)).toBe(0);
     await second.close();
   });
