@@ -9,9 +9,9 @@ import {
   type InvitesResponse,
   type SessionInfo,
 } from '@outpost/shared/api';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashPassword } from '../src/auth/password.ts';
-import { STATUS_CACHE_MS } from '../src/auth/status.ts';
+import { STATUS_CACHE_MS, STATUS_REFRESH_MIN_MS } from '../src/auth/status.ts';
 import { insertGame } from '../src/chess/store.ts';
 import { readSettings } from '../src/settings.ts';
 import { createSource, createUserSession, makeTestApp, mutationHeaders, testGame, type TestApp } from './helpers.ts';
@@ -346,14 +346,41 @@ describe('admin users', () => {
     expect(t.db.get('SELECT totp_secret, totp_last_step FROM users WHERE id = ?', [bob.id])).toEqual({ totp_secret: null, totp_last_step: null });
   });
 
-  it("an admin resetting their own password keeps the current session only", async () => {
+  it('an admin cannot reset their own password or TOTP here (the /api/me endpoints ask for proof)', async () => {
     expect((await login(t, 'root')).statusCode).toBe(200);
-    expect(t.db.value('SELECT COUNT(*) FROM sessions WHERE user_id = ?', [root.id])).toBe(2);
-    const res = await patch(root.cookie, root.id, { password: 'my own new one' });
-    expect(res.statusCode).toBe(200);
-    expect(t.db.value('SELECT COUNT(*) FROM sessions WHERE user_id = ?', [root.id])).toBe(1);
-    expect((await sessionUser(t, root.cookie))?.username).toBe('root');
-    expect((await login(t, 'root', 'my own new one')).statusCode).toBe(200);
+    const sessions = t.db.value<number>('SELECT COUNT(*) FROM sessions WHERE user_id = ?', [root.id]);
+    t.db.run('UPDATE users SET totp_secret = ? WHERE id = ?', ['JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', root.id]);
+    const hashBefore = t.db.value<string>('SELECT password_hash FROM users WHERE id = ?', [root.id]);
+    for (const body of [{ password: 'hijacked-pw-1' }, { resetTotp: true }, { password: 'hijacked-pw-1', resetTotp: true }, { role: 'admin', password: 'hijacked-pw-1' }]) {
+      const res = await patch(root.cookie, root.id, body);
+      expect(res.statusCode, JSON.stringify(body)).toBe(403);
+      expect(res.json().error).toMatchObject({ code: 'forbidden', details: { reason: 'self_reset' } });
+    }
+    // Nothing changed: same password, TOTP still on, nobody signed out.
+    expect(t.db.value('SELECT password_hash FROM users WHERE id = ?', [root.id])).toBe(hashBefore);
+    expect(t.db.value('SELECT totp_secret IS NOT NULL FROM users WHERE id = ?', [root.id])).toBe(1);
+    expect(t.db.value('SELECT COUNT(*) FROM sessions WHERE user_id = ?', [root.id])).toBe(sessions);
+    // resetTotp: false and other fields on yourself are fine.
+    expect((await patch(root.cookie, root.id, { resetTotp: false, role: 'admin' })).statusCode).toBe(200);
+    t.db.run('UPDATE users SET totp_secret = NULL WHERE id = ?', [root.id]);
+  });
+
+  it('keeps lastSeenAt after logout and revocation (null only for users who never signed in)', async () => {
+    const bob = await makeUser(t, 'bob');
+    // makeUser inserts a session directly, without signing in: it still counts as activity.
+    const fresh = await makeUser(t, 'fresh');
+    t.db.run('DELETE FROM sessions WHERE user_id = ?', [fresh.id]);
+    const res = await login(t, 'bob');
+    const cookie = `outpost_session=${res.cookies.find(c => c.name === 'outpost_session')!.value}`;
+    const signedInAt = t.db.value<number>('SELECT last_seen_at FROM users WHERE id = ?', [bob.id])!;
+    expect(signedInAt).toBeGreaterThan(Date.now() - 60_000);
+    await t.app.inject({ method: 'POST', url: API_ROUTES.logout, headers: { ...mutationHeaders, cookie } });
+    await patch(root.cookie, bob.id, { disabled: true });
+    expect(t.db.value('SELECT COUNT(*) FROM sessions WHERE user_id = ?', [bob.id])).toBe(0);
+    const users = (await req(t, 'GET', API_ROUTES.admin.users, root.cookie)).json<AdminUsersResponse>().users;
+    expect(users.find(u => u.id === bob.id)!.lastSeenAt).toBe(signedInAt);
+    expect(users.find(u => u.id === fresh.id)!.lastSeenAt).toBeNull();
+    await patch(root.cookie, bob.id, { disabled: false });
   });
 
   it('validates the id and body; 404 for unknown users', async () => {
@@ -399,16 +426,28 @@ describe('admin users', () => {
     expect(res.json()).toEqual({ ok: true });
 
     const count = (sql: string, p: Array<number | string> = []) => t.db.value<number>(sql, p);
-    expect(count('SELECT COUNT(*) FROM users WHERE id = ?', [bob.id])).toBe(0);
+    // At once: signed out, hidden, unable to sign in, and the small owned data is gone.
     expect(count('SELECT COUNT(*) FROM sessions WHERE user_id = ?', [bob.id])).toBe(0);
     expect(await sessionUser(t, bob.cookie)).toBeNull();
-    // Owned data is gone…
+    const listed = (await req(t, 'GET', API_ROUTES.admin.users, root.cookie)).json<AdminUsersResponse>().users;
+    expect(listed.map(u => u.username)).toEqual(['root', 'carol']);
+    const bobLogin = await login(t, 'bob');
+    expect(bobLogin.statusCode).toBe(401);
+    expect(bobLogin.json().error.message).toBe('Invalid username or password');
+    expect((await patch(root.cookie, bob.id, { role: 'admin' })).statusCode).toBe(404);
     expect(count('SELECT COUNT(*) FROM profiles WHERE id = ?', [bobProfile])).toBe(0);
     expect(count('SELECT COUNT(*) FROM bookmarks WHERE profile_id = ?', [bobProfile])).toBe(0);
-    expect(count('SELECT COUNT(*) FROM databases WHERE id = ?', [gamesDb])).toBe(0);
-    expect(count('SELECT COUNT(*) FROM games WHERE database_id = ?', [gamesDb])).toBe(0);
     expect(count('SELECT COUNT(*) FROM files WHERE owner_user_id = ?', [bob.id])).toBe(0);
     expect(count('SELECT COUNT(*) FROM prep_sets WHERE id = ?', [prep])).toBe(0);
+    // An invite bob handed out and nobody used yet is cancelled with him.
+    expect(count("SELECT COUNT(*) FROM invites WHERE code = 'bobs1'")).toBe(0);
+    expect(t.db.get('SELECT owner_user_id FROM databases WHERE id = ?', [refDb])).toEqual({ owner_user_id: null });
+
+    // The games database and finally the user row go in the background.
+    await vi.waitFor(() => expect(count('SELECT COUNT(*) FROM users WHERE id = ?', [bob.id])).toBe(0));
+    expect(count('SELECT COUNT(*) FROM databases WHERE id = ?', [gamesDb])).toBe(0);
+    expect(count('SELECT COUNT(*) FROM games WHERE database_id = ?', [gamesDb])).toBe(0);
+    expect(count("SELECT COUNT(*) FROM games WHERE origin = 'pgn'")).toBe(0);
     // …shared data stays.
     expect(t.db.get('SELECT owner_user_id FROM databases WHERE id = ?', [refDb])).toEqual({ owner_user_id: null });
     expect(count('SELECT COUNT(*) FROM sources WHERE id = ?', [src])).toBe(1);
@@ -416,9 +455,10 @@ describe('admin users', () => {
     expect(count('SELECT COUNT(*) FROM profiles WHERE id = ?', [carolProfile])).toBe(1);
     expect(count('SELECT COUNT(*) FROM profile_sources WHERE profile_id = ?', [carolProfile])).toBe(1);
     expect(t.db.get("SELECT used_by, used_at IS NOT NULL AS used FROM invites WHERE code = 'used1'")).toEqual({ used_by: null, used: 1 });
-    expect(t.db.get("SELECT created_by FROM invites WHERE code = 'bobs1'")).toEqual({ created_by: null });
     expect(t.db.get('SELECT user_id FROM jobs WHERE id = ?', [job])).toEqual({ user_id: null });
     expect(await sessionUser(t, carol.cookie)).toMatchObject({ username: 'carol' });
+    // The name is free again.
+    expect(count("SELECT COUNT(*) FROM users WHERE username = 'bob'")).toBe(0);
     // A used invite stays used: nobody can sign up with it.
     t.db.run("INSERT INTO instance_settings (key, value) VALUES ('signupMode', '\"invite\"')");
     const signup = await t.app.inject({
@@ -535,15 +575,20 @@ describe('admin status', () => {
   let admin: string;
   let up: ReturnType<typeof fakeUpstream>;
   beforeAll(async () => {
+    // Only Date is faked: ?refresh=1 is ignored within STATUS_REFRESH_MIN_MS of the last run, so
+    // `status(true)` moves the clock past that first.
+    vi.useFakeTimers({ toFake: ['Date'] });
     up = fakeUpstream();
     t = await makeTestApp({ env: { LICHESS_TOKEN: TOKEN }, fetch: up.fetch });
     admin = (await makeUser(t, 'root', 'admin')).cookie;
   });
   afterAll(async () => {
     await t.close();
+    vi.useRealTimers();
   });
 
   const status = async (refresh = false): Promise<AdminStatus> => {
+    if (refresh) vi.setSystemTime(Date.now() + STATUS_REFRESH_MIN_MS);
     const res = await req(t, 'GET', `${API_ROUTES.admin.status}${refresh ? '?refresh=1' : ''}`, admin);
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain('StatusToken');
@@ -601,6 +646,40 @@ describe('admin status', () => {
     expect(up.calls.length).toBe(n + 5);
   });
 
+  it('ignores ?refresh=1 right after a run', async () => {
+    const first = await status(true);
+    const n = up.calls.length;
+    vi.setSystemTime(Date.now() + STATUS_REFRESH_MIN_MS - 1);
+    const again = await status();
+    const forced = (await req(t, 'GET', `${API_ROUTES.admin.status}?refresh=1`, admin)).json<AdminStatus>();
+    expect(up.calls.length).toBe(n);
+    expect(again.checkedAt).toBe(first.checkedAt);
+    expect(forced.checkedAt).toBe(first.checkedAt);
+    vi.setSystemTime(Date.now() + 1);
+    expect((await req(t, 'GET', `${API_ROUTES.admin.status}?refresh=1`, admin)).json<AdminStatus>().checkedAt).toBeGreaterThan(first.checkedAt!);
+    expect(up.calls.length).toBe(n + 5);
+  });
+
+  it('counts games and positions off the main thread; serves the last count while recounting', async () => {
+    const before = (await status(true)).counts;
+    expect(before.positions).toBe(t.db.value('SELECT COUNT(*) FROM positions'));
+    insertGame(t.db, testGame());
+    insertGame(t.db, testGame({ origin: 'reference', originId: 'ref:2' }));
+    // Within the cache: the old numbers.
+    expect((await status()).counts).toMatchObject({ games: before.games, referenceGames: before.referenceGames });
+    // Expired: answered at once with the old numbers while a recount runs, then the new ones.
+    vi.setSystemTime(Date.now() + STATUS_CACHE_MS);
+    expect((await status()).counts.games).toBe(before.games);
+    await vi.waitFor(async () => expect((await status()).counts.games).toBe(before.games + 1));
+    const after = (await status()).counts;
+    expect(after.referenceGames).toBe(before.referenceGames + 1);
+    expect(after.positions).toBe(t.db.value('SELECT COUNT(*) FROM positions'));
+    expect(after.positions).toBeGreaterThan(before.positions);
+    // ?refresh=1 waits for its recount.
+    insertGame(t.db, testGame());
+    expect((await status(true)).counts.games).toBe(before.games + 2);
+  });
+
   it('reports a refused token as invalid and a failing Lichess as unknown', async () => {
     up.routes.set('lichess.org/api/account', () => Response.json({ error: 'No such token' }, { status: 401 }));
     expect((await status(true)).lichessToken).toMatchObject({ configured: true, valid: false, state: 'invalid', userId: null, scopes: [] });
@@ -611,15 +690,22 @@ describe('admin status', () => {
     up.healthy();
   });
 
-  it('reports unreachable hosts and HTTP errors per probe', async () => {
+  it('reports unreachable hosts and server errors as down, refusals (4xx) as reachable', async () => {
     up.routes.delete('database.lichess.org/');
     up.routes.set('api.chess.com/pub/country/US', () => Response.json({ message: 'blocked' }, { status: 403 }));
+    up.routes.set('explorer.lichess.org/masters', () => Response.json({ error: 'No such token' }, { status: 401 }));
+    up.routes.set('lichess.org/robots.txt', () => new Response('down', { status: 503 }));
     const s = await status(true);
     const by = Object.fromEntries(s.upstream.map(u => [u.name, u]));
     expect(by['lichess-database']).toMatchObject({ ok: false, status: null, latencyMs: null });
     expect(by['lichess-database']!.error).toMatch(/Could not reach database\.lichess\.org/);
-    expect(by.chesscom).toMatchObject({ ok: false, status: 403, error: 'HTTP 403' });
-    expect(by.lichess).toMatchObject({ ok: true });
+    // Reachable, but the request was refused: the problem is credentials or configuration.
+    expect(by.chesscom).toMatchObject({ ok: true, status: 403 });
+    expect(by.chesscom!.error).toMatch(/^HTTP 403: reachable/);
+    expect(by['lichess-explorer']).toMatchObject({ ok: true, status: 401 });
+    expect(by['lichess-explorer']!.error).toMatch(/token/);
+    expect(by.lichess).toMatchObject({ ok: false, status: 503 });
+    expect(by.lichess!.error).toMatch(/^HTTP 503/);
     up.healthy();
   });
 

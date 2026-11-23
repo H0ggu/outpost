@@ -5,12 +5,14 @@ import { usernameSchema } from '../src/auth/accounts.ts';
 import {
   dummyPasswordHash,
   hashPassword,
+  maxmemFor,
   needsRehash,
   parsePasswordHash,
   passwordSchema,
+  SCRYPT_LIMITS,
   verifyPassword,
 } from '../src/auth/password.ts';
-import { FailureThrottle, throttledError } from '../src/auth/throttle.ts';
+import { accountClientKey, accountKey, clientKey, FailureThrottle, reauthKey, throttledError } from '../src/auth/throttle.ts';
 import {
   base32Decode,
   base32Encode,
@@ -64,6 +66,28 @@ describe('password hashing (scrypt)', () => {
       expect(parsePasswordHash(bad)).toBeNull();
       expect(needsRehash(bad)).toBe(true);
     }
+  });
+
+  it('bounds the scrypt memory a stored hash can ask for (256 MiB at most)', async () => {
+    const salt = Buffer.alloc(16, 1).toString('base64').replace(/=+$/, '');
+    const key = Buffer.alloc(64, 2).toString('base64').replace(/=+$/, '');
+    const enc = (ln: number, r: number, p: number) => `$scrypt$ln=${ln},r=${r},p=${p}$${salt}$${key}`;
+    // The worst accepted combination stays within 256 MiB of scrypt memory (plus slack).
+    expect(parsePasswordHash(enc(SCRYPT_LIMITS.ln, SCRYPT_LIMITS.r, SCRYPT_LIMITS.p))).not.toBeNull();
+    expect(128 * 2 ** SCRYPT_LIMITS.ln * SCRYPT_LIMITS.r).toBe(256 * 1024 * 1024);
+    expect(maxmemFor(2 ** SCRYPT_LIMITS.ln, SCRYPT_LIMITS.r, SCRYPT_LIMITS.p)).toBeLessThan(258 * 1024 * 1024);
+    // Anything above a bound is not a valid hash (formerly ln=20, r=32 meant 4 GiB per sign-in).
+    for (const [ln, r, p] of [
+      [SCRYPT_LIMITS.ln + 1, 8, 1],
+      [15, SCRYPT_LIMITS.r + 1, 1],
+      [15, 8, SCRYPT_LIMITS.p + 1],
+      [20, 32, 1],
+    ] as const) {
+      expect(parsePasswordHash(enc(ln, r, p)), `${ln}/${r}/${p}`).toBeNull();
+      expect(await verifyPassword('anything', enc(ln, r, p))).toBe(false);
+    }
+    // The default parameters need more than Node's 32 MiB default maxmem; maxmemFor allows it.
+    expect(maxmemFor(2 ** 15, 8, 1)).toBeGreaterThan(32 * 1024 * 1024);
   });
 
   it('flags weaker stored parameters for rehashing', () => {
@@ -207,6 +231,18 @@ describe('FailureThrottle', () => {
     expect(t.blockedUntil('a')).toBeNull();
     for (const k of ['k1', 'k2', 'k3', 'k4', 'k5']) t.fail(k);
     expect(t.size).toBe(3);
+  });
+
+  it('keys clients like @fastify/rate-limit: IPv4-mapped as IPv4, IPv6 by /64', () => {
+    expect(clientKey('203.0.113.7')).toBe('ip:203.0.113.7');
+    expect(clientKey('::ffff:203.0.113.7')).toBe('ip:203.0.113.7');
+    expect(clientKey('2001:db8:1:2:aaaa::1')).toBe(clientKey('2001:db8:1:2:bbbb::9'));
+    expect(clientKey('2001:db8:1:2::1')).not.toBe(clientKey('2001:db8:1:3::1'));
+    expect(clientKey(undefined)).toBe('ip:unknown');
+    expect(accountKey('  Alice ')).toBe('user:alice');
+    expect(accountClientKey('ALICE', '203.0.113.7')).toBe('user:alice|ip:203.0.113.7');
+    expect(accountClientKey('alice', '203.0.113.7')).not.toBe(accountClientKey('alice', '203.0.113.8'));
+    expect(reauthKey(7)).toBe('uid:7');
   });
 
   it('throttledError carries retry info', () => {

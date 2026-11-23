@@ -243,11 +243,13 @@ export interface ChangePasswordRequest {
 }
 
 /**
- * `POST /api/me/totp/setup` body: the current password, so a session alone (e.g. a stolen cookie)
- * cannot put an attacker's authenticator on the account. Wrong → 403; missing → 400.
+ * `POST /api/me/totp/setup` body (optional; the endpoint also accepts no body). When `password` is
+ * sent it must be the current password (wrong → 403, throttled), so a session alone (e.g. a stolen
+ * cookie) cannot put somebody else's authenticator on the account. Clients should ask for it; the
+ * server may require it in a later version.
  */
 export interface TotpSetupRequest {
-  password: string;
+  password?: string;
 }
 
 /** `POST /api/me/totp/setup`: a pending secret; nothing changes until it is confirmed with `enable`. */

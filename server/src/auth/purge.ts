@@ -71,6 +71,13 @@ export function createUserPurger(deps: {
 
   /** One pass over a user's data. Returns true when the user row is gone. */
   const purgeOnce = async (userId: Id): Promise<boolean> => {
+    // Only users marked by beginUserDeletion (nothing ever unmarks one): never delete a live user's data.
+    const state = db.get<{ deleting: number }>('SELECT deleting_at IS NOT NULL AS deleting FROM users WHERE id = ?', [userId]);
+    if (!state) return true;
+    if (!state.deleting) {
+      log.warn({ userId }, 'not purging a user that is not marked for deletion');
+      return false;
+    }
     for (;;) {
       if (closed) return false;
       const databaseId = db.value<number>(
@@ -113,18 +120,21 @@ export function createUserPurger(deps: {
     return false;
   };
 
+  const schedule = (userId: Id): Promise<boolean> => {
+    const existing = pending.get(userId);
+    if (existing) return existing;
+    const run = chain.then(() => purge(userId)).finally(() => pending.delete(userId));
+    pending.set(userId, run);
+    chain = run.catch(() => false);
+    return run;
+  };
+
   return {
-    schedule(userId) {
-      const existing = pending.get(userId);
-      if (existing) return existing;
-      const run = chain.then(() => purge(userId)).finally(() => pending.delete(userId));
-      pending.set(userId, run);
-      chain = run.catch(() => false);
-      return run;
-    },
+    schedule,
     resumePending() {
+      if (closed) return;
       for (const { id } of db.all<{ id: Id }>('SELECT id FROM users WHERE deleting_at IS NOT NULL ORDER BY deleting_at')) {
-        void this.schedule(id);
+        void schedule(id);
       }
     },
     async close() {

@@ -7,20 +7,30 @@
  *   Lichess's `X-OAuth-Scopes` header; 401/403 → `invalid`; anything else → `unknown` with the reason.
  * - Probes: one small request per upstream host, each with a short timeout; hosts are probed in
  *   parallel, requests to one host one at a time (Lichess asks for that). `ok` means the host
- *   answered with a 2xx/3xx. A host in a 429 cool-down is reported without being contacted.
- * - The token check, the probes and the expensive row counts (games, positions) are cached for
- *   `STATUS_CACHE_MS` and shared by concurrent requests; changing the token in the admin settings
- *   (or `?refresh=1`) runs them again. Cheap counts and job counts are always fresh.
+ *   answered with an HTTP status below 500: a 4xx (e.g. a refused token or a missing Chess.com
+ *   contact) still proves it is reachable, and is reported in `error`. A host in a 429 cool-down is
+ *   reported without being contacted.
+ * - The token check and the probes are cached for `STATUS_CACHE_MS` and shared by concurrent
+ *   requests; changing the token in the admin settings (or `?refresh=1`, at most once per
+ *   `STATUS_REFRESH_MIN_MS`) runs them again.
+ * - The expensive row counts (games, positions) run in a worker thread (src/auth/rowCounts.ts), so
+ *   they never block the server. They are cached like the probes; once known, an expired count is
+ *   served while the next one runs in the background (`?refresh=1` waits for it). Cheap counts and
+ *   job counts are always fresh.
  */
 import { statSync } from 'node:fs';
+import type { FastifyBaseLogger } from 'fastify';
 import type { AdminStatus, EpochMs, JobStatus, UpstreamStatus } from '@outpost/shared/api';
 import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
 import { UPSTREAM, UpstreamError, type Upstream } from '../http/upstream.ts';
 import { readSettings } from '../settings.ts';
+import { canCountInWorker, countHeavyRows, countHeavyRowsInWorker, type HeavyCounts } from './rowCounts.ts';
 
-/** How long probe results are reused. */
+/** How long probe results and row counts are reused. */
 export const STATUS_CACHE_MS = 60_000;
+/** `?refresh=1` is ignored within this long of the last run (each run costs 5 upstream requests). */
+export const STATUS_REFRESH_MIN_MS = 10_000;
 /** Timeout of one reachability probe (until the response headers). */
 export const PROBE_TIMEOUT_MS = 5_000;
 /** Timeout of the token check. */
@@ -55,6 +65,14 @@ const ERROR_STATUSES: readonly number[] = Array.from({ length: 200 }, (_, i) => 
 
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+/** What an HTTP status says about a probed host (null for 2xx/3xx). */
+export function httpProblem(status: number): string | null {
+  if (status < 400) return null;
+  if (status >= 500) return `HTTP ${status}: the server has a problem`;
+  if (status === 401 || status === 403) return `HTTP ${status}: reachable, but it refused the request (check the Lichess token / Chess.com contact)`;
+  return `HTTP ${status}: reachable, but it refused the request`;
+}
+
 /** Runs one probe; never throws. */
 export async function probeUpstream(upstream: Upstream, def: ProbeDef): Promise<UpstreamStatus> {
   const started = performance.now();
@@ -67,8 +85,7 @@ export async function probeUpstream(upstream: Upstream, def: ProbeDef): Promise<
     });
     const latencyMs = Math.round(performance.now() - started);
     void res.body?.cancel().catch(() => {});
-    const ok = res.status < 400;
-    return { name: def.name, url: def.url, ok, status: res.status, latencyMs, error: ok ? null : `HTTP ${res.status}` };
+    return { name: def.name, url: def.url, ok: res.status < 500, status: res.status, latencyMs, error: httpProblem(res.status) };
   } catch (e) {
     return {
       name: def.name,
@@ -151,9 +168,6 @@ interface Probed {
   checkedAt: EpochMs;
   lichessToken: AdminStatus['lichessToken'];
   upstream: UpstreamStatus[];
-  games: number;
-  referenceGames: number;
-  positions: number;
 }
 
 /** The status service of one app (`createStatusService` in the admin plugin). */
@@ -161,13 +175,26 @@ export interface StatusService {
   get(opts?: { refresh?: boolean }): Promise<AdminStatus>;
   /** Forget cached probes (e.g. after the Lichess token changed). */
   invalidate(): void;
+  /** Stops a running row count (app shutdown). */
+  close(): Promise<void>;
 }
 
-/** Creates the status service with its probe cache. */
-export function createStatusService(deps: { db: Db; config: Config; upstream: Upstream; now?: () => number }): StatusService {
-  const { db, config, upstream } = deps;
+/** Creates the status service with its probe and row-count caches. `countInWorker: false` is for tests. */
+export function createStatusService(deps: {
+  db: Db;
+  config: Config;
+  upstream: Upstream;
+  log?: FastifyBaseLogger;
+  now?: () => number;
+  countInWorker?: boolean;
+}): StatusService {
+  const { db, config, upstream, log } = deps;
   const now = deps.now ?? Date.now;
+  const useWorker = (deps.countInWorker ?? true) && canCountInWorker(db.path);
+  const closing = new AbortController();
   let cache: { at: number; value: Promise<Probed>; settled: boolean } | null = null;
+  let counts: { at: number; value: HeavyCounts } | null = null;
+  let counting: Promise<void> | null = null;
 
   /** The token check and every probe: hosts in parallel, one request at a time per host. */
   const runChecks = async (): Promise<Pick<Probed, 'lichessToken' | 'upstream'>> => {
@@ -195,18 +222,15 @@ export function createStatusService(deps: { db: Db; config: Config; upstream: Up
   };
 
   const probe = async (): Promise<Probed> => {
-    // Expensive counts are taken with the probes and cached with them.
-    const games = db.value<number>("SELECT COUNT(*) FROM games WHERE origin IN ('lichess', 'chesscom', 'pgn')") ?? 0;
-    const referenceGames = db.value<number>("SELECT COUNT(*) FROM games WHERE origin = 'reference'") ?? 0;
-    const positions = db.value<number>('SELECT COUNT(*) FROM positions') ?? 0;
     const checks = await runChecks();
-    return { checkedAt: now(), ...checks, games, referenceGames, positions };
+    return { checkedAt: now(), ...checks };
   };
 
   const probed = (refresh: boolean): Promise<Probed> => {
     const t = now();
-    // A refresh joins a run that is still in flight instead of starting another one.
-    const stale = !cache || t - cache.at >= STATUS_CACHE_MS || (refresh && cache.settled);
+    // A refresh joins a run that is still in flight instead of starting another one, and is
+    // ignored right after a run.
+    const stale = !cache || t - cache.at >= STATUS_CACHE_MS || (refresh && cache.settled && t - cache.at >= STATUS_REFRESH_MIN_MS);
     if (stale) {
       const entry = { at: t, value: probe(), settled: false };
       cache = entry;
@@ -223,9 +247,45 @@ export function createStatusService(deps: { db: Db; config: Config; upstream: Up
     return cache!.value;
   };
 
+  /** One row count (in the worker when possible), stored in `counts`. Shared while it runs. */
+  const recount = (): Promise<void> => {
+    counting ??= (async () => {
+      const started = now();
+      let value: HeavyCounts;
+      if (useWorker) {
+        try {
+          value = await countHeavyRowsInWorker(db.path, { signal: closing.signal });
+        } catch (err) {
+          if (closing.signal.aborted) throw err;
+          // Should not happen (same file, read-only); keep the last numbers rather than block the server.
+          log?.warn({ err }, 'could not count rows in a worker thread');
+          value = counts?.value ?? countHeavyRows(db);
+        }
+      } else {
+        value = countHeavyRows(db);
+      }
+      counts = { at: started, value };
+    })().finally(() => {
+      counting = null;
+    });
+    return counting;
+  };
+
+  const heavyCounts = async (refresh: boolean): Promise<HeavyCounts> => {
+    const t = now();
+    const stale = !counts || t - counts.at >= STATUS_CACHE_MS || (refresh && t - counts.at >= STATUS_REFRESH_MIN_MS);
+    if (stale) {
+      const run = recount();
+      if (!counts || refresh) await run;
+      else run.catch(() => {});
+    }
+    return counts!.value;
+  };
+
   return {
     async get(opts = {}) {
-      const p = await probed(opts.refresh ?? false);
+      const refresh = opts.refresh ?? false;
+      const [p, heavy] = await Promise.all([probed(refresh), heavyCounts(refresh)]);
       const jobs = jobCounts(db);
       const count = (sql: string): number => db.value<number>(sql) ?? 0;
       return {
@@ -240,18 +300,23 @@ export function createStatusService(deps: { db: Db; config: Config; upstream: Up
         checkedAt: p.checkedAt,
         jobs,
         counts: {
-          users: count('SELECT COUNT(*) FROM users'),
+          // Users being deleted (src/auth/purge.ts) are already gone for the admin.
+          users: count('SELECT COUNT(*) FROM users WHERE deleting_at IS NULL'),
           profiles: count('SELECT COUNT(*) FROM profiles'),
           sources: count('SELECT COUNT(*) FROM sources'),
-          games: p.games,
-          referenceGames: p.referenceGames,
-          positions: p.positions,
+          games: heavy.games,
+          referenceGames: heavy.referenceGames,
+          positions: heavy.positions,
           queuedJobs: jobs.queued,
         },
       };
     },
     invalidate() {
       cache = null;
+    },
+    async close() {
+      closing.abort(new Error('status service closed'));
+      await counting?.catch(() => {});
     },
   };
 }

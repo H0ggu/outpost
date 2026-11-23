@@ -64,8 +64,13 @@ export const prefsPatchSchema = z.strictObject({
   studioLayout: z.enum(STUDIO_LAYOUTS).optional(),
 });
 
-/** `POST /api/me/totp/setup`: the current password (a session alone cannot turn on TOTP). */
-export const totpSetupSchema = z.object({ password: anyPasswordSchema.min(1, 'Enter your current password') });
+/**
+ * `POST /api/me/totp/setup`: optionally the current password, checked when present (empty = absent).
+ * Optional so clients that send no body keep working; see `TotpSetupRequest`.
+ */
+export const totpSetupSchema = z
+  .object({ password: anyPasswordSchema.optional() })
+  .transform(v => ({ password: v.password || null }));
 
 /** `POST /api/me/totp/enable`. */
 export const totpEnableSchema = z.object({ code: z.string().max(32) });
@@ -93,9 +98,9 @@ export interface AuthRow {
 
 const AUTH_COLUMNS = 'id, username, password_hash, role, disabled, totp_secret, totp_last_step, prefs_json';
 
-/** Finds a user by username (case-insensitive). */
+/** Finds a user by username (case-insensitive). Users being deleted (src/auth/purge.ts) are not found. */
 export const findUserByUsername = (db: Db, username: string): AuthRow | undefined =>
-  db.get<AuthRow>(`SELECT ${AUTH_COLUMNS} FROM users WHERE username = ?`, [username.trim()]);
+  db.get<AuthRow>(`SELECT ${AUTH_COLUMNS} FROM users WHERE username = ? AND deleting_at IS NULL`, [username.trim()]);
 
 /** Finds a user by id. */
 export const findUserById = (db: Db, id: Id): AuthRow | undefined =>
