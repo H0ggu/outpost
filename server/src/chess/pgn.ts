@@ -153,6 +153,9 @@ function termination(game: PgnGame, result: GameResult, final: Replay): Terminat
   return 'resign';
 }
 
+/** `Variant` tag values of Chess960 (lila: "Chess960", other tools: "Fischerandom", "chess 960"). */
+const CHESS960_RE = /960|fischer/i;
+
 /** A rating diff tag (`+8`, `-12`, `0`) → number, or null. */
 const ratingDiff = (s: string | null): number | null => (s && /^[+-]?\d{1,4}$/.test(s) ? Number(s) : null);
 
@@ -173,7 +176,10 @@ export function pgnToNormalizedGame(
   game: PgnGame,
   ctx: { origin: 'pgn' | 'reference'; databaseId: Id },
 ): NormalizedGame | { skip: PgnSkipReason; detail?: string } {
-  if (parseVariant(game.headers.get('Variant')) !== 'chess') return { skip: 'variant' };
+  const variant = game.headers.get('Variant');
+  // chessops reads Chess960 as standard chess (same rules); without its FEN tag the game would be
+  // replayed from the standard start, so it is skipped as a variant like the others.
+  if (parseVariant(variant) !== 'chess' || (variant && CHESS960_RE.test(variant))) return { skip: 'variant' };
   const start = startingPosition(game.headers);
   if (start.isErr || epdOf(start.value) !== epdOf(Chess.default())) return { skip: 'fromPosition' };
   const result = parseResult(game.headers.get('Result'));

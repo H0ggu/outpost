@@ -125,6 +125,15 @@ describe('PGN helpers', () => {
     expect(pgnToNormalizedGame(setUp!, { origin: 'pgn', databaseId: 7 })).toEqual({ skip: 'fromPosition' });
   });
 
+  it('skips Chess960 games even without their FEN tag (chessops reads them as standard chess)', async () => {
+    for (const variant of ['Chess960', 'Fischerandom', 'chess 960']) {
+      const [g] = await collect(`[Variant "${variant}"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0\n`);
+      expect(pgnToNormalizedGame(g!, { origin: 'pgn', databaseId: 7 })).toEqual({ skip: 'variant' });
+    }
+    const [standard] = await collect('[Variant "Standard"]\n[Result "1-0"]\n\n1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0\n');
+    expect('skip' in pgnToNormalizedGame(standard!, { origin: 'pgn', databaseId: 7 })).toBe(false);
+  });
+
   it('parses dates and FIDE time controls', () => {
     expect(pgnDateTime('2024.05.??', null)).toBe(Date.UTC(2024, 4, 1));
     expect(pgnDateTime('????.??.??', null)).toBeNull();
