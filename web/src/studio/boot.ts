@@ -26,7 +26,7 @@ import { makeSocketSend } from './socket.ts';
 import type { StudioTab } from './tabs.ts';
 import { mountChrome } from './view/chrome.ts';
 
-/** How often the shown game is compared with its saved version (also after every lila redraw). */
+/** How long the board must be still before its game is exported to the tab (and compared with its saved version). */
 const DIRTY_CHECK_MS = 400;
 
 async function loadSession(): Promise<SessionInfo | null> {
@@ -118,16 +118,15 @@ export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<vo
   ctrl.attach(analyse, load);
   if (initial.error) void alert(`This game could not be read and was replaced by an empty board: ${initial.error}`);
 
-  // Re-check unsaved changes after lila redraws (moves, deletions, promotions, comments …).
+  // After each lila redraw: the chrome follows the cursor (next frame); the tab's PGN, cursor and
+  // unsaved marker follow once the board settles (moves, deletions, promotions, comments …).
   const lilaRedraw = analyse.redraw.bind(analyse);
   let dirtyTimer: ReturnType<typeof setTimeout> | undefined;
   analyse.redraw = () => {
     lilaRedraw();
+    ctrl.redraw();
     clearTimeout(dirtyTimer);
-    dirtyTimer = setTimeout(() => {
-      ctrl.onBoardChange();
-      ctrl.redraw();
-    }, DIRTY_CHECK_MS);
+    dirtyTimer = setTimeout(() => ctrl.onBoardChange(), DIRTY_CHECK_MS);
   };
   window.addEventListener('pagehide', () => ctrl.syncActive());
 

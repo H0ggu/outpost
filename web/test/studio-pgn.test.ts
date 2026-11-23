@@ -9,9 +9,12 @@ import { makeSanAndPlay, parseSan } from 'chessops/san';
 import type { Position } from 'chessops/chess';
 import { describe, expect, it } from 'vitest';
 import {
+  ANNOTATION_NAGS,
   emptyGamePgn,
+  GLYPH_GROUPS,
   fenToPgn,
   gameTitle,
+  hasPgnContent,
   joinPgnGames,
   mainlinePlyOf,
   pgnHeaders,
@@ -71,6 +74,17 @@ describe('treeToPgn', () => {
     expect(back.moves.children[0]!.data.nags).toEqual([1, 146]);
   });
 
+  it('writes only annotation NAGs, never lila’s display glyphs (threefold ①②③ use id 9)', () => {
+    const root = treeOf('1. Nf3 Nf6 2. Ng1 Ng8 *');
+    at(root, 0).glyphs = [{ id: 9 }, { id: 5 }];
+    at(root, 0, 0).glyphs = [{ id: 9 }];
+    const pgn = treeToPgn(root);
+    expect(pgn).not.toContain('$9');
+    expect(pgn).toContain('1. Nf3 $5 1... Nf6 2. Ng1 Ng8');
+    expect(ANNOTATION_NAGS.size).toBe(24);
+    expect(GLYPH_GROUPS.map(g => g.name)).toEqual(['move', 'position', 'observation']);
+  });
+
   it('drops computer-only lines but keeps annotated ones', () => {
     const root = treeOf('1. e4 e5 (1... c5) (1... e6) *');
     at(root, 0, 1).comp = true;
@@ -104,6 +118,13 @@ describe('multi-game files', () => {
     const joined = joinPgnGames(games);
     expect(splitPgnGames(joined)).toEqual(games);
     expect(joined.endsWith('\n')).toBe(true);
+  });
+
+  it('tells PGN with moves or a position from other text', () => {
+    expect(hasPgnContent('1. e4 *')).toBe(true);
+    expect(hasPgnContent('[FEN "8/8/8/4k3/8/8/4K3/8 w - - 0 1"]\n\n*')).toBe(true);
+    expect(hasPgnContent('hello there')).toBe(false);
+    expect(hasPgnContent('')).toBe(false);
   });
 
   it('treats an empty file as one empty game', () => {

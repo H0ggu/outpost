@@ -9,9 +9,9 @@
  */
 import type { StudioFileMeta } from '@outpost/shared/api';
 import { licon } from '../../lichess/licon.ts';
-import { GLYPH_GROUPS, type StudioCtrl } from '../ctrl.ts';
+import type { StudioCtrl } from '../ctrl.ts';
 import type { FolderNode } from '../fileTree.ts';
-import { gameTitle, pgnHeaders } from '../pgn.ts';
+import { gameTitle, GLYPH_GROUPS, pgnHeaders } from '../pgn.ts';
 import { glyphOfNag } from 'lila/analyse/pgnImport';
 import { addFolderDialog, moveFileDialog } from './dialogs.ts';
 import { ago, button, dataIcon, h, moveName, type VNode } from './util.ts';

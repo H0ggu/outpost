@@ -42,6 +42,20 @@ export interface PgnTreeNode {
 /** PGN header pairs in order. */
 export type PgnHeaders = ReadonlyArray<readonly [string, string]>;
 
+/**
+ * lila's annotation glyphs (scalachess Glyph.scala), grouped like its study panel: one move glyph and
+ * one position glyph at most, any observations. Only these NAGs are written: lila also puts display-only
+ * glyphs on nodes (e.g. id 9 for the ①②③ of a threefold repetition), which must not become `$9`.
+ */
+export const GLYPH_GROUPS: ReadonlyArray<{ name: 'move' | 'position' | 'observation'; exclusive: boolean; ids: readonly number[] }> = [
+  { name: 'move', exclusive: true, ids: [1, 2, 3, 4, 5, 6, 7, 22] },
+  { name: 'position', exclusive: true, ids: [10, 13, 14, 15, 16, 17, 18, 19] },
+  { name: 'observation', exclusive: false, ids: [146, 32, 36, 40, 132, 138, 44, 140] },
+];
+
+/** NAGs the Studio reads and writes. */
+export const ANNOTATION_NAGS: ReadonlySet<number> = new Set(GLYPH_GROUPS.flatMap(g => g.ids));
+
 const BRUSH_COLORS: Readonly<Record<string, CommentShapeColor>> = {
   green: 'green',
   paleGreen: 'green',
@@ -85,7 +99,7 @@ function addChildren(into: Node<PgnNodeData>, from: PgnTreeNode): void {
   for (const child of from.children) {
     if (!child.san || !hasUserContent(child)) continue;
     const data: PgnNodeData = { san: child.san };
-    const nags = [...new Set((child.glyphs ?? []).filter(g => !g.comp).map(g => g.id))];
+    const nags = [...new Set((child.glyphs ?? []).filter(g => !g.comp && ANNOTATION_NAGS.has(g.id)).map(g => g.id))];
     if (nags.length) data.nags = nags;
     const comment = commentOf(child);
     if (comment) data.comments = [comment];
@@ -136,6 +150,11 @@ export function splitPgnGames(pgn: string): string[] {
 /** Rebuilds a file from its single-game PGNs (one blank line between games). */
 export function joinPgnGames(games: readonly string[]): string {
   return games.map(g => g.trim()).join('\n\n') + '\n';
+}
+
+/** True when text holds at least one move or a set-up position (chessops reads any text as PGN). */
+export function hasPgnContent(pgn: string): boolean {
+  return parsePgn(pgn).some(g => g.moves.children.length > 0 || g.headers.has('FEN'));
 }
 
 /** A game with no moves from the standard position. */

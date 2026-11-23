@@ -30,6 +30,8 @@ import {
   emptyGamePgn,
   fenToPgn,
   gameTitle,
+  GLYPH_GROUPS,
+  hasPgnContent,
   joinPgnGames,
   mainlinePlyOf,
   pgnHeaders,
@@ -86,12 +88,6 @@ export interface FilesState {
 
 const LOCAL_FOLDERS_KEY = 'outpost.studio.folders';
 
-/** Glyph groups of lila's study annotation form: one move and one position glyph, any observations. */
-export const GLYPH_GROUPS: ReadonlyArray<{ name: string; exclusive: boolean; ids: readonly number[] }> = [
-  { name: 'move', exclusive: true, ids: [1, 2, 3, 4, 5, 6, 7, 22] },
-  { name: 'position', exclusive: true, ids: [10, 13, 14, 15, 16, 17, 18, 19] },
-  { name: 'observation', exclusive: false, ids: [146, 32, 36, 40, 132, 138, 44, 140] },
-];
 
 const errorMessage = (e: unknown): string =>
   e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e);
@@ -401,7 +397,8 @@ export class StudioCtrl {
       try {
         res = await api.get<GameResponse>(API_ROUTES.game(id));
       } catch (e) {
-        await alert(`Could not open game ${id}: ${errorMessage(e)}`);
+        // not awaited: this also runs while the Studio boots, before the board exists
+        void alert(`Could not open game ${id}: ${errorMessage(e)}`);
         return;
       }
       const g = res.game;
@@ -491,16 +488,27 @@ export class StudioCtrl {
     } else void this.openMastersGame(id, fen, orientation, this.params.embed);
   };
 
+  /**
+   * A masters (or other non-Outpost) explorer game: its PGN comes from `/api/explorer/masters/pgn/:id`.
+   * From the embed it opens in a new browser tab, which is opened at once (still inside the click, so
+   * popup blockers allow it) and pointed at the Studio when the PGN has arrived.
+   */
   private async openMastersGame(id: string, fen: string, orientation: Color, newWindow: boolean): Promise<void> {
+    const win = newWindow ? window.open('', '_blank') : null;
     let pgn: string;
     try {
       pgn = await api.text(API_ROUTES.explorer.mastersPgn(id));
     } catch (e) {
+      win?.close();
       await alert(`Could not load the game: ${errorMessage(e)}`);
       return;
     }
     if (newWindow) {
-      window.open(paths.studio({ pgn, fen }), '_blank', 'noopener');
+      const url = paths.studio({ pgn, fen, color: orientation });
+      if (win) {
+        win.opener = null;
+        win.location.href = url;
+      } else window.open(url, '_blank', 'noopener');
       return;
     }
     this.openTab({
@@ -538,7 +546,7 @@ export class StudioCtrl {
     } catch (e) {
       return `This PGN could not be read: ${errorMessage(e)}`;
     }
-    if (!games.length) return 'No game found in this PGN.';
+    if (!hasPgnContent(t)) return 'No moves or position found in this text.';
     this.openPgnText(t, title);
     return null;
   }
@@ -707,7 +715,7 @@ export class StudioCtrl {
       try {
         file = await filesApi.get(id);
       } catch (e) {
-        await alert(`Could not open the file: ${errorMessage(e)}`);
+        void alert(`Could not open the file: ${errorMessage(e)}`); // not awaited, as in openGame
         return;
       }
       this.files.selectedFolder = file.folder;
