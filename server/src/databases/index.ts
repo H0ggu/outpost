@@ -24,7 +24,7 @@ import { playerKey } from '@outpost/shared/chess';
 import { z } from 'zod';
 import { relinkFideSources } from '../chess/index.ts';
 import type { Config } from '../config.ts';
-import type { Db } from '../db/index.ts';
+import type { Db, SqlValue } from '../db/index.ts';
 import { forbidden, notFound } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import { getJob } from '../jobs/index.ts';
@@ -263,26 +263,56 @@ export function deleteDatabaseGame(db: Db, database: ViewableDatabase, gameId: I
 // Games
 // ---------------------------------------------------------------------------
 
-/** `GET /api/databases/:id/games`: newest first; `q` matches a player name or the event. */
-export function databaseGames(db: Db, database: ViewableDatabase, query: { q?: string | undefined; page: number; pageSize: number }): DbGamesPage {
-  const where = ['g.database_id = ?'];
-  const params: Array<string | number> = [database.id];
+/** Game ids a search scans between two yields to the event loop. */
+export const SEARCH_SCAN_CHUNK = 20_000;
+/** Matches a search keeps while counting: up to this many, the page comes from them (no second scan). */
+const SEARCH_KEEP_IDS = 5_000;
+
+/**
+ * `GET /api/databases/:id/games`: newest first; `q` matches a player name or the event.
+ * A search (a substring match, so no index helps) counts its matches over the database in id
+ * ranges of `SEARCH_SCAN_CHUNK`, yielding to the event loop between them, so a search over a
+ * large reference database never holds the server; when there are few matches the page is cut
+ * from them, otherwise the newest-first scan stops as soon as the page is full.
+ */
+export async function databaseGames(
+  db: Db,
+  database: ViewableDatabase,
+  query: { q?: string | undefined; page: number; pageSize: number },
+): Promise<DbGamesPage> {
+  const page = (sql: string, params: SqlValue[]): DbGamesPage['games'] =>
+    db
+      .all<DbGameRowRecord>(`SELECT ${DB_GAME_ROW_COLUMNS} FROM games g WHERE ${sql} ORDER BY g.ended_at DESC, g.id DESC LIMIT ? OFFSET ?`, [
+        ...params,
+        query.pageSize,
+        (query.page - 1) * query.pageSize,
+      ])
+      .map(toDbGameRow);
+  const paging = { page: query.page, pageSize: query.pageSize };
   const q = query.q?.trim();
-  if (q) {
-    where.push(`(g.white_key LIKE ? ESCAPE '\\' OR g.black_key LIKE ? ESCAPE '\\' OR g.event LIKE ? ESCAPE '\\')`);
-    const key = likeContains(playerKey(q));
-    params.push(key, key, likeContains(q));
+  if (!q) {
+    const total = db.value<number>('SELECT COUNT(*) FROM games g WHERE g.database_id = ?', [database.id]) ?? 0;
+    return { total, ...paging, games: page('g.database_id = ?', [database.id]) };
   }
-  const sql = where.join(' AND ');
-  const total = db.value<number>(`SELECT COUNT(*) FROM games g WHERE ${sql}`, params) ?? 0;
-  const games = db
-    .all<DbGameRowRecord>(`SELECT ${DB_GAME_ROW_COLUMNS} FROM games g WHERE ${sql} ORDER BY g.ended_at DESC, g.id DESC LIMIT ? OFFSET ?`, [
-      ...params,
-      query.pageSize,
-      (query.page - 1) * query.pageSize,
-    ])
-    .map(toDbGameRow);
-  return { total, page: query.page, pageSize: query.pageSize, games };
+  const match = `(g.white_key LIKE ? ESCAPE '\\' OR g.black_key LIKE ? ESCAPE '\\' OR g.event LIKE ? ESCAPE '\\')`;
+  const key = likeContains(playerKey(q));
+  const matchParams = [key, key, likeContains(q)];
+  const range = db.get<{ lo: Id | null; hi: Id | null }>('SELECT min(id) AS lo, max(id) AS hi FROM games WHERE database_id = ?', [database.id]);
+  let total = 0;
+  const kept: Id[] = [];
+  if (range?.lo != null && range.hi != null) {
+    for (let lo = range.lo; lo <= range.hi; lo += SEARCH_SCAN_CHUNK) {
+      if (lo > range.lo) await yieldToLoop();
+      const ids = db.all<{ id: Id }>(
+        `SELECT g.id FROM games g WHERE g.database_id = ? AND g.id BETWEEN ? AND ? AND ${match}`,
+        [database.id, lo, lo + SEARCH_SCAN_CHUNK - 1, ...matchParams],
+      );
+      total += ids.length;
+      if (total <= SEARCH_KEEP_IDS) for (const r of ids) kept.push(r.id);
+    }
+  }
+  if (total <= SEARCH_KEEP_IDS) return { total, ...paging, games: page('g.id IN (SELECT value FROM json_each(?))', [JSON.stringify(kept)]) };
+  return { total, ...paging, games: page(`g.database_id = ? AND ${match}`, [database.id, ...matchParams]) };
 }
 
 const EXPORT_BATCH = 500;
@@ -299,5 +329,7 @@ export async function* exportDatabasePgn(db: Db, databaseId: Id): AsyncGenerator
     yield `${rows.map(gameToPgn).join('\n\n')}\n\n`;
     lastId = rows[rows.length - 1]!.id;
     if (rows.length < EXPORT_BATCH) return;
+    // A fast client never makes the socket push back: let other requests in between batches.
+    await yieldToLoop();
   }
 }

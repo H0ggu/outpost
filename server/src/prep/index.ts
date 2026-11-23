@@ -210,6 +210,8 @@ export interface PrepReportOptions {
   now?: number;
   /** Games per opponent for lines and activity (default `PREP_MAX_GAMES`; tests lower it). */
   maxGames?: number;
+  /** Stops the report between opponents (the client went away). */
+  signal?: AbortSignal;
 }
 
 interface LineAcc extends Wdl {
@@ -402,7 +404,10 @@ export function opponentReport(
   };
 }
 
-/** `GET /api/prep/:id/report`. Yields to the event loop between opponents. */
+/**
+ * `GET /api/prep/:id/report`. Yields to the event loop between opponents, and stops there with
+ * 499 once `opts.signal` aborts (nobody is waiting for the rest).
+ */
 export async function prepReport(
   db: Db,
   config: Config,
@@ -416,6 +421,7 @@ export async function prepReport(
   const opponents: PrepOpponentReport[] = [];
   for (const [i, profileId] of opponentIds(db, id).entries()) {
     if (i > 0) await yieldToLoop();
+    if (opts.signal?.aborted) throw new HttpError(499, 'bad_request', 'The request was cancelled');
     let profile: ViewableProfile;
     try {
       profile = loadProfileByIdForViewer(db, profileId, viewer);

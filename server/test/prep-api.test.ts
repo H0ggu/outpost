@@ -192,6 +192,25 @@ describe('prep API', () => {
     t.db.run("UPDATE profiles SET visibility = 'public' WHERE id = ?", [carolProfile]);
   });
 
+  it('throttles reports per user and computes them one at a time', async () => {
+    const busy = createUserSession(t.db, { username: 'busy' });
+    const set = (await req(busy, 'POST', '/api/prep', { name: 'Throttle', profileIds: [carolProfile] })).json<PrepSet>();
+    const results = await Promise.all(Array.from({ length: 21 }, () => req(busy, 'GET', `/api/prep/${set.id}/report`)));
+    expect(results.filter(r => r.statusCode === 200)).toHaveLength(20);
+    expect(results.filter(r => r.statusCode === 429)).toHaveLength(1);
+    // Another user's budget is their own.
+    expect((await req(me, 'GET', `/api/prep/${set.id}/report`)).statusCode).toBe(404);
+  });
+
+  it('stops a report between opponents once the client is gone', async () => {
+    const set = (await req(me, 'POST', '/api/prep', { name: 'Abort', profileIds: [carolProfile, daveProfile] })).json<PrepSet>();
+    const viewer: AuthUser = { id: me.userId, username: 'me', role: 'user', totpEnabled: false, prefs: {} as AuthUser['prefs'] };
+    const signal = AbortSignal.abort();
+    await expect(prepReport(t.db, t.config, viewer, set.id, {}, { tz: 'UTC', plies: 8, minGames: 1, signal })).rejects.toMatchObject({
+      statusCode: 499,
+    });
+  });
+
   it('builds sides from move lists', () => {
     const book = getOpeningBook();
     const side = buildSide(
