@@ -413,14 +413,19 @@ export async function fetchRound(upstream: Upstream, roundId: string, signal?: A
   return r;
 }
 
-/** `GET /api/broadcast/round/{roundId}.pgn` (mainline only: no clocks or comments); 404 → `not_found`. */
+/** URL of a round's PGN export (clocks and comments off unless asked for). */
+export function roundPgnUrl(roundId: string, opts: { clocks?: boolean; comments?: boolean } = {}): string {
+  const q = new URLSearchParams({ clocks: String(opts.clocks ?? false), comments: String(opts.comments ?? false) });
+  return `${UPSTREAM.lichess}/api/broadcast/round/${encodeURIComponent(roundId)}.pgn?${q}`;
+}
+
+/** `GET /api/broadcast/round/{roundId}.pgn` (mainline only unless asked: no clocks or comments); 404 → `not_found`. */
 export async function fetchRoundPgn(
   upstream: Upstream,
   roundId: string,
   opts: { signal?: AbortSignal; clocks?: boolean; comments?: boolean; timeoutMs?: number } = {},
 ): Promise<Response> {
-  const q = new URLSearchParams({ clocks: String(opts.clocks ?? false), comments: String(opts.comments ?? false) });
-  const res = await upstream.fetch(`${UPSTREAM.lichess}/api/broadcast/round/${encodeURIComponent(roundId)}.pgn?${q}`, {
+  const res = await upstream.fetch(roundPgnUrl(roundId, opts), {
     auth: 'required',
     headers: { accept: 'application/x-chess-pgn' },
     allowStatuses: [404],

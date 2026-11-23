@@ -9,8 +9,8 @@
  */
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { fetchRound, fetchRoundPgn, federationsOf, BROADCAST_ID_RE } from '../broadcasts/lichess.ts';
-import { LICHESS_TOKEN_HOSTS } from '../http/upstream.ts';
+import { BROADCAST_ID_RE, fetchRound, federationsOf, roundPgnUrl } from '../broadcasts/lichess.ts';
+import { LICHESS_TOKEN_HOSTS, UpstreamError, type UpstreamInit } from '../http/upstream.ts';
 import type { JobContext } from '../jobs/index.ts';
 import { markBroadcastData, requireReferenceDatabase } from './databases.ts';
 import { importReferencePgn, type ImportResult } from './importer.ts';
@@ -22,6 +22,8 @@ import { importUrlProblem } from './urls.ts';
 
 /** Time allowed for an upstream download to start answering. */
 const DOWNLOAD_TIMEOUT_MS = 60_000;
+/** A download that sends nothing for this long is aborted (a retryable network error). */
+export const DOWNLOAD_IDLE_MS = { value: 120_000 };
 
 const percent = (done: number, total: number | null): string | null =>
   total ? `${Math.min(100, Math.floor((done * 100) / total))}% of ${formatBytes(total)}` : null;
@@ -32,6 +34,59 @@ const contentLength = (res: Response): number | null => {
 };
 
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** A streaming download: the response, its body as size-capped chunks, and how much was read. */
+interface Download {
+  res: Response;
+  chunks: AsyncIterable<Uint8Array>;
+  read(): number;
+  total: number | null;
+}
+
+/**
+ * GETs `url` through `ctx.upstream` and streams the body, capped at `max` bytes. The body must keep
+ * flowing: after `DOWNLOAD_IDLE_MS` without data the request is aborted with a retryable
+ * `UpstreamError('network')`. Cancelling the job aborts it too. `open` runs on the response first
+ * (status checks) and may return a replacement error.
+ */
+async function download(
+  ctx: JobContext,
+  url: string | URL,
+  init: Omit<UpstreamInit, 'signal'> & { max: number; what: string },
+): Promise<Download> {
+  const host = new URL(url).host;
+  const idle = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const arm = (): void => {
+    clearTimeout(timer);
+    timer = setTimeout(() => idle.abort(), DOWNLOAD_IDLE_MS.value);
+    timer.unref();
+  };
+  const { max, what, ...upstreamInit } = init;
+  const res = await ctx.upstream.fetch(url, { timeoutMs: DOWNLOAD_TIMEOUT_MS, ...upstreamInit, signal: AbortSignal.any([ctx.signal, idle.signal]) });
+  let read = 0;
+  async function* chunks(): AsyncGenerator<Uint8Array> {
+    arm();
+    try {
+      yield* countBytes(bodyChunks(res.body), {
+        max,
+        what,
+        onBytes: n => {
+          read = n;
+          arm();
+        },
+      });
+    } catch (e) {
+      if (idle.signal.aborted && !ctx.signal.aborted) {
+        throw new UpstreamError('network', host, `${host} sent no data for ${Math.round(DOWNLOAD_IDLE_MS.value / 1000)} s`, { cause: e });
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { res, chunks: chunks(), read: () => read, total: contentLength(res) };
+}
 
 /** Fails when the target database is gone (deleted while the job waited). */
 function targetDatabase(ctx: JobContext, databaseId: number): void {
@@ -51,26 +106,19 @@ export async function runBroadcastMonth(ctx: JobContext<'broadcastMonth'>): Prom
   markBroadcastData(ctx.db, databaseId);
   let result: ImportResult;
   try {
-    const res = await ctx.upstream.fetch(broadcastMonthUrl(month), {
-      signal: ctx.signal,
+    const dl = await download(ctx, broadcastMonthUrl(month), {
       allowStatuses: [404],
-      timeoutMs: DOWNLOAD_TIMEOUT_MS,
-    });
-    if (res.status === 404) {
-      void res.body?.cancel().catch(() => {});
-      throw new Error(`${month} is not published on database.lichess.org yet`);
-    }
-    const total = contentLength(res);
-    let read = 0;
-    const bytes = countBytes(bodyChunks(res.body), {
       max: REFERENCE_LIMITS.downloadBytes,
       what: `The ${month} download`,
-      onBytes: n => (read = n),
     });
-    result = await importReferencePgn(ctx, decompressAuto(bytes), {
+    if (dl.res.status === 404) {
+      void dl.res.body?.cancel().catch(() => {});
+      throw new Error(`${month} is not published on database.lichess.org yet`);
+    }
+    result = await importReferencePgn(ctx, decompressAuto(dl.chunks), {
       databaseId,
       label: month,
-      note: () => percent(read, total),
+      note: () => percent(dl.read(), dl.total),
     });
   } catch (e) {
     if (!ctx.signal.aborted) recordMonth(ctx.db, databaseId, month, { ok: false, error: errorMessage(e) });
@@ -128,31 +176,24 @@ async function importUrl(ctx: JobContext<'referenceImport'>, databaseId: number,
   const problem = importUrlProblem(url);
   if (problem) throw new Error(problem);
   const target = new URL(url);
-  const res = await ctx.upstream.fetch(target, {
-    signal: ctx.signal,
-    timeoutMs: DOWNLOAD_TIMEOUT_MS,
+  const dl = await download(ctx, target, {
     // The admin's token helps with Lichess's own exports (broadcast PGNs, studies); never sent elsewhere.
     ...(LICHESS_TOKEN_HOSTS.has(target.hostname) ? { auth: 'optional' as const } : {}),
-  });
-  if (res.url && !res.url.startsWith('https://')) {
-    void res.body?.cancel().catch(() => {});
-    throw new Error('The download was redirected to a non-https address');
-  }
-  const total = contentLength(res);
-  if (total !== null && total > REFERENCE_LIMITS.downloadBytes) {
-    void res.body?.cancel().catch(() => {});
-    throw new SizeLimitError('The download', REFERENCE_LIMITS.downloadBytes);
-  }
-  let read = 0;
-  const bytes = countBytes(bodyChunks(res.body), {
     max: REFERENCE_LIMITS.downloadBytes,
     what: 'The download',
-    onBytes: n => (read = n),
   });
-  await importReferencePgn(ctx, decompressAuto(bytes), {
+  if (dl.res.url && !dl.res.url.startsWith('https://')) {
+    void dl.res.body?.cancel().catch(() => {});
+    throw new Error('The download was redirected to a non-https address');
+  }
+  if (dl.total !== null && dl.total > REFERENCE_LIMITS.downloadBytes) {
+    void dl.res.body?.cancel().catch(() => {});
+    throw new SizeLimitError('The download', REFERENCE_LIMITS.downloadBytes);
+  }
+  await importReferencePgn(ctx, decompressAuto(dl.chunks), {
     databaseId,
     label: target.hostname,
-    note: () => percent(read, total),
+    note: () => percent(dl.read(), dl.total),
   });
 }
 
@@ -166,9 +207,18 @@ export async function runBroadcastRound(ctx: JobContext<'broadcastRound'>): Prom
   try {
     info = await fetchRound(ctx.upstream, roundId, ctx.signal);
     const federations = federationsOf(info);
-    const res = await fetchRoundPgn(ctx.upstream, roundId, { signal: ctx.signal, timeoutMs: DOWNLOAD_TIMEOUT_MS });
-    const bytes = countBytes(bodyChunks(res.body), { max: REFERENCE_LIMITS.downloadBytes, what: 'The round PGN' });
-    const result = await importReferencePgn(ctx, bytes, {
+    const dl = await download(ctx, roundPgnUrl(roundId), {
+      auth: 'required',
+      headers: { accept: 'application/x-chess-pgn' },
+      allowStatuses: [404],
+      max: REFERENCE_LIMITS.downloadBytes,
+      what: 'The round PGN',
+    });
+    if (dl.res.status === 404) {
+      void dl.res.body?.cancel().catch(() => {});
+      throw new Error('Broadcast round not found');
+    }
+    const result = await importReferencePgn(ctx, dl.chunks, {
       databaseId,
       label: `${info.tour.name} · ${info.round.name}`,
       round: {

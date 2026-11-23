@@ -7,6 +7,7 @@ import { pgnSourceKey, rebuildPlayerGames } from '../src/chess/index.ts';
 import { getJobHandler } from '../src/jobs/index.ts';
 import { ensureBroadcastDatabase, findOrCreateReferenceDatabase } from '../src/reference/databases.ts';
 import { linkFideSources } from '../src/reference/importer.ts';
+import { DOWNLOAD_IDLE_MS } from '../src/reference/jobs.ts';
 import { referencePlayerByFideId, searchReferencePlayers } from '../src/reference/players.ts';
 import { sweepReferenceUploads } from '../src/reference/upload.ts';
 import { createSource, makeJobContext, makeTestApp, type TestApp } from './helpers.ts';
@@ -300,6 +301,36 @@ describe('reference imports', () => {
       expect(t2.db.value('SELECT COUNT(*) FROM reference_broadcast_months')).toBe(0);
       expect(t2.db.value('SELECT game_count FROM databases WHERE id = ?', [id])).toBe(stored);
     } finally {
+      await t2.close();
+    }
+  });
+
+  it('aborts a stalled download with a retryable network error', async () => {
+    const zst = fixture('broadcast-2026-01.pgn.zst');
+    const stalled = fakeNetwork({
+      [MONTH_URL('2025-11')]: (_url, init) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(zst.subarray(0, 100)));
+              init.signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')));
+            },
+          }),
+        ),
+    });
+    const t2 = await makeTestApp({ fetch: stalled.fetch });
+    DOWNLOAD_IDLE_MS.value = 50;
+    try {
+      const id = ensureBroadcastDatabase(t2.db);
+      const { ctx } = makeJobContext(t2, 'broadcastMonth', { databaseId: id, month: '2025-11' });
+      await expect(getJobHandler('broadcastMonth')!(ctx)).rejects.toMatchObject({
+        name: 'UpstreamError',
+        reason: 'network',
+        message: 'database.lichess.org sent no data for 0 s',
+      });
+      expect(t2.db.value('SELECT status FROM reference_broadcast_months')).toBe('error');
+    } finally {
+      DOWNLOAD_IDLE_MS.value = 120_000;
       await t2.close();
     }
   });
