@@ -142,10 +142,15 @@ export interface ExplorerOutpost {
   /** `onLoad` (the player dialog's redraw) runs once suggestions that were still loading arrive. */
   suggestedPlayers(onLoad?: () => void): ExplorerPlayerChoice[];
   openGame(db: ExplorerDb, id: string, orientation: Color, fen: string): void;
-  requiresAuth(): boolean;
+  /** `db` needs a signed-in user (lila then shows its sign-in view instead of asking the server). */
+  requiresAuth(db: ExplorerDb): boolean;
+  /** The sign-in view's explanation for `db`, when only some databases need a session. */
+  signInReason?(db: ExplorerDb): string | undefined;
   loginUrl: string;
   /** Why the server can't serve `db` (the Lichess database without an API token), if it can't. */
   unavailable?(db: ExplorerDb): string | undefined;
+  /** The player database's "last played" cell for a move last played at `at` (epoch ms). */
+  lastPlayed?(at: number): { text: string; title: string };
 }
 
 export interface ExplorerOpts {

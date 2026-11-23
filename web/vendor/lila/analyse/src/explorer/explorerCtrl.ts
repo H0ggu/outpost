@@ -83,8 +83,11 @@ export default class ExplorerCtrl {
 
   isAuth = () => defined(myUserId());
 
+  // outpost: per database (anonymous browsing reaches the local ones, not the token-relayed Lichess one)
   requiresAuth = () =>
-    this.opts.outpost ? this.opts.outpost.requiresAuth() : this.config.data.db() !== 'masters' && !this.isAuth();
+    this.opts.outpost
+      ? this.opts.outpost.requiresAuth(this.config.data.db())
+      : this.config.data.db() !== 'masters' && !this.isAuth();
 
   // outpost: why the server can't serve the current database (e.g. Lichess without an API token)
   unavailable = (): string | undefined => this.opts.outpost?.unavailable?.(this.config.data.db());

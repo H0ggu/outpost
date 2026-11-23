@@ -171,7 +171,7 @@ export function renderInputs(ctrl: AnalyseCtrl): VNode | undefined {
     hl('div.pair', [
       hl('label.name', 'FEN'),
       hl('input.copyable', {
-        attrs: { spellcheck: 'false', enterkeyhint: 'done' },
+        attrs: { spellcheck: 'false', enterkeyhint: 'done', 'aria-label': 'FEN' }, // outpost: named like its label
         hook: {
           ...onInsert<HTMLInputElement>(el => {
             el.value = defined(ctrl.fenInput) ? ctrl.fenInput : ctrl.node.fen;
@@ -197,7 +197,7 @@ export function renderInputs(ctrl: AnalyseCtrl): VNode | undefined {
       hl('div.pair', [
         hl('label.name', 'PGN'),
         hl('textarea.copyable', {
-          attrs: { spellcheck: 'false' },
+          attrs: { spellcheck: 'false', 'aria-label': 'PGN' }, // outpost: named like its label
           class: { 'is-error': !!ctrl.pgnError },
           hook: {
             ...onInsert<HTMLTextAreaElement>(el => {
