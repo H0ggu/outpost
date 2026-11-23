@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router';
-import type { OpeningRow, OpeningsParams } from '@outpost/shared/api';
+import { OPENINGS_RANK_MIN_GAMES, type OpeningRow, type OpeningsParams } from '@outpost/shared/api';
 import type { Color } from '@outpost/shared/chess';
 import { isEmptyFilters } from '@outpost/shared/filters';
 import { useOpenings, useUrlFilters } from '../../api/hooks.ts';
@@ -15,8 +15,6 @@ const MOVES = ['', '1', '2', '3', '4', '5'] as const;
 type Order = (typeof ORDERS)[number];
 type MinGames = (typeof MIN_GAMES)[number];
 type Moves = (typeof MOVES)[number];
-/** The server ranks best / worst lines among those with at least this many games. */
-const BEST_WORST_MIN_GAMES = 5;
 
 /**
  * Openings tab (PLAN §5, §6 `GET /api/profiles/:slug/openings`): opening lines per colour with
@@ -45,8 +43,10 @@ export default function OpeningsPage() {
   };
   const openings = useOpenings(slug, filters, params);
 
-  // Under best / worst the server's own floor applies, so lower minimums would be no-ops.
-  const floor = order === 'most' ? 1 : BEST_WORST_MIN_GAMES;
+  // Under best / worst the server's own floor (the contract's OPENINGS_RANK_MIN_GAMES, decision 34)
+  // applies, so lower minimums would be no-ops; a higher minGames raises it.
+  const floor = order === 'most' ? 1 : OPENINGS_RANK_MIN_GAMES;
+  const rankMin = order === 'most' ? null : Math.max(floor, minGames ? Number(minGames) : 0);
   const minGamesShown: MinGames = minGames && Number(minGames) <= floor ? '' : minGames;
   const minGamesOptions = MIN_GAMES.filter(m => m === '' || Number(m) > floor).map(m => ({
     value: m,
@@ -80,8 +80,8 @@ export default function OpeningsPage() {
           value={order}
           options={[
             { value: 'most', label: 'Most played' },
-            { value: 'best', label: 'Best', title: `Highest score among lines with ${BEST_WORST_MIN_GAMES}+ games` },
-            { value: 'worst', label: 'Worst', title: `Lowest score among lines with ${BEST_WORST_MIN_GAMES}+ games` },
+            { value: 'best', label: 'Best', title: `Highest score among lines with ${OPENINGS_RANK_MIN_GAMES}+ games` },
+            { value: 'worst', label: 'Worst', title: `Lowest score among lines with ${OPENINGS_RANK_MIN_GAMES}+ games` },
           ]}
           onChange={v => setOrder(v)}
         />
@@ -110,7 +110,15 @@ export default function OpeningsPage() {
     body = (
       <div className={['openings-tables', sides.length === 2 && 'openings-tables--two', openings.isPlaceholderData && 'is-stale'].filter(Boolean).join(' ')}>
         {sides.map(c => (
-          <OpeningsTable key={c} color={c} rows={openings.data[c]} linkOf={linkOf} onOpen={r => navigate(linkOf(r))} filtered={!isEmptyFilters(filters)} />
+          <OpeningsTable
+            key={c}
+            color={c}
+            rows={openings.data[c]}
+            linkOf={linkOf}
+            onOpen={r => navigate(linkOf(r))}
+            filtered={!isEmptyFilters(filters)}
+            rankMin={rankMin}
+          />
         ))}
       </div>
     );
@@ -129,17 +137,21 @@ function OpeningsTable({
   linkOf,
   onOpen,
   filtered,
+  rankMin,
 }: {
   color: Color;
   rows: readonly OpeningRow[];
   linkOf: (r: OpeningRow) => string;
   onOpen: (r: OpeningRow) => void;
   filtered: boolean;
+  /** Under best / worst: the fewest games a ranked line has. */
+  rankMin: number | null;
 }) {
   return (
     <section className="openings-table" aria-label={color === 'white' ? 'As White' : 'As Black'}>
       <h3 className="openings-table__title">
         <ColorDot color={color} /> As {color === 'white' ? 'White' : 'Black'}
+        {rankMin !== null && <span className="openings-table__min"> (min {rankMin} games)</span>}
       </h3>
       {rows.length === 0 ? (
         <EmptyState icon={licon.Book} title={filtered ? 'No openings match these filters' : 'No games with this colour'} />

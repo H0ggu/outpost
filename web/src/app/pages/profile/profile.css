@@ -1514,6 +1514,12 @@ html[data-theme='light'] {
   margin: 0 0 0.5rem;
 }
 
+.profile-page .openings-table__min {
+  color: var(--c-font-dim);
+  font-size: 0.85em;
+  font-weight: normal;
+}
+
 .profile-page .openings-table .slist td,
 .profile-page .openings-table .slist th {
   padding: 0.5rem 0.6rem;

@@ -347,9 +347,14 @@ describe('Openings tab', () => {
     expect(labels()).not.toContain('1+');
     expect(labels().filter(l => l === '5+').length).toBe(1);
     expect(screen.getByRole('radio', { name: 'Worst' }).getAttribute('title')).toMatch(/5\+ games/);
+    // The floor is the contract's OPENINGS_RANK_MIN_GAMES, said next to each table (decision 34).
+    expect(screen.getAllByText('(min 5 games)').length).toBeGreaterThan(0);
+    fireEvent.change(min, { target: { value: '20' } });
+    await waitFor(() => expect(screen.getAllByText('(min 20 games)').length).toBeGreaterThan(0));
     fireEvent.click(screen.getByRole('radio', { name: 'Most played' }));
     await waitFor(() => expect(labels()[0]).toBe('Any'));
     expect(labels().slice(0, 2)).toEqual(['Any', '5+']);
+    expect(screen.queryByText(/\(min \d+ games\)/)).toBeNull();
   });
 
   it('moves through a segmented control with the arrow keys, one tab stop', async () => {
