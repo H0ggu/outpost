@@ -46,6 +46,8 @@ export default function SettingsPage() {
   const title = SETTINGS_SECTIONS.find(s => s.id === section)!.label;
   return (
     <Page title={`${title} · Settings`}>
+      {/* The page heading for screen readers; each section's box title is its h2. */}
+      <h1 className="visually-hidden">Settings</h1>
       <PageMenu
         label="Settings sections"
         items={SETTINGS_SECTIONS.map(s => ({ to: sectionHref(s.id), label: s.label, icon: s.icon, active: s.id === section }))}
