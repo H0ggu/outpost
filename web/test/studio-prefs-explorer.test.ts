@@ -1,0 +1,173 @@
+/**
+ * Studio look preferences (src/studio/prefs.ts) and lila's explorer options (src/studio/explorer.ts):
+ * endpoints, the filtered player database, labels, player search and auth.
+ */
+import { DEFAULT_PREFS } from '@outpost/shared/api';
+import { encodeFiltersSegment } from '@outpost/shared/filters';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fallbackPlayerLabel, makeExplorerOpts, type ExplorerDeps } from '../src/studio/explorer.ts';
+import { applyPieces, applyStudioPrefs, localPrefs, PREFS_STORAGE_KEY, sanitizePrefs, savePrefs } from '../src/studio/prefs.ts';
+
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+describe('prefs', () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('defaults to true black and lila’s board, and drops unknown values', () => {
+    expect(sanitizePrefs(null)).toEqual({ theme: 'black', boardTheme: 'brown', pieceSet: 'cburnett', soundSet: 'sfx', studioLayout: 'default' });
+    expect(sanitizePrefs({ theme: 'neon', boardTheme: 'blue', pieceSet: 'alpha', soundSet: 'standard', studioLayout: 'focus' })).toEqual({
+      theme: DEFAULT_PREFS.theme,
+      boardTheme: 'blue',
+      pieceSet: 'cburnett',
+      soundSet: 'sfx',
+      studioLayout: 'focus',
+    });
+  });
+
+  it('reads this browser’s prefs, preferring the site-wide theme', () => {
+    localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify({ theme: 'dark', pieceSet: 'merida' }));
+    expect(localPrefs()).toMatchObject({ theme: 'dark', pieceSet: 'merida' });
+    localStorage.setItem('outpost.theme', 'light');
+    expect(localPrefs().theme).toBe('light');
+    localStorage.setItem(PREFS_STORAGE_KEY, '{oops');
+    expect(localPrefs().pieceSet).toBe('cburnett');
+  });
+
+  it('applies the look the way lila reads it', () => {
+    const changeSet = vi.fn();
+    (window as unknown as { site?: unknown }).site = { sound: { changeSet } };
+    applyStudioPrefs({ theme: 'light', boardTheme: 'green', pieceSet: 'merida', soundSet: 'piano', studioLayout: 'games' });
+    const root = document.documentElement;
+    expect(root.dataset.theme).toBe('light');
+    expect(root.classList.contains('light')).toBe(true);
+    expect(document.body.dataset.board).toBe('green');
+    expect(document.body.dataset.soundSet).toBe('piano');
+    expect(document.body.dataset.studioLayout).toBe('games');
+    // unquoted: lila's loadPieces strips `url(` and `)` to preload the images
+    expect(document.body.style.getPropertyValue('---white-knight')).toBe('url(/lichess/piece/merida/wN.svg)');
+    expect(changeSet).toHaveBeenCalledWith('piano');
+    applyStudioPrefs({ ...DEFAULT_PREFS });
+    expect(root.classList.contains('light')).toBe(false);
+    expect(root.classList.contains('dark')).toBe(true);
+    applyPieces('pixel', document.documentElement);
+    expect(document.documentElement.style.getPropertyValue('---black-king')).toBe('url(/lichess/piece/pixel/bK.svg)');
+    delete (window as unknown as { site?: unknown }).site;
+  });
+
+  it('saves to the account when signed in, and always in this browser', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ ...DEFAULT_PREFS, boardTheme: 'olive' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const next = { ...sanitizePrefs(null), boardTheme: 'olive' as const };
+    await savePrefs(next, { boardTheme: 'olive' }, false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(PREFS_STORAGE_KEY)!).boardTheme).toBe('olive');
+    await savePrefs(next, { boardTheme: 'olive' }, true);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/me/prefs');
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(String(init.body))).toEqual({ boardTheme: 'olive' });
+  });
+});
+
+describe('explorer options', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const deps = (over: Partial<ExplorerDeps> = {}): ExplorerDeps => ({
+    origin: 'https://chess.example.com',
+    signedIn: () => true,
+    anonymousBrowsing: () => false,
+    loginUrl: () => '/login?next=%2Fstudio',
+    redraw: vi.fn(),
+    openGame: vi.fn(),
+    ...over,
+  });
+
+  it('uses absolute endpoints, and the filters segment only for the profile it was opened with', () => {
+    const segment = encodeFiltersSegment({ color: 'white', tc: ['blitz'] });
+    const o = makeExplorerOpts(deps({ filtered: { player: 'hikaru', segment } }));
+    expect(o.endpoint).toBe('https://chess.example.com/api/explorer/');
+    expect(new URL('./masters', o.endpoint).href).toBe('https://chess.example.com/api/explorer/masters');
+    expect(o.tablebaseEndpoint).toBe('/api/tablebase');
+    const base = o.outpost.playerEndpoint('hikaru');
+    expect(new URL('./player', base).href).toBe(`https://chess.example.com/api/explorer/f/${segment}/player`);
+    expect(o.outpost.playerEndpoint('lichess:drnykterstein')).toBe('https://chess.example.com/api/explorer/');
+    expect(o.outpost.loginUrl).toBe('/login?next=%2Fstudio');
+  });
+
+  it('needs a session unless anonymous browsing is on', () => {
+    let signedIn = false;
+    let anon = false;
+    const o = makeExplorerOpts(deps({ signedIn: () => signedIn, anonymousBrowsing: () => anon }));
+    expect(o.outpost.requiresAuth()).toBe(true);
+    anon = true;
+    expect(o.outpost.requiresAuth()).toBe(false);
+    anon = false;
+    signedIn = true;
+    expect(o.outpost.requiresAuth()).toBe(false);
+  });
+
+  it('labels player specs, learning profile names from the server', async () => {
+    expect(fallbackPlayerLabel('lichess:DrNykterstein')).toBe('drnykterstein (Lichess)'); // specs are lowercase (parsePlayerSpec)
+    expect(fallbackPlayerLabel('chesscom:hikaru')).toBe('hikaru (Chess.com)');
+    expect(fallbackPlayerLabel('db:4')).toBe('Database 4');
+    expect(fallbackPlayerLabel('ref:1503014')).toBe('FIDE 1503014');
+    expect(fallbackPlayerLabel('Not valid')).toBe('Not valid');
+    const fetchMock = vi.fn(async () => jsonResponse({ slug: 'hikaru', displayName: 'Hikaru Nakamura' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const d = deps();
+    const o = makeExplorerOpts(d);
+    expect(o.outpost.playerLabel('hikaru')).toBe('hikaru');
+    await new Promise(r => setTimeout(r, 0));
+    expect(o.outpost.playerLabel('hikaru')).toBe('Hikaru Nakamura');
+    expect(d.redraw).toHaveBeenCalled();
+    o.outpost.playerLabel('hikaru');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('searches profiles, known accounts and reference players', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          profiles: [{ slug: 'hikaru', displayName: 'Hikaru Nakamura' }],
+          lichess: [
+            { kind: 'lichess', username: 'DrNykterstein', known: true, profileSlug: null },
+            { kind: 'lichess', username: 'Unknown', known: false, profileSlug: null },
+            { kind: 'lichess', username: 'Linked', known: true, profileSlug: 'linked' },
+          ],
+          chesscom: [{ kind: 'chesscom', username: 'Hikaru', known: true, profileSlug: null }],
+          reference: [{ name: 'Carlsen, Magnus', fideId: '1503014', profileSlug: null }],
+        }),
+      ),
+    );
+    const o = makeExplorerOpts(deps());
+    expect(await o.outpost.searchPlayers(' h')).toEqual([]);
+    expect(await o.outpost.searchPlayers('hik')).toEqual([
+      { spec: 'hikaru', label: 'Hikaru Nakamura', hint: 'profile' },
+      { spec: 'lichess:drnykterstein', label: 'DrNykterstein', hint: 'Lichess' },
+      { spec: 'chesscom:hikaru', label: 'Hikaru', hint: 'Chess.com' },
+      { spec: 'ref:1503014', label: 'Carlsen, Magnus', hint: 'reference DB' },
+    ]);
+  });
+
+  it('suggests bookmarks and own profiles once, when signed in', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      jsonResponse({ profiles: url.includes('bookmarks') ? [{ slug: 'a', displayName: 'A' }] : [{ slug: 'a', displayName: 'A' }, { slug: 'b', displayName: 'B' }] }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const o = makeExplorerOpts(deps());
+    expect(o.outpost.suggestedPlayers()).toEqual([]);
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    expect(o.outpost.suggestedPlayers()).toEqual([
+      { spec: 'a', label: 'A', hint: 'bookmarked' },
+      { spec: 'b', label: 'B', hint: 'mine' },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const anon = makeExplorerOpts(deps({ signedIn: () => false }));
+    anon.outpost.suggestedPlayers();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});

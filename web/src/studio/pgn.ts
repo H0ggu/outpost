@@ -77,7 +77,8 @@ function commentOf(n: PgnTreeNode): string | undefined {
         : undefined;
   const clock = n.clock === undefined ? undefined : n.clock / 100;
   if (!text && !shapes.length && !evaluation && clock === undefined) return undefined;
-  return makeComment({ text, shapes, ...(clock === undefined ? {} : { clock }), ...(evaluation ? { evaluation } : {}) });
+  // chessops puts a space between text and annotations even when there is no text
+  return makeComment({ text, shapes, ...(clock === undefined ? {} : { clock }), ...(evaluation ? { evaluation } : {}) }).trim();
 }
 
 function addChildren(into: Node<PgnNodeData>, from: PgnTreeNode): void {

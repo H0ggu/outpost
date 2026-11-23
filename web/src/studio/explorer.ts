@@ -10,6 +10,7 @@
 import {
   API_ROUTES,
   explorerEndpoint,
+  type Color,
   type DatabaseInfo,
   type ProfileHeader,
   type ProfileListResponse,
@@ -17,7 +18,35 @@ import {
 } from '@outpost/shared/api';
 import { parsePlayerSpec } from '@outpost/shared/filters';
 import { api } from '../app/api/client.ts';
-import type { ExplorerDb, ExplorerOpts, ExplorerPlayerChoice } from 'lila/analyse/interfaces';
+
+// Structural copies of lila's explorer types (lila-types/analyse/interfaces.d.ts, patch 002), so this
+// module has no lila import and is unit-tested; boot.ts hands the result to lila, which checks them.
+
+/** lila's explorer databases, plus Outpost's local reference DB. */
+export type ExplorerDb = 'lichess' | 'masters' | 'player' | 'reference';
+
+/** A player offered by the player picker. */
+export interface ExplorerPlayerChoice {
+  spec: string;
+  label: string;
+  hint?: string;
+}
+
+/** `opts.explorer` for lila, with the `outpost` hooks of scripts/lila-patches/002. */
+export interface ExplorerOpts {
+  endpoint: string;
+  tablebaseEndpoint: string;
+  showRatings: boolean;
+  outpost: {
+    playerEndpoint(player: string): string;
+    playerLabel(player: string): string;
+    searchPlayers(term: string): Promise<ExplorerPlayerChoice[]>;
+    suggestedPlayers(): ExplorerPlayerChoice[];
+    openGame(db: ExplorerDb, id: string, orientation: Color, fen: string): void;
+    requiresAuth(): boolean;
+    readonly loginUrl: string;
+  };
+}
 
 /** What the explorer needs from the rest of the Studio. */
 export interface ExplorerDeps {
