@@ -31,6 +31,7 @@
  *   1180–1439  tighter nav links, shorter user name;
  *   ≤ 1179     the nav moves into the hamburger panel (the kit does this only at ≤ 900 px,
  *              where 7 links, the search and the user menu no longer fit);
+ *   ≤ 559      signed out, Sign up leaves the header (the sign-in page links to it);
  *   ≤ 480      the search moves into the panel too and the user menu shows its icon only.
  * The search pill never shrinks below a usable width, and the title never shrinks.
  */
@@ -438,6 +439,17 @@
 @media (max-width: 900px) {
   .user-menu > button {
     max-width: 10rem;
+  }
+}
+
+/*
+ * Signed out, the header holds the search pill plus Sign up and Sign in, which no longer fit on
+ * one line below about 515 px: Sign up leaves the header a little before that, as it does on
+ * phones (the sign-in page links to it).
+ */
+@media (max-width: 559.98px) {
+  .user-menu > a.user-menu__signup {
+    display: none;
   }
 }
 
