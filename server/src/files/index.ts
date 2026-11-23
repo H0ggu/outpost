@@ -12,6 +12,7 @@
  *   parsed with chessops and keyed by `posKey(EPD)` like the games index, so move order and
  *   move counters don't matter. Saving new PGN drops the file's index; the next search rebuilds it.
  */
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { Chess, type Position } from 'chessops/chess';
 import { parseFen } from 'chessops/fen';
 import { PgnParser, parseVariant, startingPosition, type ChildNode, type Game, type PgnNodeData } from 'chessops/pgn';
@@ -348,16 +349,21 @@ function indexFile(db: Db, id: Id, pgn: string): void {
   });
 }
 
-/** Indexes the user's files that changed since their last index. Returns how many were (re)built. */
-export function refreshFileIndex(db: Db, userId: Id): number {
+/**
+ * Indexes the user's files that changed since their last index, one file per event-loop turn.
+ * Returns how many were (re)built.
+ */
+export async function refreshFileIndex(db: Db, userId: Id): Promise<number> {
   const stale = db.all<{ id: Id }>(
     `SELECT f.id FROM files f LEFT JOIN file_index fi ON fi.file_id = f.id
       WHERE f.owner_user_id = ? AND f.deleted_at IS NULL AND fi.file_id IS NULL`,
     [userId],
   );
-  for (const { id } of stale) {
-    const pgn = db.value<string>('SELECT pgn FROM files WHERE id = ?', [id]);
-    if (pgn !== undefined) indexFile(db, id, pgn);
+  for (const [i, { id }] of stale.entries()) {
+    if (i > 0) await yieldToLoop();
+    // Read the PGN and index it in the same turn, so a save in between can't be missed.
+    const pgn = db.value<string>('SELECT pgn FROM files WHERE id = ? AND deleted_at IS NULL', [id]);
+    if (pgn !== undefined && db.value('SELECT 1 FROM file_index WHERE file_id = ?', [id]) === undefined) indexFile(db, id, pgn);
   }
   return stale.length;
 }
@@ -375,9 +381,9 @@ export function fenKey(fen: string): number {
  * `GET /api/files/search?fen=`: the user's files (not in the bin) whose PGN reaches the position
  * anywhere (main line or variation), most recently saved first.
  */
-export function searchFiles(db: Db, userId: Id, fen: string): FileSearchResponse {
+export async function searchFiles(db: Db, userId: Id, fen: string): Promise<FileSearchResponse> {
   const key = fenKey(fen);
-  refreshFileIndex(db, userId);
+  await refreshFileIndex(db, userId);
   const rows = db.all<FileRow & { game_index: number; ply: number; next_san: string | null }>(
     `SELECT f.id, f.folder, f.name, f.kind, f.color, f.created_at, f.updated_at, f.deleted_at, fp.game_index, fp.ply, fp.next_san
        FROM file_positions fp JOIN files f ON f.id = fp.file_id

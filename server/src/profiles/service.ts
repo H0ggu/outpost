@@ -533,7 +533,7 @@ export function updateProfile(db: Db, profile: ViewableProfile, viewer: AuthUser
 }
 
 /** Games larger clean-ups hand to the background (see the module comment). */
-export const INLINE_GC_LIMIT = 5000;
+export const INLINE_GC_LIMIT = 1000;
 const GC_BATCH = 250;
 
 /**

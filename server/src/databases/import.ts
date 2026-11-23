@@ -21,6 +21,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, open, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import type { Readable } from 'node:stream';
 import type { Id, ImportResponse, JobProgress } from '@outpost/shared/api';
 import { getOpeningBook } from '../chess/openings.ts';
@@ -33,8 +34,8 @@ import { enqueueJob, type JobContext } from '../jobs/index.ts';
 
 /** Largest PGN upload (PLAN §10). */
 export const MAX_PGN_BYTES = 50 * 1024 * 1024;
-/** Games per write transaction. */
-export const IMPORT_BATCH = 200;
+/** Games per write transaction (the event loop gets a turn between batches). */
+export const IMPORT_BATCH = 100;
 /** Uploads older than this with no pending job are removed at startup. */
 export const STALE_UPLOAD_MS = 7 * 24 * 3_600_000;
 
@@ -164,7 +165,7 @@ async function looksUtf8(path: string): Promise<boolean> {
 /** The file as text chunks in the right encoding. */
 async function* textChunks(path: string): AsyncGenerator<string> {
   const decoder = new TextDecoder((await looksUtf8(path)) ? 'utf-8' : 'windows-1252');
-  for await (const chunk of createReadStream(path, { highWaterMark: 256 * 1024 })) {
+  for await (const chunk of createReadStream(path, { highWaterMark: 64 * 1024 })) {
     yield decoder.decode(chunk as Buffer, { stream: true });
   }
   const rest = decoder.decode();
@@ -273,7 +274,10 @@ export async function runPgnImport(ctx: JobContext<'pgnImport'>): Promise<void> 
       const g = pgnToNormalizedGame(next.value, { origin, databaseId });
       if ('skip' in g) skip(g.skip);
       else batch.push(g);
-      if (batch.length >= IMPORT_BATCH) flush();
+      if (batch.length >= IMPORT_BATCH) {
+        flush();
+        await yieldToLoop();
+      }
     }
     flush();
   } catch (e) {
