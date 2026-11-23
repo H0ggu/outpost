@@ -1,4 +1,29 @@
 import type { FastifyPluginAsync } from 'fastify';
+import {
+  API_ROUTES,
+  type FileSearchResponse,
+  type FilesResponse,
+  type FoldersResponse,
+  type OkResponse,
+  type StudioFile,
+} from '@outpost/shared/api';
+import { requireUser } from '../auth/session.ts';
+import {
+  createFile,
+  createFileSchema,
+  deleteFile,
+  fileSearchQuerySchema,
+  filesQuerySchema,
+  getFile,
+  listFiles,
+  listFolders,
+  MAX_FILE_PGN,
+  restoreFile,
+  searchFiles,
+  updateFile,
+  updateFileSchema,
+} from '../files/index.ts';
+import { idParams, parseBody, parseParams, parseQuery } from '../http/validate.ts';
 
 /**
  * Studio files routes — PLAN §6 (files, folders), §8.4 My Files, §4 files.
@@ -12,15 +37,52 @@ import type { FastifyPluginAsync } from 'fastify';
  *   - GET /api/files/search?fen= (FileSearchResponse)
  *   - GET /api/folders (FoldersResponse)
  *
- * Every route: { preHandler: requireUser }; users only ever see their own files. Fastify matches the static /api/files/search before /api/files/:id, whatever the registration order.
- *
- * TODO(profiles): implement. Keep this file thin: validate with src/http/validate.ts, check access
- * with the preHandlers in src/auth/session.ts, call into the module, return contract types, and
- * throw HttpError (src/http/errors.ts) for failures. Build paths from API_ROUTES (pass ':param'
- * placeholders, e.g. API_ROUTES.profile(':slug')).
+ * Every route: { preHandler: requireUser }; users only ever see their own files (404 otherwise).
+ * Fastify matches the static /api/files/search before /api/files/:id. Logic lives in src/files/.
  */
-const fileRoutes: FastifyPluginAsync = async _app => {
-  // TODO(profiles)
+
+/** JSON bodies carry up to MAX_FILE_PGN characters of PGN (plus escaping). */
+const FILE_BODY_LIMIT = MAX_FILE_PGN * 2 + 64 * 1024;
+
+const fileRoutes: FastifyPluginAsync = async app => {
+  app.get(API_ROUTES.files, { preHandler: requireUser }, async (req): Promise<FilesResponse> => {
+    const query = parseQuery(filesQuerySchema, req.query);
+    return { files: listFiles(app.db, req.user!.id, query) };
+  });
+
+  app.post(API_ROUTES.files, { preHandler: requireUser, bodyLimit: FILE_BODY_LIMIT }, async (req): Promise<StudioFile> => {
+    const body = parseBody(createFileSchema, req.body);
+    return createFile(app.db, req.user!.id, body);
+  });
+
+  app.get(API_ROUTES.filesSearch, { preHandler: requireUser }, async (req): Promise<FileSearchResponse> => {
+    const { fen } = parseQuery(fileSearchQuerySchema, req.query);
+    return searchFiles(app.db, req.user!.id, fen);
+  });
+
+  app.get(API_ROUTES.file(':id'), { preHandler: requireUser }, async (req): Promise<StudioFile> => {
+    const { id } = parseParams(idParams, req.params);
+    return getFile(app.db, req.user!.id, id);
+  });
+
+  app.put(API_ROUTES.file(':id'), { preHandler: requireUser, bodyLimit: FILE_BODY_LIMIT }, async (req): Promise<StudioFile> => {
+    const { id } = parseParams(idParams, req.params);
+    const patch = parseBody(updateFileSchema, req.body);
+    return updateFile(app.db, req.user!.id, id, patch);
+  });
+
+  app.delete(API_ROUTES.file(':id'), { preHandler: requireUser }, async (req): Promise<OkResponse> => {
+    const { id } = parseParams(idParams, req.params);
+    deleteFile(app.db, req.user!.id, id);
+    return { ok: true };
+  });
+
+  app.post(API_ROUTES.fileRestore(':id'), { preHandler: requireUser }, async (req): Promise<StudioFile> => {
+    const { id } = parseParams(idParams, req.params);
+    return restoreFile(app.db, req.user!.id, id);
+  });
+
+  app.get(API_ROUTES.folders, { preHandler: requireUser }, async (req): Promise<FoldersResponse> => listFolders(app.db, req.user!.id));
 };
 
 export default fileRoutes;
