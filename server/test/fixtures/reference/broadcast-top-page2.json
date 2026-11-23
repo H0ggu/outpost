@@ -1,0 +1,47 @@
+{
+ "active": [],
+ "upcoming": [],
+ "past": {
+  "currentPage": 2,
+  "maxPerPage": 24,
+  "currentPageResults": [
+   {
+    "tour": {
+     "id": "TourOLD2",
+     "name": "Older Test Open",
+     "slug": "older-test-open",
+     "info": {
+      "format": "8-player round robin",
+      "tc": "90 min + 30 sec / move",
+      "fideTC": "standard",
+      "location": "Testville",
+      "timeZone": "Europe/Oslo",
+      "players": "Alpha, Beta",
+      "website": "https://example.org/",
+      "standings": "https://example.org/standings"
+     },
+     "createdAt": 1790000000000,
+     "url": "https://lichess.org/broadcast/older-test-open/TourOLD2",
+     "tier": 3,
+     "dates": [
+      1788900000000
+     ],
+     "image": "https://image.lichess.org/display?path=x.webp",
+     "description": "Synthetic test tournament."
+    },
+    "round": {
+     "id": "RndOL201",
+     "name": "Round 7",
+     "slug": "round-7",
+     "createdAt": 1790000000000,
+     "startsAt": 1788990000000,
+     "finishedAt": 1789000000000,
+     "finished": true,
+     "url": "https://lichess.org/broadcast/older-test-open/round-7/RndOL201"
+    }
+   }
+  ],
+  "previousPage": 1,
+  "nextPage": null
+ }
+}

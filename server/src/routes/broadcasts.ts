@@ -10,13 +10,15 @@ import { parseParams } from '../http/validate.ts';
  * Live broadcasts routes — PLAN §5 (Live broadcasts), §6, research lichess-api.md §4.
  *
  * Endpoints (request/response types in @outpost/shared/api), all `requireViewer`:
- *   - GET /api/broadcasts (BroadcastsResponse; server cache 60 s)
+ *   - GET /api/broadcasts (BroadcastsResponse from Lichess's top list: active, upcoming, recent; server cache 60 s)
  *   - GET /api/broadcasts/tour/:tourId (BroadcastTour; cache 30 s)
  *   - GET /api/broadcasts/round/:roundId (BroadcastRound; server cache 5 s, clients poll every 10 s)
  *   - GET /api/broadcasts/round/:roundId.pgn (application/x-chess-pgn; cache 10 s)
  *
  * All upstream calls carry the Lichess token (PR #21283): without one they fail with 503
- * `upstream_unavailable` (`details.reason: 'no_token'`); an unknown tour or round is 404.
+ * `upstream_unavailable` (`details.reason: 'no_token'`); an unknown tour or round is 404 (and
+ * remembered for a minute). Cache misses share one instance-wide budget of upstream calls per
+ * minute (src/broadcasts/service.ts): past it, 503 `upstream_unavailable` (`reason: 'budget'`).
  */
 
 const broadcastId = (name: string) => z.string().regex(BROADCAST_ID_RE, `${name} must be 8 letters or digits`);

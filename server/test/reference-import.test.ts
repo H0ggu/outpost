@@ -3,14 +3,15 @@ import { join } from 'node:path';
 import { gzipSync, zstdDecompressSync, zstdCompressSync } from 'node:zlib';
 import type { JobProgress } from '@outpost/shared/api';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { pgnSourceKey, rebuildPlayerGames } from '../src/chess/index.ts';
+import { insertGame, pgnSourceKey, rebuildPlayerGames } from '../src/chess/index.ts';
 import { getJobHandler } from '../src/jobs/index.ts';
 import { ensureBroadcastDatabase, findOrCreateReferenceDatabase } from '../src/reference/databases.ts';
 import { linkFideSources } from '../src/reference/importer.ts';
 import { DOWNLOAD_IDLE_MS } from '../src/reference/jobs.ts';
 import { indexReferencePlayer, referencePlayerByFideId, searchReferencePlayers } from '../src/reference/players.ts';
 import { sweepReferenceUploads } from '../src/reference/upload.ts';
-import { createSource, makeJobContext, makeTestApp, type TestApp } from './helpers.ts';
+import { IMPORT_DNS } from '../src/reference/urls.ts';
+import { createSource, makeJobContext, makeTestApp, testGame, type TestApp } from './helpers.ts';
 
 const FIXTURES = new URL('./fixtures/reference/', import.meta.url);
 const fixture = (name: string): Buffer => readFileSync(new URL(name, FIXTURES));
@@ -27,7 +28,7 @@ function fakeNetwork(routes: Record<string, (url: URL, init: RequestInit) => Res
     if (!route) return new Response('not found', { status: 404 });
     return route(url, init);
   };
-  return { fetch, calls };
+  return { fetch, calls, routes };
 }
 
 const bytes = (b: Buffer, headers: Record<string, string> = {}) => () =>
@@ -47,11 +48,29 @@ const ROUND_JSON = {
   ],
 };
 
+/** Tests have no network: host names resolve through this table (unknown names do not resolve). */
+const DNS: Record<string, string[]> = {
+  'files.example.org': ['93.184.215.14'],
+  'mirror.example.net': ['2606:2800:21f:cb07::1'],
+  'lichess.org': ['37.187.205.99'],
+  'intranet.example.org': ['10.0.0.5'],
+  'sneaky.example.org': ['93.184.215.14', '::1'],
+};
+const realLookup = IMPORT_DNS.lookup;
+
 describe('reference imports', () => {
   let t: TestApp;
   let net: ReturnType<typeof fakeNetwork>;
+  const lookups: string[] = [];
 
   beforeEach(async () => {
+    lookups.length = 0;
+    IMPORT_DNS.lookup = async host => {
+      lookups.push(host);
+      const a = DNS[host];
+      if (!a) throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: 'ENOTFOUND' });
+      return a.map(address => ({ address }));
+    };
     net = fakeNetwork({
       [MONTH_URL('2026-01')]: bytes(fixture('broadcast-2026-01.pgn.zst')),
       [MONTH_URL('2026-02')]: bytes(fixture('broadcast-2026-02.pgn.zst')),
@@ -61,6 +80,7 @@ describe('reference imports', () => {
     t = await makeTestApp({ fetch: net.fetch, env: { LICHESS_TOKEN: 'lip_testtoken' } });
   });
   afterEach(async () => {
+    IMPORT_DNS.lookup = realLookup;
     await t.close();
   });
 
@@ -134,20 +154,67 @@ describe('reference imports', () => {
     });
   });
 
-  it('dedupes across months (by chapter even when names changed) and against re-imports', async () => {
+  it('dedupes across months and re-imports; a later dump corrects a game stored earlier', async () => {
     const dbId = ensureBroadcastDatabase(t.db);
     await runMonth(dbId, '2026-01');
+    expect(t.db.value("SELECT COUNT(*) FROM games WHERE white = 'Gamma, Testy'")).toBe(1);
+    const firstId = t.db.value<number>("SELECT id FROM games WHERE white = 'Gamma, Testy'")!;
+    // February's dump has chapter Game0002 again, with the name corrected: it replaces the stored game.
     const feb = await runMonth(dbId, '2026-02');
-    expect(feb.counts).toMatchObject({ imported: 1, duplicates: 2, skipped: 0 });
-    const again = await runMonth(dbId, '2026-01');
-    expect(again.counts).toMatchObject({ imported: 0, duplicates: 4, skipped: 5 });
-    expect(t.db.value('SELECT COUNT(*) FROM games')).toBe(5);
+    expect(feb.counts).toEqual({ imported: 1, duplicates: 1, corrected: 1, skipped: 0 });
+    expect(feb.message).toMatch(/^2026-02: 1 new, 1 duplicate, 1 corrected, 0 skipped/);
     expect(t.db.value("SELECT COUNT(*) FROM games WHERE white = 'Gamma, Testy'")).toBe(0);
+    const corrected = t.db.get<{ id: number }>("SELECT id FROM games WHERE white = 'Gamma, Test'")!;
+    expect(corrected.id).not.toBe(firstId);
+    expect(t.db.value('SELECT COUNT(*) FROM positions WHERE game_id = ?', [firstId])).toBe(0);
+    expect(t.db.get('SELECT game_id, rank FROM reference_broadcast_games WHERE chapter_id = ?', ['Rnd1AAAA/Game0002'])).toEqual({
+      game_id: corrected.id,
+      rank: 202602,
+    });
+    expect(t.db.get('SELECT games, imported, duplicates FROM reference_broadcast_months WHERE month = ?', ['2026-02'])).toEqual({
+      games: 3,
+      imported: 1,
+      duplicates: 1,
+    });
+    // An older dump never undoes a correction; a re-import only finds duplicates.
+    const again = await runMonth(dbId, '2026-01');
+    expect(again.counts).toEqual({ imported: 0, duplicates: 4, skipped: 5, engine: 1, unplayed: 1, noResult: 1, illegalMove: 1, fromPosition: 1 });
+    expect((await runMonth(dbId, '2026-02')).counts).toEqual({ imported: 0, duplicates: 3, skipped: 0 });
+    expect(t.db.value("SELECT COUNT(*) FROM games WHERE white = 'Gamma, Testy'")).toBe(0);
+    expect(t.db.value('SELECT COUNT(*) FROM games')).toBe(5);
     expect(t.db.value('SELECT game_count FROM databases WHERE id = ?', [dbId])).toBe(5);
     expect(t.db.value('SELECT COUNT(*) FROM reference_broadcast_games WHERE database_id = ?', [dbId])).toBe(5);
+    // The index follows the corrected game: one game for 900003, under the corrected name.
+    expect(referencePlayerByFideId(t.db, '900003')).toMatchObject({ name: 'Gamma, Test', games: 1 });
+    expect(searchReferencePlayers(t.db, 'testy')).toEqual([]);
     // Another reference database keeps its own copy.
     const other = findOrCreateReferenceDatabase(t.db, { name: 'Mirror' });
     expect((await runMonth(other, '2026-02')).counts).toMatchObject({ imported: 3, duplicates: 0 });
+  });
+
+  it('lets a monthly dump correct a round imported right after it ended, never the other way round', async () => {
+    const dbId = ensureBroadcastDatabase(t.db);
+    // The round import (rank 0) stores Game0008 as broadcast live: Beta won.
+    await runRound(dbId, 'Rnd5EEEE');
+    const fide = createSource(t.db, { kind: 'fide', key: '900005' });
+    linkFideSources(t.db, new Set(['900005']));
+    expect(t.db.value('SELECT outcome FROM player_games WHERE source_id = ?', [fide])).toBe('l');
+    // The month's dump has the board fixed (a DGT error during the round): other moves, Epsilon won.
+    const fixedPgn = fixture('round-Rnd5EEEE.pgn')
+      .toString()
+      .replace('[Result "1-0"]', '[Result "0-1"]')
+      .replace('1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0', '1. e4 e5 2. Bc4 Nc6 3. Qh5 g6 4. Qf3 Nf6 0-1');
+    net.routes[MONTH_URL('2025-12')] = bytes(zstdCompressSync(Buffer.from(fixedPgn)));
+    const dump = await runMonth(dbId, '2025-12');
+    expect(dump.counts).toMatchObject({ imported: 0, corrected: 1, duplicates: 1 });
+    expect(t.db.value("SELECT result FROM games WHERE white = 'Beta, Test' AND black = 'Epsilon, Test'")).toBe('0-1');
+    expect(t.db.value('SELECT COUNT(*) FROM games WHERE database_id = ?', [dbId])).toBe(2);
+    // The FIDE profile follows: the corrected game replaced the old row.
+    expect(t.db.all('SELECT outcome FROM player_games WHERE source_id = ?', [fide])).toEqual([{ outcome: 'w' }]);
+    expect(referencePlayerByFideId(t.db, '900005')?.games).toBe(1);
+    // A later round import of the same chapter does not undo the dump's correction.
+    expect((await runRound(dbId, 'Rnd5EEEE')).counts).toMatchObject({ imported: 0, duplicates: 2 });
+    expect(t.db.value("SELECT result FROM games WHERE white = 'Beta, Test' AND black = 'Epsilon, Test'")).toBe('0-1');
   });
 
   it('imports a finished round through the API with the token, deduped against the month dumps', async () => {
@@ -172,7 +239,7 @@ describe('reference imports', () => {
     // Federations from the round previews: a new player at insert, a known one updated.
     expect(referencePlayerByFideId(t.db, '900006')?.federation).toBe('ESP');
     expect(referencePlayerByFideId(t.db, '900002')?.federation).toBe('NOR');
-    // A later month dump with the same chapter is a duplicate.
+    // Importing the round again only finds duplicates.
     expect((await runRound(dbId, 'Rnd5EEEE')).counts).toMatchObject({ imported: 0, duplicates: 2 });
   });
 
@@ -446,6 +513,92 @@ describe('reference imports', () => {
       await t3.close();
     }
     expect(dbId).toBeGreaterThan(0);
+  });
+
+  it('refuses URLs whose host resolves to a non-public address, before downloading (redirects too)', async () => {
+    const redirected = (to: string) => () => {
+      const res = bytes(fixture('broadcast-2026-02.pgn'))();
+      Object.defineProperty(res, 'url', { value: to });
+      return res;
+    };
+    const net4 = fakeNetwork({
+      'https://files.example.org/to-intranet.pgn': redirected('https://intranet.example.org/secret.pgn'),
+      'https://nowhere.example.org/club.pgn': bytes(fixture('broadcast-2026-02.pgn')),
+    });
+    const t4 = await makeTestApp({ fetch: net4.fetch });
+    try {
+      const id = findOrCreateReferenceDatabase(t4.db, { name: 'Club archive' });
+      const run = async (url: string) => {
+        const { ctx, updates } = makeJobContext(t4, 'referenceImport', { databaseId: id, url });
+        await getJobHandler('referenceImport')!(ctx);
+        return updates.at(-1)!;
+      };
+      await expect(run('https://intranet.example.org/secret.pgn')).rejects.toThrow('intranet.example.org resolves to a non-public address (10.0.0.5)');
+      await expect(run('https://sneaky.example.org/x.pgn')).rejects.toThrow(/non-public address \(::1\)/);
+      expect(net4.calls).toEqual([]);
+      await expect(run('https://files.example.org/to-intranet.pgn')).rejects.toThrow(/redirected .*non-public address/);
+      // A name that does not resolve here (e.g. egress through a proxy) is left to the download.
+      expect((await run('https://nowhere.example.org/club.pgn')).counts).toMatchObject({ imported: 3 });
+      expect(lookups).toContain('nowhere.example.org');
+    } finally {
+      await t4.close();
+    }
+  });
+
+  it('keeps games of user PGN databases off FIDE profiles, whoever writes player_games', () => {
+    const priv = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('Private prep', 'games', 'private', 0)").lastInsertRowid;
+    const ref = ensureBroadcastDatabase(t.db);
+    const fide = createSource(t.db, { kind: 'fide', key: '1503014' });
+    const carlsen = { name: 'Carlsen, Magnus', fideId: '1503014' };
+    const secret = insertGame(t.db, testGame({ origin: 'pgn', originId: `${priv}:secret`, databaseId: priv, white: carlsen, black: { name: 'Somebody' } }));
+    expect(secret.inserted).toBe(true);
+    expect(t.db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fide])).toBe(0);
+    expect(rebuildPlayerGames(t.db, fide)).toBe(0);
+    // The database's own pgn source still gets the game.
+    const pgnSrc = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(priv, 'Carlsen, Magnus'), databaseId: priv });
+    expect(rebuildPlayerGames(t.db, pgnSrc)).toBe(1);
+    insertGame(t.db, testGame({ origin: 'reference', originId: `${ref}:public`, databaseId: ref, white: carlsen }));
+    expect(t.db.all('SELECT g.origin FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.source_id = ?', [fide])).toEqual([
+      { origin: 'reference' },
+    ]);
+  });
+
+  it('counts a game held by two reference databases once for FIDE players and FIDE profiles', async () => {
+    const lichess = ensureBroadcastDatabase(t.db);
+    const otb = findOrCreateReferenceDatabase(t.db, { name: 'Licensed OTB', licence: 'Licensed, not for redistribution' });
+    const fide = createSource(t.db, { kind: 'fide', key: '900002' });
+    await runMonth(lichess, '2026-01');
+    expect((await runMonth(otb, '2026-01')).counts).toMatchObject({ imported: 4 });
+    expect(t.db.value('SELECT game_count FROM databases WHERE id = ?', [otb])).toBe(4);
+    // Beta (900002) played two of the month's games, stored twice each.
+    expect(referencePlayerByFideId(t.db, '900002')?.games).toBe(2);
+    expect(t.db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fide])).toBe(2);
+    expect(rebuildPlayerGames(t.db, fide)).toBe(0);
+    expect(linkFideSources(t.db, new Set(['900002']))).toBe(0);
+    // Players without a FIDE id are per database.
+    expect(searchReferencePlayers(t.db, 'club player').map(p => p.databaseId)).toEqual([lichess, otb, lichess, otb]);
+    // Dropping the copies that were counted keeps the count while the other copies remain; the
+    // FIDE profile picks those up on its next rebuild.
+    t.db.run('DELETE FROM databases WHERE id = ?', [lichess]);
+    expect(referencePlayerByFideId(t.db, '900002')?.games).toBe(2);
+    expect(rebuildPlayerGames(t.db, fide)).toBe(2);
+    t.db.run('DELETE FROM databases WHERE id = ?', [otb]);
+    expect(referencePlayerByFideId(t.db, '900002')?.games).toBe(0);
+    expect(t.db.value('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fide])).toBe(0);
+  });
+
+  it('skips a game too large or too complex for the PGN parser and imports the rest', async () => {
+    const dbId = findOrCreateReferenceDatabase(t.db, { name: 'Messy' });
+    const huge = `[Event "Huge"]\n[White "Huge, A"]\n[Black "Huge, B"]\n[Result "1-0"]\n\n1. e4 { ${'x'.repeat(1_100_000)} } e5 1-0\n`;
+    const complex = `[Event "Complex"]\n[White "Complex, A"]\n[Black "Complex, B"]\n[Result "1-0"]\n\n1. e4 ${'(1. d4) '.repeat(12_000)}e5 1-0\n`;
+    mkdirSync(t.config.uploadsDir, { recursive: true });
+    const file = 'reference-3-0123456789abcdef.upload';
+    writeFileSync(join(t.config.uploadsDir, file), `${huge}\n${complex}\n${fixture('broadcast-2026-02.pgn').toString()}`);
+    const { ctx, updates } = makeJobContext(t, 'referenceImport', { databaseId: dbId, file });
+    await getJobHandler('referenceImport')!(ctx);
+    expect(updates.at(-1)!.counts).toEqual({ imported: 3, duplicates: 0, skipped: 2, tooLarge: 1, tooComplex: 1 });
+    expect(updates.at(-1)!.done).toBe(5);
+    expect(t.db.value("SELECT COUNT(*) FROM games WHERE white LIKE 'Huge%' OR white LIKE 'Complex%'")).toBe(0);
   });
 
   it('sweeps orphaned uploads but keeps those of queued jobs and fresh ones', async () => {

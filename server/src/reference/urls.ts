@@ -1,12 +1,19 @@
 /**
  * URLs accepted by `POST /api/admin/reference/import {url}`: https only, no credentials, public
  * hosts only (no localhost, private or link-local addresses written as IP literals or local names).
- * The check is on the URL as written; the download itself goes through `ctx.upstream`, which
- * follows redirects, and the job refuses a non-https final address.
+ * The route checks the URL as written; the job also resolves the host name and refuses it when any
+ * address is non-public (`resolvedHostProblem`) before downloading.
+ *
+ * Limits (admin-only feature, so admin-trusted): the shared upstream client follows redirects
+ * itself, so a redirect target is checked (scheme, host, resolved addresses) only once its answer
+ * has arrived, and nothing is read from it when it fails; DNS answers can change between the check
+ * and the request (rebinding). When the host cannot be resolved here (e.g. egress only through a
+ * proxy) the check is left to the download itself.
  *
  * Lichess broadcast pages get special handling: a round page becomes a 'broadcastRound' job (official
  * API, token, round hints), a tour page imports the tour's PGN export.
  */
+import { lookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 import { UPSTREAM } from '../http/upstream.ts';
 
@@ -44,6 +51,29 @@ export function isNonPublicHost(hostname: string): boolean {
   }
   if (host === 'localhost' || !host.includes('.')) return true;
   return LOCAL_SUFFIXES.some(s => host.endsWith(s));
+}
+
+/** The resolver used by `resolvedHostProblem` (replaceable in tests, which have no network). */
+export const IMPORT_DNS: { lookup: (hostname: string) => Promise<Array<{ address: string }>> } = {
+  lookup: hostname => lookup(hostname, { all: true, verbatim: true }),
+};
+
+/**
+ * Why a URL's host cannot be downloaded from after resolving it: a name whose addresses include a
+ * loopback, private or otherwise non-public one. Null when every address is public, for IP
+ * literals (`importUrlProblem` checks those) and when the name does not resolve here.
+ */
+export async function resolvedHostProblem(url: string | URL): Promise<string | null> {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+  if (isIP(host)) return null;
+  let addresses: Array<{ address: string }>;
+  try {
+    addresses = await IMPORT_DNS.lookup(host);
+  } catch {
+    return null;
+  }
+  const bad = addresses.find(a => isNonPublicHost(a.address));
+  return bad ? `${host} resolves to a non-public address (${bad.address})` : null;
 }
 
 /** Why a URL cannot be imported, or null when it can. */

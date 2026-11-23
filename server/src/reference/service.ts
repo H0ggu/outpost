@@ -36,11 +36,14 @@ export async function referenceInfo(db: Db, catalog: BroadcastMonthCatalog, view
   const isAdmin = viewer?.role === 'admin';
   const databases = listReferenceDatabases(db, { isAdmin });
   const published = await catalog.months({ refresh: isAdmin });
+  // Import state of the built-in database only when the viewer may see it.
+  const builtin = broadcastDatabaseId(db);
+  const visibleBuiltin = builtin !== null && databases.some(d => d.id === builtin) ? builtin : null;
   return {
     databases,
     totalGames: databases.reduce((n, d) => n + d.gameCount, 0),
-    broadcastMonths: broadcastMonthStatuses(db, broadcastDatabaseId(db), published),
-    attribution: referenceAttribution(db),
+    broadcastMonths: broadcastMonthStatuses(db, visibleBuiltin, published),
+    attribution: referenceAttribution(db, { isAdmin }),
   };
 }
 

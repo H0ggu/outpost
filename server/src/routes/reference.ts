@@ -95,12 +95,20 @@ const referenceRoutes: FastifyPluginAsync = async app => {
     return enqueueBroadcastMonths(app.db, defined(body) as BroadcastMonthsRequest, req.user!);
   });
 
-  app.post(API_ROUTES.admin.referenceImport, { preHandler: requireAdmin }, async (req): Promise<ImportResponse> => {
+  app.post(API_ROUTES.admin.referenceImport, { preHandler: requireAdmin }, async (req, reply): Promise<ImportResponse> => {
     if (!req.isMultipart()) {
       const body = defined(parseBody(importRequestSchema, req.body ?? {})) as ReferenceImportRequest;
       return enqueueReferenceImport(app.db, app.config, body, null, req.user!);
     }
-    const upload = await receiveReferenceUpload(req, app.config);
+    let upload: Awaited<ReturnType<typeof receiveReferenceUpload>>;
+    try {
+      upload = await receiveReferenceUpload(req, app.config);
+    } catch (e) {
+      // The rest of the body (up to 2 GB) stays unread: close the connection after the error
+      // instead of leaving a keep-alive socket that the next request would hang on.
+      reply.raw.setHeader('connection', 'close');
+      throw e;
+    }
     try {
       if (!upload.file) throw badRequest('Send the PGN in the multipart field "file" (or post JSON with a url)');
       const body = defined(parseBody(importRequestSchema, upload.fields)) as ReferenceImportRequest;

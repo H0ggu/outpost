@@ -12,6 +12,7 @@ import { isTitle, playerKey } from '@outpost/shared/chess';
 import { pgnSourceKey } from '../chess/index.ts';
 import type { Db } from '../db/index.ts';
 import type { AuthUser } from '../http/types.ts';
+import { visibleReferenceDbSql } from './databases.ts';
 
 /** Default and maximum number of search results. */
 export const PLAYER_SEARCH_DEFAULT_LIMIT = 20;
@@ -191,7 +192,9 @@ function toReferencePlayer(db: Db, row: PlayerRow, viewer: AuthUser | null): Ref
 /**
  * Reference-DB players matching a name or FIDE id prefix, best matches first (exact FIDE id, then
  * names starting with the query, then most games). An empty query lists the players with the most
- * games. `viewer` decides which profiles count for `profileSlug` (anonymous: public ones only).
+ * games. `viewer` decides which profiles count for `profileSlug` (anonymous: public ones only) and
+ * whether players of private reference databases show (admins only); pass it from routes
+ * (`viewer: req.user`). FIDE players aggregate every reference database and always show.
  */
 export function searchReferencePlayers(
   db: Db,
@@ -201,9 +204,16 @@ export function searchReferencePlayers(
   const limit = Math.max(1, Math.min(PLAYER_SEARCH_MAX_LIMIT, Math.floor(opts.limit ?? PLAYER_SEARCH_DEFAULT_LIMIT)));
   const viewer = opts.viewer ?? null;
   const query = q.trim().slice(0, PLAYER_SEARCH_MAX_QUERY);
+  // Name-only players belong to one database: hidden with it when it is private (admins see all).
+  const visible =
+    viewer?.role === 'admin'
+      ? ''
+      : ` AND (database_id IS NULL OR database_id IN (SELECT d.id FROM databases d WHERE d.kind = 'reference' AND ${visibleReferenceDbSql(false)}))`;
   let rows: PlayerRow[];
   if (query === '') {
-    rows = db.all<PlayerRow>(`SELECT ${PLAYER_COLUMNS} FROM reference_players WHERE games > 0 ORDER BY games DESC, id LIMIT ?`, [limit]);
+    rows = db.all<PlayerRow>(`SELECT ${PLAYER_COLUMNS} FROM reference_players WHERE games > 0${visible} ORDER BY games DESC, id LIMIT ?`, [
+      limit,
+    ]);
   } else if (/^\d{1,12}$/.test(query)) {
     rows = db.all<PlayerRow>(
       `SELECT ${PLAYER_COLUMNS} FROM reference_players
@@ -222,7 +232,7 @@ export function searchReferencePlayers(
     rows = db.all<PlayerRow>(
       `SELECT ${PLAYER_COLUMNS} FROM reference_players
         WHERE id IN (SELECT player_id FROM reference_player_words WHERE word >= ? AND word < ?)
-          AND games > 0 AND ${where}
+          AND games > 0 AND ${where}${visible}
         ORDER BY (search_name = ?) DESC, (substr(search_name, 1, ?) = ?) DESC, games DESC, id
         LIMIT ?`,
       [anchor, prefixEnd(anchor), ...tokens.map(t => ` ${t}`), folded, folded.length, folded, limit],

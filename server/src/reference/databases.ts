@@ -172,14 +172,24 @@ function toDatabaseInfo(db: Db, r: DatabaseRow, isAdmin: boolean): DatabaseInfo 
     createdAt: r.created_at,
     gameCount: r.game_count,
     canEdit: isAdmin,
-    importJob: latestImportJob(db, r.id),
+    // Jobs name the admin who queued them and carry error text: admins only.
+    importJob: isAdmin ? latestImportJob(db, r.id) : null,
   };
 }
 
-/** Every reference database (the built-in one first), as `DatabaseInfo`. Admins may edit them. */
+/**
+ * SQL condition (on `databases d`) for the reference databases a viewer may see: every one for
+ * admins, public ones for everybody else (an admin can make one private, e.g. licensed data).
+ */
+export const visibleReferenceDbSql = (isAdmin: boolean): string => (isAdmin ? '1' : "d.visibility = 'public'");
+
+/** Every reference database the viewer may see (the built-in one first), as `DatabaseInfo`. Admins may edit them. */
 export function listReferenceDatabases(db: Db, opts: { isAdmin: boolean }): DatabaseInfo[] {
   return db
-    .all<DatabaseRow>(`${DATABASE_SELECT} WHERE d.kind = 'reference' ORDER BY (r.builtin IS NULL), d.name COLLATE NOCASE, d.id`)
+    .all<DatabaseRow>(
+      `${DATABASE_SELECT} WHERE d.kind = 'reference' AND ${visibleReferenceDbSql(opts.isAdmin)}
+        ORDER BY (r.builtin IS NULL), d.name COLLATE NOCASE, d.id`,
+    )
     .map(r => toDatabaseInfo(db, r, opts.isAdmin));
 }
 
@@ -195,12 +205,15 @@ function hasBroadcastData(db: Db, id: Id, builtin: string | null): boolean {
 
 /**
  * Attribution lines to show wherever reference data appears: the CC BY-SA line for Lichess
- * broadcast data, plus `<name> (<source>): <licence>` for every other database that names a licence.
+ * broadcast data, plus `<name> (<source>): <licence>` for every other database that names a
+ * licence — of the databases the viewer may see (all of them by default).
  */
-export function referenceAttribution(db: Db): string[] {
+export function referenceAttribution(db: Db, opts: { isAdmin: boolean } = { isAdmin: true }): string[] {
   const lines: string[] = [];
   let broadcast = false;
-  for (const r of db.all<DatabaseRow>(`${DATABASE_SELECT} WHERE d.kind = 'reference' ORDER BY d.id`)) {
+  for (const r of db.all<DatabaseRow>(
+    `${DATABASE_SELECT} WHERE d.kind = 'reference' AND ${visibleReferenceDbSql(opts.isAdmin)} ORDER BY d.id`,
+  )) {
     const isBroadcast = hasBroadcastData(db, r.id, r.builtin);
     broadcast ||= isBroadcast;
     // Broadcast data under its own licence is covered by the Lichess line.

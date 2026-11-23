@@ -1,0 +1,48 @@
+{
+ "tour": {
+  "id": "TourDONE",
+  "name": "Finished Test Cup",
+  "slug": "finished-test-cup",
+  "info": {
+   "format": "8-player round robin",
+   "tc": "90 min + 30 sec / move",
+   "fideTC": "standard",
+   "location": "Testville",
+   "timeZone": "Europe/Oslo",
+   "players": "Alpha, Beta",
+   "website": "https://example.org/",
+   "standings": "https://example.org/standings"
+  },
+  "createdAt": 1790000000000,
+  "url": "https://lichess.org/broadcast/finished-test-cup/TourDONE",
+  "tier": 3,
+  "dates": [
+   1794000000000
+  ],
+  "image": "https://image.lichess.org/display?path=x.webp",
+  "description": "Synthetic test tournament."
+ },
+ "rounds": [
+  {
+   "id": "RndDN001",
+   "name": "Round 1",
+   "slug": "round-1",
+   "createdAt": 1790000000000,
+   "startsAt": 1794590000000,
+   "finishedAt": 1794600000000,
+   "finished": true,
+   "url": "https://lichess.org/broadcast/finished-test-cup/round-1/RndDN001"
+  },
+  {
+   "id": "RndDN002",
+   "name": "Round 2",
+   "slug": "round-2",
+   "createdAt": 1790000000000,
+   "startsAt": 1795180000000,
+   "finishedAt": 1795200000000,
+   "finished": true,
+   "url": "https://lichess.org/broadcast/finished-test-cup/round-2/RndDN002"
+  }
+ ],
+ "defaultRoundId": "RndDN002"
+}

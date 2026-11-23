@@ -1429,7 +1429,11 @@ export interface BroadcastRoundRef {
   url: string;
 }
 
-/** A broadcast tournament in lists. */
+/**
+ * A broadcast tournament in lists. In `GET /api/broadcasts`, `rounds` holds only the latest round
+ * with games and the current/next (or last) round, as Lichess's list gives them;
+ * `GET /api/broadcasts/tour/:tourId` has every round.
+ */
 export interface BroadcastSummary {
   tour: {
     id: string;
@@ -1450,8 +1454,12 @@ export interface BroadcastSummary {
 
 /** `GET /api/broadcasts`. */
 export interface BroadcastsResponse {
+  /** Ongoing tours (between rounds too), live ones first. */
   active: BroadcastSummary[];
+  /** Finished tours, most recent first. */
   recent: BroadcastSummary[];
+  /** Tours that have not started yet (optional for compatibility). */
+  upcoming?: BroadcastSummary[];
 }
 
 /** `GET /api/broadcasts/tour/:tourId`. */

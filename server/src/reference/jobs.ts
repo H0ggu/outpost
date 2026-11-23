@@ -13,12 +13,12 @@ import { BROADCAST_ID_RE, fetchRound, federationsOf, roundPgnUrl } from '../broa
 import { LICHESS_TOKEN_HOSTS, UpstreamError, type UpstreamInit } from '../http/upstream.ts';
 import type { JobContext } from '../jobs/index.ts';
 import { markBroadcastData, requireReferenceDatabase } from './databases.ts';
-import { importReferencePgn, type ImportResult } from './importer.ts';
+import { importReferencePgn, monthRank, type ImportResult } from './importer.ts';
 import { broadcastMonthProblem, broadcastMonthUrl, recordMonth } from './months.ts';
 import { updateFederations } from './players.ts';
 import { bodyChunks, countBytes, decompressAuto, formatBytes, REFERENCE_LIMITS, SizeLimitError } from './stream.ts';
 import { removeUpload, uploadPath } from './upload.ts';
-import { importUrlProblem } from './urls.ts';
+import { importUrlProblem, resolvedHostProblem } from './urls.ts';
 
 /** Time allowed for an upstream download to start answering. */
 const DOWNLOAD_TIMEOUT_MS = 60_000;
@@ -121,6 +121,8 @@ export async function runBroadcastMonth(ctx: JobContext<'broadcastMonth'>): Prom
     result = await importReferencePgn(ctx, decompressAuto(dl.chunks), {
       databaseId,
       label: month,
+      // A later month's corrected copy of a broadcast game replaces the stored one.
+      rank: monthRank(month),
       note: () => percent(dl.read(), dl.total),
     });
   } catch (e) {
@@ -176,7 +178,7 @@ async function importUploadedFile(ctx: JobContext<'referenceImport'>, databaseId
 }
 
 async function importUrl(ctx: JobContext<'referenceImport'>, databaseId: number, url: string): Promise<void> {
-  const problem = importUrlProblem(url);
+  const problem = importUrlProblem(url) ?? (await resolvedHostProblem(url));
   if (problem) throw new Error(problem);
   const target = new URL(url);
   const dl = await download(ctx, target, {
@@ -185,7 +187,9 @@ async function importUrl(ctx: JobContext<'referenceImport'>, databaseId: number,
     max: REFERENCE_LIMITS.downloadBytes,
     what: 'The download',
   });
-  const redirectProblem = dl.res.url && dl.res.url !== target.href ? importUrlProblem(dl.res.url) : null;
+  // The shared client follows redirects itself: check where it ended up before reading anything.
+  const redirected = dl.res.url && dl.res.url !== target.href ? dl.res.url : null;
+  const redirectProblem = redirected ? (importUrlProblem(redirected) ?? (await resolvedHostProblem(redirected))) : null;
   if (redirectProblem) {
     void dl.res.body?.cancel().catch(() => {});
     throw new Error(`The download was redirected to an address that cannot be imported: ${redirectProblem}`);

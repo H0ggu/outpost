@@ -4,13 +4,21 @@
  * broadcasts), §6, research lichess-api.md §4.
  *
  * Upstream shapes (checked 2026-11-23):
- * - `GET /api/broadcast?nb=` NDJSON lines `{tour, rounds[], defaultRoundId, group?}`, active tours
- *   first (by tier), then finished ones by most recent sync;
+ * - `GET /api/broadcast/top?page=` `{active[], upcoming[], past:{currentPage, maxPerPage,
+ *   currentPageResults[], previousPage, nextPage}}`, each entry `{tour, round, roundToLink?, group?}`:
+ *   `active` are the tours Lichess shows as ongoing (by tier), with their current or next `round`
+ *   and, when that one has no games yet, `roundToLink` = the latest round with games; `upcoming`
+ *   have not started; `past` are finished tours, most recent first, with their last round (24 a
+ *   page). The list does not carry every round of a tour: `GET /api/broadcast/{tourId}` does.
+ *   (`GET /api/broadcast?nb=` is not used: it lists 100+ unfinished tours before any finished one.)
  * - `GET /api/broadcast/{tourId}` `{tour, rounds[], defaultRoundId?, group?}`;
  * - `GET /api/broadcast/-/-/{roundId}` `{round, tour, study, games[]}` where a game preview is
  *   `{id, name, fen, players[2]{name,title,rating,fideId,fed,clock (centiseconds)}, lastMove (UCI),
  *   check, thinkTime (s), status ('*', '1-0', '0-1', '½-½')}`;
  * - `GET /api/broadcast/round/{roundId}.pgn` the round's games.
+ *
+ * Every failure is an `UpstreamError` (body reads too, so routes answer 502/503, never 500) or a
+ * 404 `HttpError`.
  */
 import type {
   BroadcastGamePreview,
@@ -31,12 +39,12 @@ export const BROADCAST_ID_RE = /^[A-Za-z0-9]{8}$/;
 /** Standard start position (previews of games that have not started carry no FEN). */
 export const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
-/** Tours requested for `GET /api/broadcasts` (active ones come first upstream). */
-export const BROADCAST_LIST_SIZE = 80;
-/** Finished tours shown under "recent". */
-export const RECENT_BROADCASTS = 20;
-/** Largest round PGN served from upstream (a 400-board round with clocks is a few MB). */
-export const MAX_ROUND_PGN_BYTES = 32 * 1024 * 1024;
+/** Largest round PGN served from upstream (a 400-board round with clocks and comments is ~2 MB). */
+export const MAX_ROUND_PGN_BYTES = 8 * 1024 * 1024;
+/** Largest JSON answer read (the top list is ~100 kB, a 400-board round's previews ~300 kB). */
+export const MAX_BROADCAST_JSON_BYTES = 8 * 1024 * 1024;
+
+const LICHESS_HOST = new URL(UPSTREAM.lichess).host;
 
 // ---------------------------------------------------------------------------
 // Upstream shapes (only the fields Outpost reads; everything is checked at runtime)
@@ -71,6 +79,26 @@ export interface LichessTourWithRounds {
   tour: LichessTour;
   rounds: LichessRound[];
   defaultRoundId?: string;
+}
+
+/** An entry of `GET /api/broadcast/top`. */
+export interface LichessTopEntry {
+  tour: LichessTour;
+  /** The tour's current or next round (active), or its last round (past). */
+  round: LichessRound | null;
+  /** The latest round with games when `round` has none yet. */
+  roundToLink: LichessRound | null;
+  group: string | null;
+}
+
+/** `GET /api/broadcast/top`. */
+export interface LichessTop {
+  active: LichessTopEntry[];
+  upcoming: LichessTopEntry[];
+  /** Finished tours of the requested page, most recent first. */
+  past: LichessTopEntry[];
+  /** Next page of `past`, or null on the last one. */
+  nextPastPage: number | null;
 }
 
 /** A game preview player. */
@@ -149,6 +177,28 @@ export function parseTourWithRounds(v: unknown): LichessTourWithRounds | null {
   return { tour, rounds, ...(str(v.defaultRoundId) ? { defaultRoundId: v.defaultRoundId as string } : {}) };
 }
 
+function parseTopEntry(v: unknown): LichessTopEntry | null {
+  if (!isObj(v)) return null;
+  const tour = parseTour(v.tour);
+  if (!tour) return null;
+  return { tour, round: parseRound(v.round), roundToLink: parseRound(v.roundToLink), group: str(v.group) };
+}
+
+/** Validates a `GET /api/broadcast/top` answer, or null when it is unusable. */
+export function parseTop(v: unknown): LichessTop | null {
+  if (!isObj(v) || (!Array.isArray(v.active) && !isObj(v.past))) return null;
+  const entries = (x: unknown): LichessTopEntry[] =>
+    Array.isArray(x) ? x.map(parseTopEntry).filter((e): e is LichessTopEntry => e !== null) : [];
+  const past = isObj(v.past) ? v.past : {};
+  const next = num(past.nextPage);
+  return {
+    active: entries(v.active),
+    upcoming: entries(v.upcoming),
+    past: entries(past.currentPageResults),
+    nextPastPage: next !== null && next > 0 ? next : null,
+  };
+}
+
 /** Validates a round response, or null when it is unusable. */
 export function parseRoundResponse(v: unknown): LichessRoundResponse | null {
   if (!isObj(v)) return null;
@@ -223,24 +273,38 @@ export function toBroadcastSummary(t: LichessTourWithRounds): BroadcastSummary {
   };
 }
 
-/** A tour is finished when it has rounds and all of them are finished. */
-export const isFinishedTour = (t: LichessTourWithRounds): boolean => t.rounds.length > 0 && t.rounds.every(r => r.finished);
+/**
+ * A top-list entry as `BroadcastSummary`: its rounds are only the latest round with games and the
+ * current/next (or last) round, and the summary opens the one with games.
+ */
+export function topEntrySummary(e: LichessTopEntry): BroadcastSummary {
+  const rounds: LichessRound[] = [];
+  for (const r of [e.roundToLink, e.round]) if (r && !rounds.some(x => x.id === r.id)) rounds.push(r);
+  const [a, b] = rounds;
+  if (a && b && a.startsAt !== undefined && b.startsAt !== undefined && b.startsAt < a.startsAt) rounds.reverse();
+  const defaultRoundId = e.roundToLink?.id ?? e.round?.id;
+  return toBroadcastSummary({ tour: e.tour, rounds, ...(defaultRoundId ? { defaultRoundId } : {}) });
+}
 
-/** Splits the official list into active (live or upcoming) and recently finished tours. */
-export function toBroadcastsResponse(list: readonly LichessTourWithRounds[]): BroadcastsResponse {
-  const active: BroadcastSummary[] = [];
-  const recent: BroadcastSummary[] = [];
+/**
+ * `GET /api/broadcasts` from the top list: active tours (live ones first, otherwise Lichess's tier
+ * order), upcoming ones, and the most recently finished ones as `recent`. A tour shows once.
+ */
+export function toBroadcastsResponse(top: LichessTop): BroadcastsResponse {
   const seen = new Set<string>();
-  for (const t of list) {
-    if (seen.has(t.tour.id)) continue;
-    seen.add(t.tour.id);
-    if (isFinishedTour(t)) {
-      if (recent.length < RECENT_BROADCASTS) recent.push(toBroadcastSummary(t));
-    } else active.push(toBroadcastSummary(t));
-  }
-  // Live tours first, keeping Lichess's order (tier) otherwise.
-  active.sort((a, b) => Number(b.live) - Number(a.live));
-  return { active, recent };
+  const pick = (entries: readonly LichessTopEntry[]): BroadcastSummary[] => {
+    const out: BroadcastSummary[] = [];
+    for (const e of entries) {
+      if (seen.has(e.tour.id)) continue;
+      seen.add(e.tour.id);
+      out.push(topEntrySummary(e));
+    }
+    return out;
+  };
+  const active = pick(top.active).sort((a, b) => Number(b.live) - Number(a.live));
+  const upcoming = pick(top.upcoming);
+  const recent = pick(top.past);
+  return { active, recent, upcoming };
 }
 
 const fideIdOf = (v: unknown): string | null => {
@@ -349,66 +413,122 @@ export function federationsOf(r: LichessRoundResponse): Map<string, string> {
 // Upstream calls (token required; failures are UpstreamErrors or 404 HttpErrors)
 // ---------------------------------------------------------------------------
 
-const invalid = (what: string): UpstreamError =>
-  new UpstreamError('status', new URL(UPSTREAM.lichess).host, `Unexpected ${what} from lichess.org`);
+const invalid = (what: string): UpstreamError => new UpstreamError('status', LICHESS_HOST, `Unexpected ${what} from lichess.org`);
 
-/** `GET /api/broadcast?nb=`: official tours, active ones first. */
-export async function fetchOfficialBroadcasts(
-  upstream: Upstream,
-  opts: { nb?: number; signal?: AbortSignal } = {},
-): Promise<LichessTourWithRounds[]> {
-  const nb = Math.max(1, Math.min(100, opts.nb ?? BROADCAST_LIST_SIZE));
-  const res = await upstream.fetch(`${UPSTREAM.lichess}/api/broadcast?nb=${nb}`, {
-    auth: 'required',
-    headers: { accept: 'application/x-ndjson' },
-    ...(opts.signal ? { signal: opts.signal } : {}),
-  });
-  const text = await res.text();
-  const out: LichessTourWithRounds[] = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let v: unknown;
-    try {
-      v = JSON.parse(line);
-    } catch {
-      throw invalid('broadcast list');
-    }
-    const t = parseTourWithRounds(v);
-    if (t) out.push(t);
+const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Reads a body as text, at most `max` bytes. A larger body is `UpstreamError('status')` (502); a
+ * body that breaks off or stalls past the caller's deadline is `'network'` / `'timeout'` (503).
+ */
+export async function readUpstreamText(
+  res: Response,
+  what: string,
+  opts: { max?: number; signal?: AbortSignal } = {},
+): Promise<string> {
+  const max = opts.max ?? MAX_BROADCAST_JSON_BYTES;
+  const tooLarge = () => new UpstreamError('status', LICHESS_HOST, `The ${what} from lichess.org is larger than ${max} bytes`, { status: res.status });
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) {
+    void res.body?.cancel().catch(() => {});
+    throw tooLarge();
   }
-  return out;
+  const reader = res.body?.getReader();
+  if (!reader) return '';
+  // The deadline is raced here too, so a body stream that ignores the signal cannot stall the read.
+  const signal = opts.signal;
+  let onAbort: (() => void) | undefined;
+  const aborted = signal
+    ? new Promise<never>((_, reject) => {
+        onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      })
+    : null;
+  aborted?.catch(() => {});
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await (aborted ? Promise.race([reader.read(), aborted]) : reader.read());
+      if (done) break;
+      total += value.byteLength;
+      if (total > max) throw tooLarge();
+      chunks.push(value);
+    }
+  } catch (e) {
+    void reader.cancel().catch(() => {});
+    if (e instanceof UpstreamError) throw e;
+    const reason = signal?.aborted ? ((signal.reason as Error | undefined)?.name === 'TimeoutError' ? 'timeout' : 'aborted') : 'network';
+    throw new UpstreamError(reason, LICHESS_HOST, `Reading the ${what} from lichess.org failed: ${errorText(e)}`, { cause: e });
+  } finally {
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/** Reads and parses a JSON body (see `readUpstreamText`); unparsable → `UpstreamError('status')`. */
+async function readUpstreamJson(res: Response, what: string, signal?: AbortSignal): Promise<unknown> {
+  const text = await readUpstreamText(res, what, signal ? { signal } : {});
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw invalid(what);
+  }
+}
+
+/** A Lichess GET with the token; 404 → `not_found` (`notFoundMessage`) when given. */
+async function lichessGet(
+  upstream: Upstream,
+  url: string,
+  opts: { accept: string; signal?: AbortSignal | undefined; notFound?: string; timeoutMs?: number },
+): Promise<Response> {
+  const res = await upstream.fetch(url, {
+    auth: 'required',
+    headers: { accept: opts.accept },
+    ...(opts.notFound ? { allowStatuses: [404] } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+  });
+  if (res.status === 404 && opts.notFound) {
+    void res.body?.cancel().catch(() => {});
+    throw notFound(opts.notFound);
+  }
+  return res;
+}
+
+/** `GET /api/broadcast/top?page=`: active, upcoming and (one page of) finished official tours. */
+export async function fetchTopBroadcasts(upstream: Upstream, opts: { page?: number; signal?: AbortSignal } = {}): Promise<LichessTop> {
+  const page = Math.max(1, Math.floor(opts.page ?? 1));
+  const res = await lichessGet(upstream, `${UPSTREAM.lichess}/api/broadcast/top?page=${page}`, {
+    accept: 'application/json',
+    signal: opts.signal,
+  });
+  const top = parseTop(await readUpstreamJson(res, 'broadcast list', opts.signal));
+  if (!top) throw invalid('broadcast list');
+  return top;
 }
 
 /** `GET /api/broadcast/{tourId}`; 404 → `not_found`. */
 export async function fetchTour(upstream: Upstream, tourId: string, signal?: AbortSignal): Promise<LichessTourWithRounds> {
-  const res = await upstream.fetch(`${UPSTREAM.lichess}/api/broadcast/${encodeURIComponent(tourId)}`, {
-    auth: 'required',
-    headers: { accept: 'application/json' },
-    allowStatuses: [404],
-    ...(signal ? { signal } : {}),
+  const res = await lichessGet(upstream, `${UPSTREAM.lichess}/api/broadcast/${encodeURIComponent(tourId)}`, {
+    accept: 'application/json',
+    signal,
+    notFound: 'Broadcast not found',
   });
-  if (res.status === 404) {
-    void res.body?.cancel().catch(() => {});
-    throw notFound('Broadcast not found');
-  }
-  const t = parseTourWithRounds(await res.json().catch(() => null));
+  const t = parseTourWithRounds(await readUpstreamJson(res, 'broadcast tour', signal));
   if (!t) throw invalid('broadcast tour');
   return t;
 }
 
 /** `GET /api/broadcast/-/-/{roundId}`; 404 → `not_found`. */
 export async function fetchRound(upstream: Upstream, roundId: string, signal?: AbortSignal): Promise<LichessRoundResponse> {
-  const res = await upstream.fetch(`${UPSTREAM.lichess}/api/broadcast/-/-/${encodeURIComponent(roundId)}`, {
-    auth: 'required',
-    headers: { accept: 'application/json' },
-    allowStatuses: [404],
-    ...(signal ? { signal } : {}),
+  const res = await lichessGet(upstream, `${UPSTREAM.lichess}/api/broadcast/-/-/${encodeURIComponent(roundId)}`, {
+    accept: 'application/json',
+    signal,
+    notFound: 'Broadcast round not found',
   });
-  if (res.status === 404) {
-    void res.body?.cancel().catch(() => {});
-    throw notFound('Broadcast round not found');
-  }
-  const r = parseRoundResponse(await res.json().catch(() => null));
+  const r = parseRoundResponse(await readUpstreamJson(res, 'broadcast round', signal));
   if (!r) throw invalid('broadcast round');
   return r;
 }
@@ -425,16 +545,10 @@ export async function fetchRoundPgn(
   roundId: string,
   opts: { signal?: AbortSignal; clocks?: boolean; comments?: boolean; timeoutMs?: number } = {},
 ): Promise<Response> {
-  const res = await upstream.fetch(roundPgnUrl(roundId, opts), {
-    auth: 'required',
-    headers: { accept: 'application/x-chess-pgn' },
-    allowStatuses: [404],
-    ...(opts.signal ? { signal: opts.signal } : {}),
+  return lichessGet(upstream, roundPgnUrl(roundId, opts), {
+    accept: 'application/x-chess-pgn',
+    signal: opts.signal,
+    notFound: 'Broadcast round not found',
     ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
   });
-  if (res.status === 404) {
-    void res.body?.cancel().catch(() => {});
-    throw notFound('Broadcast round not found');
-  }
-  return res;
 }

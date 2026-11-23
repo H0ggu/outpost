@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parsePgnGames } from '../src/chess/index.ts';
 import { addMonths, broadcastMonthProblem, estimatedBroadcastMonths, monthOf, monthRange, parseMonthList } from '../src/reference/months.ts';
 import { broadcastChapterKey, toReferenceGame } from '../src/reference/normalize.ts';
+import { splitPgnGames, type SplitGame } from '../src/reference/pgnSplit.ts';
 import { foldName } from '../src/reference/players.ts';
 import { decompressAuto, detectCompression, SizeLimitError, UnsupportedFormatError } from '../src/reference/stream.ts';
 import { otbTimeClass, otbTimeControl, parseOtbTimeControl, timeClassFromWords } from '../src/reference/timeControl.ts';
@@ -266,5 +267,76 @@ describe('streams', () => {
       SizeLimitError,
     );
     await expect(collect(decompressAuto(chunksOf(zstdCompressSync(Buffer.from(text)).subarray(0, 20))))).rejects.toThrow();
+  });
+});
+
+describe('PGN splitting', () => {
+  const split = async (input: string | string[], maxGameChars?: number): Promise<SplitGame[]> => {
+    const out: SplitGame[] = [];
+    const chunks = (async function* () {
+      for (const c of typeof input === 'string' ? [input] : input) yield c;
+    })();
+    for await (const g of splitPgnGames(chunks, maxGameChars ? { maxGameChars } : {})) out.push(g);
+    return out;
+  };
+  const texts = (games: SplitGame[]) => games.map(g => ('text' in g ? g.text : `<${g.chars} chars dropped>`));
+  const headersOf = async (pgn: string) => {
+    const out: Array<Record<string, string>> = [];
+    for await (const g of parsePgnGames(pgn)) out.push(Object.fromEntries(g.headers));
+    return out;
+  };
+
+  // Blank lines inside comments and between tags and moves, `;` comments with braces, `%` lines,
+  // a BOM, CRLF line ends, several tags on one line, a game without tags.
+  const tricky = [
+    '\ufeff% exported by a test',
+    '[Event "One"] [Site "?"]',
+    '',
+    '[White "A"]',
+    '[Black "B"]',
+    '[Result "1-0"]',
+    '',
+    '1. e4 { a comment',
+    '',
+    'with a blank line } e5 ; a rest-of-line comment with a { brace',
+    '% escaped line',
+    '2. Nf3 1-0',
+    '',
+    '',
+    '[Event "Two"]\r',
+    '[Result "0-1"]\r',
+    '\r',
+    '1. d4 d5 0-1\r',
+    '\r',
+    '1. c4 c5 1/2-1/2',
+  ].join('\n');
+
+  it('splits exactly where chessops does, whatever the chunking', async () => {
+    const whole = await split(tricky);
+    expect(texts(whole).map(t => t.split('\n')[0])).toEqual(['[Event "One"] [Site "?"]', '[Event "Two"]', '1. c4 c5 1/2-1/2']);
+    // Each piece parses to the game chessops finds in the whole text.
+    const pieces: Array<Record<string, string>> = [];
+    for (const t of texts(whole)) pieces.push(...(await headersOf(t)));
+    expect(pieces).toEqual(await headersOf(tricky));
+    expect(pieces.map(h => h.Event ?? null)).toEqual(['One', 'Two', '?']);
+    // One character at a time gives the same pieces.
+    expect(texts(await split([...tricky]))).toEqual(texts(whole));
+  });
+
+  it('drops a game over the size limit without buffering it and keeps the next one', async () => {
+    const big = `[Event "Big"]\n[Result "1-0"]\n\n1. e4 { ${'x'.repeat(500)} } 1-0\n\n[Event "Next"]\n[Result "0-1"]\n\n1. d4 0-1\n`;
+    const games = await split(big, 200);
+    expect(games).toHaveLength(2);
+    expect(games[0]).toEqual({ oversized: true, chars: expect.any(Number) });
+    expect('text' in games[1]! && games[1].text.startsWith('[Event "Next"]')).toBe(true);
+    // A single line longer than the limit that never ends: memory stays bounded, the game is dropped.
+    const endless = ['[Event "Endless"]\n\n1. e4 {', ...Array.from({ length: 50 }, () => 'y'.repeat(100))];
+    const out = await split(endless, 1000);
+    expect(out).toEqual([{ oversized: true, chars: expect.any(Number) }]);
+  });
+
+  it('yields nothing for empty or comment-only input', async () => {
+    expect(await split('')).toEqual([]);
+    expect(await split('\n\n% nothing here\n')).toEqual([]);
   });
 });

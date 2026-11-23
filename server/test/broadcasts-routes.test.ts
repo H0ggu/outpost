@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import type { BroadcastRound, BroadcastsResponse, BroadcastTour } from '@outpost/shared/api';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { standardLastMove, toBroadcastsResponse } from '../src/broadcasts/index.ts';
-import { TtlCache } from '../src/broadcasts/service.ts';
+import { parseTop, standardLastMove, toBroadcastsResponse } from '../src/broadcasts/index.ts';
+import { BROADCAST_LIMITS, RequestBudget, TtlCache } from '../src/broadcasts/service.ts';
+import { notFound } from '../src/http/errors.ts';
 import { autoImportFinishedRounds, startBroadcastAutoImport } from '../src/reference/autoImport.ts';
 import { ensureBroadcastDatabase } from '../src/reference/databases.ts';
 import { referencePlayerByFideId } from '../src/reference/players.ts';
@@ -12,10 +13,18 @@ import { createUserSession, makeTestApp, type TestApp } from './helpers.ts';
 const FIXTURES = new URL('./fixtures/reference/', import.meta.url);
 const text = (name: string): string => readFileSync(new URL(name, FIXTURES), 'utf8');
 
-const LIST = text('broadcast-list.ndjson');
+/** Synthetic `/api/broadcast/top` pages (shape checked against lichess.org on 2026-11-23). */
+const TOP = text('broadcast-top.json');
+const TOP_PAGE_2 = text('broadcast-top-page2.json');
 const TOUR = text('broadcast-tour.json');
+const TOUR_DONE = text('broadcast-tour-done.json');
 const ROUND = text('broadcast-round.json');
 const ROUND_PGN = text('round-Rnd5EEEE.pgn');
+/** TourNEXT with its two rounds, as `GET /api/broadcast/TourNEXT` would answer. */
+const TOUR_NEXT = (() => {
+  const e = JSON.parse(TOP).active[0];
+  return JSON.stringify({ tour: e.tour, rounds: [e.roundToLink, e.round], defaultRoundId: e.roundToLink.id });
+})();
 
 interface Call {
   url: string;
@@ -23,18 +32,36 @@ interface Call {
   accept: string | null;
 }
 
-function lichessFake(calls: Call[]): typeof globalThis.fetch {
+const json = (body: string) => new Response(body, { headers: { 'content-type': 'application/json' } });
+
+/** A body that sends `first` and then fails (a connection that breaks off) or never ends. */
+function brokenBody(first: string, mode: 'error' | 'stall'): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(first));
+      if (mode === 'error') controller.error(new TypeError('terminated'));
+    },
+  });
+  return new Response(stream, { headers: { 'content-type': 'application/json' } });
+}
+
+/** Fake lichess.org. `overrides` (by path + query) replace or add answers. */
+function lichessFake(calls: Call[], overrides: Record<string, () => Response> = {}): typeof globalThis.fetch {
   return async (input, init = {}) => {
     const url = new URL(String(input));
     const headers = new Headers(init.headers);
     calls.push({ url: url.href, auth: headers.get('authorization'), accept: headers.get('accept') });
     if (url.host !== 'lichess.org') throw new Error(`unexpected host ${url.host}`);
+    const override = overrides[url.pathname + url.search] ?? overrides[url.pathname];
+    if (override) return override();
     const p = url.pathname;
-    if (p === '/api/broadcast') return new Response(LIST, { headers: { 'content-type': 'application/x-ndjson' } });
-    if (p === '/api/broadcast/TourLIVE') return new Response(TOUR, { headers: { 'content-type': 'application/json' } });
-    if (p === '/api/broadcast/-/-/RndLV002') return new Response(ROUND, { headers: { 'content-type': 'application/json' } });
+    if (p === '/api/broadcast/top') return json(url.searchParams.get('page') === '2' ? TOP_PAGE_2 : TOP);
+    if (p === '/api/broadcast/TourLIVE') return json(TOUR);
+    if (p === '/api/broadcast/TourDONE') return json(TOUR_DONE);
+    if (p === '/api/broadcast/TourNEXT') return json(TOUR_NEXT);
+    if (p === '/api/broadcast/-/-/RndLV002') return json(ROUND);
     if (p === '/api/broadcast/round/RndLV002.pgn') return new Response(ROUND_PGN, { headers: { 'content-type': 'application/x-chess-pgn' } });
-    if (p === '/api/broadcast/-/-/BrokenJs') return new Response('{"oops":', { headers: { 'content-type': 'application/json' } });
+    if (p === '/api/broadcast/-/-/BrokenJs') return json('{"oops":');
     if (p === '/api/broadcast/-/-/Teapot42') return new Response('no', { status: 500 });
     return new Response('{"error":"Not found"}', { status: 404 });
   };
@@ -64,15 +91,19 @@ describe('broadcast routes', () => {
     expect(calls).toEqual([]);
   });
 
-  it('lists official broadcasts with the token: live first, finished ones as recent', async () => {
+  it('lists official broadcasts from the top list: live first, then upcoming, finished ones as recent', async () => {
     const res = await get('/api/broadcasts');
     expect(res.statusCode).toBe(200);
     const body = res.json<BroadcastsResponse>();
     expect(body.active.map(b => [b.tour.id, b.live, b.defaultRoundId])).toEqual([
       ['TourLIVE', true, 'RndLV002'],
-      ['TourUPCO', false, 'RndUP001'],
+      ['TourNEXT', false, 'RndNX001'],
     ]);
-    expect(body.recent.map(b => b.tour.id)).toEqual(['TourDONE']);
+    expect(body.upcoming?.map(b => [b.tour.id, b.defaultRoundId])).toEqual([['TourUPCO', 'RndUP001']]);
+    expect(body.recent.map(b => [b.tour.id, b.defaultRoundId, b.rounds.map(r => [r.id, r.finished])])).toEqual([
+      ['TourDONE', 'RndDN002', [['RndDN002', true]]],
+      ['TourOLD1', 'RndOL001', [['RndOL001', true]]],
+    ]);
     expect(body.active[0]!.tour).toEqual({
       id: 'TourLIVE',
       name: 'Live Test Open | Masters',
@@ -91,11 +122,14 @@ describe('broadcast routes', () => {
       },
     });
     expect(body.active[0]!.rounds).toEqual([
-      { id: 'RndLV001', name: 'Round 1', slug: 'round-1', startsAt: 1795000000000, finished: true, ongoing: false, url: 'https://lichess.org/broadcast/live-test-open-masters/round-1/RndLV001' },
       { id: 'RndLV002', name: 'Round 2', slug: 'round-2', startsAt: 1795086400000, finished: false, ongoing: true, url: 'https://lichess.org/broadcast/live-test-open-masters/round-2/RndLV002' },
-      { id: 'RndLV003', name: 'Round 3', slug: 'round-3', startsAt: 1795172800000, finished: false, ongoing: false, url: 'https://lichess.org/broadcast/live-test-open-masters/round-3/RndLV003' },
     ]);
-    expect(calls).toEqual([{ url: 'https://lichess.org/api/broadcast?nb=80', auth: 'Bearer lip_testtoken', accept: 'application/x-ndjson' }]);
+    // Between rounds: the latest round with games first (opened by default), then the next one.
+    expect(body.active[1]!.rounds.map(r => [r.id, r.finished, r.ongoing])).toEqual([
+      ['RndNX001', true, false],
+      ['RndNX002', false, false],
+    ]);
+    expect(calls).toEqual([{ url: 'https://lichess.org/api/broadcast/top?page=1', auth: 'Bearer lip_testtoken', accept: 'application/json' }]);
     // Cached for a minute.
     await get('/api/broadcasts');
     expect(calls).toHaveLength(1);
@@ -211,9 +245,18 @@ describe('broadcast routes', () => {
     expect(calls.map(c => c.url)).toEqual(['https://lichess.org/api/broadcast/round/RndLV002.pgn?clocks=true&comments=true']);
   });
 
-  it('answers clean errors: unknown rounds 404, bad ids 400, upstream failures 502', async () => {
+  it('answers clean errors: unknown rounds 404 (remembered a minute), bad ids 400, upstream failures 502', async () => {
+    expect((await get('/api/broadcasts/round/Missing1')).statusCode).toBe(404);
     expect((await get('/api/broadcasts/round/Missing1')).statusCode).toBe(404);
     expect((await get('/api/broadcasts/round/Missing1.pgn')).statusCode).toBe(404);
+    expect((await get('/api/broadcasts/tour/Missing2')).statusCode).toBe(404);
+    expect((await get('/api/broadcasts/tour/Missing2')).statusCode).toBe(404);
+    // Unknown ids reach Lichess once each.
+    expect(calls.map(c => new URL(c.url).pathname)).toEqual([
+      '/api/broadcast/-/-/Missing1',
+      '/api/broadcast/round/Missing1.pgn',
+      '/api/broadcast/Missing2',
+    ]);
     expect((await get('/api/broadcasts/round/not-an-id')).statusCode).toBe(400);
     expect((await get('/api/broadcasts/round/..%2F..%2Fx')).statusCode).toBe(400);
     const broken = await get('/api/broadcasts/round/BrokenJs');
@@ -221,6 +264,61 @@ describe('broadcast routes', () => {
     expect(broken.json().error.code).toBe('upstream_error');
     const down = await get('/api/broadcasts/round/Teapot42');
     expect(down.statusCode).toBe(502);
+  });
+
+  it('turns body failures into 503/502, never 500, and gives up on a stalled body', async () => {
+    const overrides: Record<string, () => Response> = {
+      '/api/broadcast/top': () => brokenBody('{"active":[', 'error'),
+      '/api/broadcast/round/BrokenPg.pgn': () => brokenBody('[Event "x"]\n', 'error'),
+      '/api/broadcast/round/HugePgn1.pgn': () => new Response('x', { headers: { 'content-length': String(9 * 1024 * 1024) } }),
+      '/api/broadcast/-/-/Stalled1': () => brokenBody('{"round":', 'stall'),
+    };
+    const svc = await makeTestApp({ fetch: lichessFake(calls, overrides), env: { LICHESS_TOKEN: 'lip_testtoken' } });
+    const deadline = BROADCAST_LIMITS.deadlineMs;
+    try {
+      const c = createUserSession(svc.db, { username: 'v' }).cookie;
+      const r = (url: string) => svc.app.inject({ url, headers: { cookie: c } });
+      const list = await r('/api/broadcasts');
+      expect(list.statusCode).toBe(503);
+      expect(list.json().error).toMatchObject({ code: 'upstream_unavailable', details: { reason: 'network', host: 'lichess.org' } });
+      expect((await r('/api/broadcasts/round/BrokenPg.pgn')).json().error).toMatchObject({ code: 'upstream_unavailable' });
+      const huge = await r('/api/broadcasts/round/HugePgn1.pgn');
+      expect(huge.statusCode).toBe(502);
+      expect(huge.json().error.message).toMatch(/larger than/);
+      BROADCAST_LIMITS.deadlineMs = 100;
+      const started = Date.now();
+      const stalled = await r('/api/broadcasts/round/Stalled1');
+      expect(stalled.statusCode).toBe(503);
+      expect(stalled.json().error.details.reason).toBe('timeout');
+      expect(Date.now() - started).toBeLessThan(5_000);
+      // Failures are not cached: the next request asks again.
+      const before = calls.length;
+      await r('/api/broadcasts');
+      expect(calls.length).toBe(before + 1);
+    } finally {
+      BROADCAST_LIMITS.deadlineMs = deadline;
+      await svc.close();
+    }
+  });
+
+  it('keeps cache misses within an instance-wide budget per minute', async () => {
+    const budget = BROADCAST_LIMITS.upstreamPerMinute;
+    const svc = await makeTestApp({ fetch: lichessFake(calls), env: { LICHESS_TOKEN: 'lip_testtoken' } });
+    BROADCAST_LIMITS.upstreamPerMinute = 3;
+    try {
+      const c = createUserSession(svc.db, { username: 'v' }).cookie;
+      const r = (url: string) => svc.app.inject({ url, headers: { cookie: c } });
+      for (const id of ['Unknown1', 'Unknown2', 'Unknown3']) expect((await r(`/api/broadcasts/round/${id}`)).statusCode).toBe(404);
+      const over = await r('/api/broadcasts/round/Unknown4');
+      expect(over.statusCode).toBe(503);
+      expect(over.json().error).toMatchObject({ code: 'upstream_unavailable', details: { reason: 'budget', retryAt: expect.any(Number) } });
+      // Cached answers cost nothing.
+      expect((await r('/api/broadcasts/round/Unknown1')).statusCode).toBe(404);
+      expect(calls).toHaveLength(3);
+    } finally {
+      BROADCAST_LIMITS.upstreamPerMinute = budget;
+      await svc.close();
+    }
   });
 
   it('fails with 503 no_token when no Lichess token is configured', async () => {
@@ -249,13 +347,26 @@ describe('broadcast helpers', () => {
     expect(standardLastMove(undefined, 'x')).toBeNull();
   });
 
-  it('dedupes tours and drops broken entries', () => {
-    const res = toBroadcastsResponse([
-      { tour: { id: 'A', name: 'A', slug: 'a' }, rounds: [] },
-      { tour: { id: 'A', name: 'A again', slug: 'a' }, rounds: [] },
-    ]);
-    expect(res.active.map(b => b.tour.name)).toEqual(['A']);
-    expect(res.active[0]!.defaultRoundId).toBeNull();
+  it('maps the top list: dedupes tours, drops broken entries, refuses other shapes', () => {
+    const tour = (id: string) => ({ id, name: id, slug: id.toLowerCase() });
+    const top = parseTop({
+      active: [{ tour: tour('TourAAAA'), round: { id: 'R1', name: 'Round 1', ongoing: true } }, { tour: { name: 'no id' } }, 'junk'],
+      past: {
+        currentPageResults: [
+          { tour: tour('TourAAAA'), round: { id: 'R0', finished: true } },
+          { tour: tour('TourBBBB'), round: null },
+        ],
+        nextPage: null,
+      },
+    });
+    expect(top).not.toBeNull();
+    const res = toBroadcastsResponse(top!);
+    expect(res.active.map(b => [b.tour.id, b.live, b.defaultRoundId])).toEqual([['TourAAAA', true, 'R1']]);
+    expect(res.recent.map(b => [b.tour.id, b.defaultRoundId, b.rounds])).toEqual([['TourBBBB', null, []]]);
+    expect(res.upcoming).toEqual([]);
+    expect(top!.nextPastPage).toBeNull();
+    expect(parseTop([])).toBeNull();
+    expect(parseTop({ tours: [] })).toBeNull();
   });
 
   it('TtlCache drops failures so the next call retries, and stays bounded', async () => {
@@ -271,53 +382,135 @@ describe('broadcast helpers', () => {
     now = 5000;
     expect(await cache.get('k', async () => ++n)).toBe(4); // expired
   });
+
+  it('TtlCache keeps chosen failures (404s) for their own lifetime', async () => {
+    let now = 0;
+    let loads = 0;
+    const cache = new TtlCache<number>(1000, { now: () => now, errorTtlMs: 60_000, cacheError: e => e instanceof Error && e.message === 'Not found' });
+    const missing = () => {
+      loads++;
+      return Promise.reject(notFound());
+    };
+    await expect(cache.get('x', missing)).rejects.toThrow('Not found');
+    now = 30_000;
+    await expect(cache.get('x', missing)).rejects.toThrow('Not found');
+    expect(loads).toBe(1);
+    now = 61_000;
+    await expect(cache.get('x', missing)).rejects.toThrow('Not found');
+    expect(loads).toBe(2);
+  });
+
+  it('RequestBudget allows a number of calls per sliding minute', () => {
+    let now = 0;
+    const budget = new RequestBudget(() => 2, () => now);
+    budget.take();
+    now = 10_000;
+    budget.take();
+    expect(() => budget.take()).toThrow(/Too many broadcast requests/);
+    now = 60_001;
+    budget.take(); // the first call left the window
+    expect(() => budget.take()).toThrow();
+  });
 });
 
 describe('broadcast auto-import', () => {
   let t: TestApp;
   const calls: Call[] = [];
-  const now = 1794500000000; // within a week of every finished round in the fixture
+  const overrides: Record<string, () => Response> = {};
+  // RndNX001 (TourNEXT), RndLV001 (TourLIVE) and RndDN002 (TourDONE) ended within the week before;
+  // RndDN001 eight days before; TourOLD1 and TourOLD2 long ago.
+  const now = 1795300000000;
+  const paths = () => calls.map(c => new URL(c.url).pathname + new URL(c.url).search);
 
   beforeAll(async () => {
-    t = await makeTestApp({ fetch: lichessFake(calls), env: { LICHESS_TOKEN: 'lip_testtoken' } });
+    t = await makeTestApp({ fetch: lichessFake(calls, overrides), env: { LICHESS_TOKEN: 'lip_testtoken' } });
   });
   afterAll(async () => {
     await t.close();
   });
+  afterEach(() => {
+    calls.length = 0;
+    for (const k of Object.keys(overrides)) delete overrides[k];
+  });
 
   const tick = (at = now) => autoImportFinishedRounds({ db: t.db, config: t.config, upstream: t.app.upstream, now: at });
+  const labels = (jobs: Awaited<ReturnType<typeof tick>>) => jobs.map(j => j.label);
 
   it('does nothing unless the admin setting is on', async () => {
     expect(await tick()).toEqual([]);
     expect(calls).toEqual([]);
   });
 
-  it('queues finished rounds of the last week once, at background priority', async () => {
+  it('queues the finished rounds of the last week from active and finished tours, at background priority', async () => {
     writeSettings(t.db, { broadcastAutoImport: true });
     const jobs = await tick(now);
     expect(jobs.map(j => [j.kind, j.lane, j.priority, j.label])).toEqual([
+      ['broadcastRound', 'lichess', -10, 'Broadcast round RndNX001'],
       ['broadcastRound', 'lichess', -10, 'Broadcast round RndLV001'],
-      ['broadcastRound', 'lichess', -10, 'Broadcast round RndDN001'],
       ['broadcastRound', 'lichess', -10, 'Broadcast round RndDN002'],
     ]);
-    expect(calls.map(c => [c.url, c.auth])).toEqual([['https://lichess.org/api/broadcast?nb=60', 'Bearer lip_testtoken']]);
+    // Finished tours are paged until a page has nothing recent; upcoming tours are not looked at.
+    expect(paths()).toEqual([
+      '/api/broadcast/top?page=1',
+      '/api/broadcast/top?page=2',
+      '/api/broadcast/TourNEXT',
+      '/api/broadcast/TourLIVE',
+      '/api/broadcast/TourDONE',
+    ]);
+    expect(calls.every(c => c.auth === 'Bearer lip_testtoken')).toBe(true);
     const dbId = ensureBroadcastDatabase(t.db);
-    expect(JSON.parse(t.db.value<string>('SELECT payload_json FROM jobs WHERE id = ?', [jobs[0]!.id])!)).toEqual({ databaseId: dbId, roundId: 'RndLV001' });
-    // Already queued: not again.
-    expect(await tick(now)).toEqual([]);
-    // Imported rounds are skipped; failed ones wait a day.
+    expect(JSON.parse(t.db.value<string>('SELECT payload_json FROM jobs WHERE id = ?', [jobs[0]!.id])!)).toEqual({ databaseId: dbId, roundId: 'RndNX001' });
+
+    // Nothing changed in the list: only the list is read, nothing is queued twice.
+    calls.length = 0;
+    expect(await tick(now + 60_000)).toEqual([]);
+    expect(paths()).toEqual(['/api/broadcast/top?page=1', '/api/broadcast/top?page=2']);
+  });
+
+  it("re-reads a tour when the list shows a change, e.g. a tour's last round finishing", async () => {
     t.db.run("UPDATE jobs SET status = 'done'");
+    const top = JSON.parse(TOP);
+    const live = JSON.parse(TOUR);
+    // Round 2 of TourLIVE finished: the list moves on to round 3 and links round 2.
+    live.rounds[1] = { ...live.rounds[1], ongoing: undefined, finished: true, finishedAt: now + 1000 };
+    top.active[1].round = live.rounds[2];
+    top.active[1].roundToLink = live.rounds[1];
+    overrides['/api/broadcast/top?page=1'] = () => json(JSON.stringify(top));
+    overrides['/api/broadcast/TourLIVE'] = () => json(JSON.stringify(live));
+    const dbId = ensureBroadcastDatabase(t.db);
     t.db.run(
       `INSERT INTO reference_broadcast_rounds (database_id, round_id, status, games, updated_at)
-       VALUES (?, 'RndLV001', 'imported', 3, ?), (?, 'RndDN001', 'error', 0, ?)`,
-      [dbId, now, dbId, now],
+       VALUES (?, 'RndLV001', 'imported', 3, ?), (?, 'RndNX001', 'error', 0, ?), (?, 'RndDN002', 'partial', 2, ?)`,
+      [dbId, now, dbId, now, dbId, now],
     );
-    expect((await tick(now + 3600_000)).map(j => j.label)).toEqual(['Broadcast round RndDN002']);
+    expect(labels(await tick(now + 2000))).toEqual(['Broadcast round RndLV002']);
+    expect(paths()).toEqual(['/api/broadcast/top?page=1', '/api/broadcast/top?page=2', '/api/broadcast/TourLIVE']);
+
+    // A day later every tour is checked again: the failed round is retried, the partial one redone,
+    // the imported one left alone. RndDN001 ended more than a week ago: left to the monthly dumps.
     t.db.run("UPDATE jobs SET status = 'done'");
-    expect((await tick(now + 25 * 3600_000)).map(j => j.label)).toEqual(['Broadcast round RndDN001', 'Broadcast round RndDN002']);
-    // Rounds older than a week are left to the monthly dumps.
+    calls.length = 0;
+    expect(labels(await tick(now + 25 * 3600_000))).toEqual(['Broadcast round RndNX001', 'Broadcast round RndLV002', 'Broadcast round RndDN002']);
+    expect(paths().filter(p => !p.startsWith('/api/broadcast/top'))).toEqual([
+      '/api/broadcast/TourNEXT',
+      '/api/broadcast/TourLIVE',
+      '/api/broadcast/TourDONE',
+    ]);
+  });
+
+  it('remembers tours that are gone, and stops at the first upstream failure', async () => {
     t.db.run("UPDATE jobs SET status = 'done'");
-    expect(await tick(now + 30 * 86400_000)).toEqual([]);
+    const top = JSON.parse(TOP);
+    top.active[0].round = { ...top.active[0].round, ongoing: true };
+    overrides['/api/broadcast/top?page=1'] = () => json(JSON.stringify(top));
+    overrides['/api/broadcast/TourNEXT'] = () => new Response('{"error":"Not found"}', { status: 404 });
+    expect(await tick(now + 26 * 3600_000)).toEqual([]);
+    calls.length = 0;
+    await tick(now + 26 * 3600_000 + 60_000);
+    expect(paths()).not.toContain('/api/broadcast/TourNEXT');
+
+    overrides['/api/broadcast/top?page=1'] = () => new Response('slow down', { status: 429, headers: { 'retry-after': '60' } });
+    await expect(tick(now + 27 * 3600_000)).rejects.toMatchObject({ reason: 'rate_limited' });
   });
 
   it('skips without a token, and the timer only runs when started', async () => {
@@ -331,17 +524,22 @@ describe('broadcast auto-import', () => {
     } finally {
       await noToken.close();
     }
-    vi.useFakeTimers();
+    const fresh = await makeTestApp({ fetch: lichessFake(calls), env: { LICHESS_TOKEN: 'lip_testtoken' } });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
     try {
+      writeSettings(fresh.db, { broadcastAutoImport: true });
       calls.length = 0;
-      const stop = startBroadcastAutoImport({ db: t.db, config: t.config, upstream: t.app.upstream });
+      const stop = startBroadcastAutoImport({ db: fresh.db, config: fresh.config, upstream: fresh.app.upstream });
       await vi.advanceTimersByTimeAsync(61_000);
-      expect(calls.map(c => c.url)).toEqual(['https://lichess.org/api/broadcast?nb=60']);
+      await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
+      expect(calls[0]!.url).toBe('https://lichess.org/api/broadcast/top?page=1');
       await stop();
+      const n = calls.length;
       await vi.advanceTimersByTimeAsync(3600_000);
-      expect(calls).toHaveLength(1);
+      expect(calls).toHaveLength(n);
     } finally {
       vi.useRealTimers();
+      await fresh.close();
     }
   });
 });

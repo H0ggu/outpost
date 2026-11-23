@@ -121,7 +121,7 @@ export function recordMonth(
   db: Db,
   databaseId: Id,
   month: IsoMonth,
-  r: { ok: true; imported: number; duplicates: number; skipped: number } | { ok: false; error: string },
+  r: { ok: true; imported: number; duplicates: number; skipped: number; corrected?: number } | { ok: false; error: string },
 ): void {
   const now = Date.now();
   if (r.ok) {
@@ -131,7 +131,7 @@ export function recordMonth(
        ON CONFLICT (database_id, month) DO UPDATE SET status = 'imported', games = excluded.games, imported = excluded.imported,
          duplicates = excluded.duplicates, skipped = excluded.skipped, updated_at = excluded.updated_at,
          imported_at = excluded.imported_at, error = NULL`,
-      [databaseId, month, r.imported + r.duplicates, r.imported, r.duplicates, r.skipped, now, now],
+      [databaseId, month, r.imported + r.duplicates + (r.corrected ?? 0), r.imported, r.duplicates, r.skipped, now, now],
     );
   } else {
     db.run(
