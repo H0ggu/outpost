@@ -90,6 +90,14 @@ describe('GET /api/games/:id', () => {
     expect(back.white.name).toBe('alice');
   });
 
+  it('writes stored clock times into the PGN (the Studio shows them)', async () => {
+    const id = insertGame(t.db, testGame({ white: { name: 'alice' }, black: { name: 'bob' }, clocks: [18000, 17990, 17500, 17000, 16000, 15000] })).gameId;
+    const { pgn } = (await get<GameResponse>(t, API_ROUTES.game(id), w.users.admin.cookie)).body;
+    expect(pgn).toContain('1. e4 { [%clk 0:03:00] } 1... e5 { [%clk 0:02:59.9] } 2. Nf3 { [%clk 0:02:55] }');
+    const back = await firstPgnGame(pgn, 1);
+    expect(back.moves).toEqual(RUY);
+  });
+
   it('keeps imported headers and escapes tag values', async () => {
     const { game, pgn } = (await get<GameResponse>(t, API_ROUTES.game(ids.otb!), w.users.owner.cookie)).body;
     expect(game).toMatchObject({

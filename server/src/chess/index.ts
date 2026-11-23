@@ -36,8 +36,10 @@ export {
 export { drawKindOf, isReplayError, replaySan, type Replay, type ReplayError } from './replay.ts';
 export {
   backfillPlayerTitle,
+  clocksText,
   insertGame,
   InvalidGameError,
+  parseClocks,
   pgnSourceKey,
   POSITION_MAX_PLY,
   ratingPoolOf,

@@ -64,6 +64,24 @@ export interface NormalizedGame {
   moves: readonly string[];
   /** Original PGN headers (stored as headers_json), or null. */
   headers: Record<string, string> | null;
+  /**
+   * Time left on the mover's clock after each ply, in centiseconds (null for a ply without one);
+   * omitted or null when unknown. Stored as `games.clocks` (migration 203).
+   */
+  clocks?: ReadonlyArray<number | null> | null;
+}
+
+/** `games.clocks` text of a clock list (null when it holds no clock). */
+export function clocksText(clocks: ReadonlyArray<number | null> | null | undefined, plies: number): string | null {
+  if (!clocks) return null;
+  const kept = clocks.slice(0, plies).map(c => (c !== null && Number.isFinite(c) && c >= 0 ? String(Math.round(c)) : ''));
+  return kept.some(c => c !== '') ? kept.join(',') : null;
+}
+
+/** `games.clocks` → centiseconds per ply (null where a ply has none). */
+export function parseClocks(text: string | null | undefined): Array<number | null> {
+  if (!text) return [];
+  return text.split(',').map(c => (c === '' ? null : Number(c)));
 }
 
 /** `insertGame` rejected the game (illegal or unparsable move). Importers count it as skipped. */
@@ -233,6 +251,13 @@ function writePositions(db: Db, gameId: Id, epds: readonly string[], ucis: reado
 }
 
 /**
+ * The rating a `games` row keeps for a side: as the site reports it in its PGN. Chess.com reports
+ * post-game ratings (`ratingAfter`; the importer derives the owner's pre-game `rating` for
+ * `player_games` only), every other origin pre-game ratings (migration 204).
+ */
+const reportedRating = (origin: GameOrigin, p: NormalizedPlayer): number | null => (origin === 'chesscom' ? (p.ratingAfter ?? p.rating) : p.rating);
+
+/**
  * Stores one game: validates and normalises the moves, classifies the opening, writes `games`,
  * `positions` (plies 0…50) and a `player_games` row for every existing source that played it
  * (matched by kind and key: lichess/chesscom username, `pgn` `<dbId>:<name>`, `fide` id).
@@ -271,8 +296,8 @@ export function insertGame(
         `INSERT INTO games (origin, origin_id, url, database_id, white, black, white_key, black_key,
            white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id, result,
            termination, time_class, time_control, rated, event, round, started_at, ended_at, ply_count,
-           moves_san, eco, opening_name, opening_ply, accuracy_white, accuracy_black, headers_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           moves_san, eco, opening_name, opening_ply, accuracy_white, accuracy_black, headers_json, clocks)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           game.origin,
           game.originId,
@@ -282,8 +307,8 @@ export function insertGame(
           game.black.name,
           facts.white.key,
           facts.black.key,
-          game.white.rating,
-          game.black.rating,
+          reportedRating(game.origin, game.white),
+          reportedRating(game.origin, game.black),
           game.white.title,
           game.black.title,
           game.white.fideId,
@@ -305,6 +330,7 @@ export function insertGame(
           game.white.accuracy,
           game.black.accuracy,
           game.headers ? JSON.stringify(game.headers) : null,
+          clocksText(game.clocks, sans.length),
         ],
       ).lastInsertRowid;
 
@@ -387,6 +413,8 @@ function sourceSideQueries(db: Db, sourceId: Id): SideQuery[] | null {
 function linkRows(db: Db, sourceId: Id, color: Color, rows: readonly GameSideRow[]): number {
   let added = 0;
   for (const r of rows) {
+    // A Chess.com row holds post-game ratings (migration 204): the rating after the game is known.
+    const after = (rating: number | null): number | null => (r.origin === 'chesscom' ? rating : null);
     const facts: GameFacts = {
       origin: r.origin,
       databaseId: r.database_id,
@@ -395,8 +423,8 @@ function linkRows(db: Db, sourceId: Id, color: Color, rows: readonly GameSideRow
       timeClass: r.time_class,
       rated: r.rated === 1,
       ratingPool: ratingPoolOf({ origin: r.origin, timeClass: r.time_class, timeControl: r.time_control, url: r.url }),
-      white: { name: r.white, key: r.white_key, rating: r.white_rating, ratingAfter: null, title: r.white_title, fideId: r.white_fide_id },
-      black: { name: r.black, key: r.black_key, rating: r.black_rating, ratingAfter: null, title: r.black_title, fideId: r.black_fide_id },
+      white: { name: r.white, key: r.white_key, rating: r.white_rating, ratingAfter: after(r.white_rating), title: r.white_title, fideId: r.white_fide_id },
+      black: { name: r.black, key: r.black_key, rating: r.black_rating, ratingAfter: after(r.black_rating), title: r.black_title, fideId: r.black_fide_id },
     };
     if (writePlayerGame(db, sourceId, r.id, color, facts)) added++;
   }

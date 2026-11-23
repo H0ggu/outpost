@@ -11,7 +11,7 @@
  */
 import { createHash } from 'node:crypto';
 import { Chess } from 'chessops/chess';
-import { PgnParser, parseVariant, startingPosition, type Game, type PgnNodeData } from 'chessops/pgn';
+import { parseComment, PgnParser, parseVariant, startingPosition, type Game, type PgnNodeData } from 'chessops/pgn';
 import { makeSanAndPlay, parseSan } from 'chessops/san';
 import type { Id } from '@outpost/shared/api';
 import {
@@ -59,6 +59,26 @@ export async function* parsePgnGames(input: string | AsyncIterable<string | Uint
   }
   parser.parse(decoder.decode());
   yield* drain();
+}
+
+/**
+ * Clock times of the mainline from `[%clk h:mm:ss(.f)]` comments: the time left after each ply,
+ * in centiseconds (null for a ply without one), or null when no ply has one.
+ */
+export function mainlineClocks(game: PgnGame): Array<number | null> | null {
+  const out: Array<number | null> = [];
+  let any = false;
+  for (const node of game.moves.mainline()) {
+    let clock: number | null = null;
+    for (const c of node.comments ?? []) {
+      if (!c.includes('%clk')) continue;
+      const secs = parseComment(c).clock;
+      if (secs !== undefined && Number.isFinite(secs) && secs >= 0) clock = Math.round(secs * 100);
+    }
+    if (clock !== null) any = true;
+    out.push(clock);
+  }
+  return any ? out : null;
 }
 
 /** Why a PGN game was not imported (importers count these in `JobProgress.counts`). */
@@ -277,5 +297,7 @@ export function pgnToNormalizedGame(
     endedAt: end !== null && (at === null || end >= at) ? end : at,
     moves,
     headers: storedTags(game.headers),
+    // User databases keep clock times (the Studio shows them); reference databases don't (size).
+    clocks: ctx.origin === 'pgn' ? mainlineClocks(game) : null,
   };
 }

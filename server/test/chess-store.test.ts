@@ -4,6 +4,7 @@ import { parseFen } from 'chessops/fen';
 import { parseSan } from 'chessops/san';
 import {
   backfillPlayerTitle,
+  clocksText,
   drawKindOf,
   getOpeningBook,
   insertGame,
@@ -12,6 +13,7 @@ import {
   MAX_STORED_TAGS,
   MAX_TAG_VALUE_LENGTH,
   openingAt,
+  parseClocks,
   parsePgnGames,
   pgnDateTime,
   pgnSourceKey,
@@ -262,6 +264,17 @@ describe('PGN refinements', () => {
       terminationFromTag(tag, false);
       expect(performance.now() - t0).toBeLessThan(50);
     }
+  });
+
+  it('keeps clock times of user-database games (not of reference games) and writes them back', async () => {
+    const text = `[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 { [%clk 0:03:00] } e5 { [%clk 0:02:59.5] } 2. Nf3 1-0\n`;
+    const g = await norm(text);
+    expect(g.clocks).toEqual([18000, 17950, null]);
+    const ref = pgnToNormalizedGame(await one(text), { origin: 'reference', databaseId: 1 });
+    expect('skip' in ref ? ref : ref.clocks).toBeNull();
+    expect(clocksText(g.clocks, 3)).toBe('18000,17950,');
+    expect(parseClocks('18000,17950,')).toEqual([18000, 17950, null]);
+    expect(clocksText([null, null], 2)).toBeNull();
   });
 
   it('bounds the tags it stores and reads', async () => {

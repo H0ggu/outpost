@@ -120,7 +120,7 @@ Migrations at integration (2026-11-23), applied in number order on a fresh datab
 later rebuild of `games` must recreate them), `500_databases_files`, `501_sources_autoincrement`,
 `503_files_quota`, `600_reference`, `601_reference_fide_dedupe` (the one FIDE rule: `fide` sources
 link reference games only, one copy per game; decision 1). There is no `502` (merged into `601`).
-Added after the review: `202_player_games_rating_pool` (UltraBullet's rating pool, DECISIONS R5), `602_reference_private_fide` (FIDE sources link public reference databases only, DECISIONS R2).
+Added after the review: `202_player_games_rating_pool` (UltraBullet's rating pool, DECISIONS R5), `203_games_clocks`, `204_chesscom_reported_ratings` (R6), `602_reference_private_fide` (FIDE sources link public reference databases only, DECISIONS R2).
 
 - **users** `(id, username UNIQUE COLLATE NOCASE, password_hash, role 'admin'|'user', disabled, totp_secret, created_at, prefs_json)`
 - **sessions** `(id_hash PK, user_id, created_at, expires_at, last_seen_at, ip, user_agent)`
@@ -131,7 +131,9 @@ Added after the review: `202_player_games_rating_pool` (UltraBullet's rating poo
 - **profile_sources** `(profile_id, source_id, hidden, PRIMARY KEY(profile_id, source_id))`
 - **bookmarks** `(user_id, profile_id, created_at, PK(user_id, profile_id))`
 - **games**: one row per distinct game.
-  - Columns: `(id, origin 'lichess'|'chesscom'|'pgn'|'reference', origin_id, url, database_id NULL, white, black, white_key, black_key, white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id, result '1-0'|'0-1'|'1/2-1/2', termination, time_class, time_control, rated, variant, event, round, started_at, ended_at, ply_count, moves_san, eco, opening_name, opening_ply, accuracy_white, accuracy_black, headers_json, UNIQUE(origin, origin_id))`
+  - Columns: `(id, origin 'lichess'|'chesscom'|'pgn'|'reference', origin_id, url, database_id NULL, white, black, white_key, black_key, white_rating, black_rating, white_title, black_title, white_fide_id, black_fide_id, result '1-0'|'0-1'|'1/2-1/2', termination, time_class, time_control, rated, variant, event, round, started_at, ended_at, ply_count, moves_san, eco, opening_name, opening_ply, accuracy_white, accuracy_black, headers_json, clocks, UNIQUE(origin, origin_id))`
+  - `clocks` (migration `203`): the time left after each ply in centiseconds, for Lichess, Chess.com and user PGN-database games (not reference games); the PGN writers emit it as `[%clk]` comments.
+  - `white_rating` / `black_rating` are as the site reports them: pre-game, except Chess.com's post-game ratings (migration `204`; `player_games.rating` keeps the derived pre-game value).
   - `termination` is one of `mate|resign|timeout|abandon|agreement|repetition|stalemate|insufficient|fifty|timeout_vs_insufficient|other`.
   - `time_class` is one of `bullet|blitz|rapid|classical|correspondence|unknown`.
   - Only standard chess is stored: no variants, no games against engines, no from-position games.
@@ -307,7 +309,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
   On a 429, back off 60 s or more, with exponential backoff on 5xx. Jobs left `running` at startup go back to `queued`. Every job stores progress for the UI.
   All upstream calls (jobs and routes alike) go through one client, `app.upstream` (`server/src/http/upstream.ts`): User-Agent, token injection for Lichess hosts only, a per-host 429 cool-down shared by every module, and timeouts. Workers and schedulers start only when `config.startWorkers`.
 - **Lichess.**
-  1. Stream `GET /api/games/user/{u}` as NDJSON with `Accept: application/x-ndjson` and the token. Parameters: `since=<last createdAt+1>`, `sort=dateAsc`, `opening=true`, `accuracy=true`, `perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence`.
+  1. Stream `GET /api/games/user/{u}` as NDJSON with `Accept: application/x-ndjson` and the token. Parameters: `since=<last createdAt+1>`, `sort=dateAsc`, `opening=true`, `accuracy=true`, `clocks=true`, `perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence`.
   2. Skip games that are a variant, `fromPosition`, against AI, or anonymous.
   3. UltraBullet counts as bullet (filters, W/D/L, openings), but its ratings are another pool and stay out of the bullet rating views (`player_games.rating_pool`, DECISIONS R5).
   4. Ratings are stored pre-game; `rating_after = rating + ratingDiff`.
@@ -315,8 +317,9 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 - **Chess.com.**
   1. Fetch `/pub/player/{u}` and `/stats`, then `/games/archives`, then each month in order. Lowercase the username; zero-pad `MM`.
   2. Revalidate months with ETag `If-None-Match`; always re-poll the current and previous month.
-  3. Keep only `rules=='chess'`. Use the `time_class` field as given (daily counts as correspondence). Ratings are **post-game**: `rating_after` = rating; `rating` = previous rating in the same class if known, otherwise the same value.
-  4. Parse moves from the PGN with chessops. Result codes map per the research notes.
+  3. Keep only `rules=='chess'`. Use the `time_class` field as given (daily counts as correspondence). Ratings are **post-game**: `rating_after` = rating; `rating` = previous rating in the same class if known, otherwise the same value (only from the month just read or the stored games, never across a month that was not read). The game row keeps both sides' ratings as Chess.com reports them, and `player_games.opp_rating` is the opponent's post-game rating (the archive has no pre-game one).
+  4. Parse moves and clock times (`[%clk]`) from the PGN with chessops. Result codes map per the research notes.
+  5. The event is the tournament's name from the PGN `Tournament` URL ("Bullet Brawl November 21 2026"), else the PGN `Event` ("Live Chess").
 - **After inserting games:**
   1. Classify the opening: the deepest ply among the first 40 whose EPD matches lichess chess-openings.
   2. Write `positions` (50 plies) and `player_games` (one row per source that appears in the game). `fide` sources only link reference-database games, one copy per game across reference databases (migration `601`, decision 1), so a FIDE profile never shows a user's PGN database.
