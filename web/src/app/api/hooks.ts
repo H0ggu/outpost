@@ -90,21 +90,33 @@ export interface EndpointNeeds {
  *   queryFn: async ({ client, signal }) => { await precheck(client, { audience: 'user' }); return api.get(…); }
  */
 export async function precheck(client: QueryClient, needs: EndpointNeeds): Promise<void> {
-  let s: SessionInfo;
+  const denied = (s: SessionInfo): ApiError | null => {
+    if (needs.audience && !s.user && !(needs.audience === 'viewer' && s.anonymousBrowsing)) {
+      return new ApiError(401, 'unauthorized', 'Sign in required');
+    }
+    if (needs.lichessToken && s.hasLichessToken === false) {
+      return new ApiError(503, 'upstream_unavailable', 'A Lichess API token is required: set LICHESS_TOKEN or add one in the admin settings', {
+        reason: 'no_token',
+      });
+    }
+    return null;
+  };
+  let error: ApiError | null;
   try {
-    s = await client.ensureQueryData(sessionQuery);
+    error = denied(await client.ensureQueryData(sessionQuery));
+    // A "no" from a session read a while ago (signed in, or a token added, in another tab since)
+    // is checked once more before it is believed.
+    if (error && Date.now() - (client.getQueryState(queryKeys.session)?.dataUpdatedAt ?? 0) > PRECHECK_FRESH_MS) {
+      error = denied(await client.fetchQuery({ ...sessionQuery, staleTime: 0 }));
+    }
   } catch {
     return;
   }
-  if (needs.audience && !s.user && !(needs.audience === 'viewer' && s.anonymousBrowsing)) {
-    throw new ApiError(401, 'unauthorized', 'Sign in required');
-  }
-  if (needs.lichessToken && s.hasLichessToken === false) {
-    throw new ApiError(503, 'upstream_unavailable', 'A Lichess API token is required: set LICHESS_TOKEN or add one in the admin settings', {
-      reason: 'no_token',
-    });
-  }
+  if (error) throw error;
 }
+
+/** How old a session may be for `precheck` to refuse a request on its word alone. */
+const PRECHECK_FRESH_MS = 30_000;
 
 /** `POST /api/logout`, then refetch the session and drop cached data. */
 export function useLogout() {

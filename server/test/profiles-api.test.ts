@@ -147,6 +147,11 @@ describe('profiles API', () => {
     const taken = await req(owner, 'POST', '/api/profiles', { displayName: 'X', slug: 'same-name', sources: [{ kind: 'lichess', key: 'bob' }] });
     expect(taken.statusCode).toBe(409);
     expect(taken.json().error.code).toBe('conflict');
+    // A taken address is refused before any account is checked upstream.
+    up.calls.length = 0;
+    const takenNew = await req(owner, 'POST', '/api/profiles', { displayName: 'X', slug: 'same-name', sources: [{ kind: 'lichess', key: 'neverchecked' }] });
+    expect(takenNew.statusCode).toBe(409);
+    expect(up.calls).toEqual([]);
     const bad = await req(owner, 'POST', '/api/profiles', { displayName: 'X', slug: 'Bad Slug', sources: [{ kind: 'lichess', key: 'bob' }] });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error.code).toBe('validation');

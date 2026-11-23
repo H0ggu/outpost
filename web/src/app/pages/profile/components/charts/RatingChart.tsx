@@ -67,6 +67,12 @@ export function spacedTicks(ticks: readonly Date[], pos: (t: Date) => number, la
   return kept;
 }
 
+/** A centred x label that would stick out of the chart is anchored at its edge instead (not cut off). */
+export function edgeAnchor(x: number, label: string, width: number): 'start' | 'middle' | 'end' {
+  const half = labelWidth(label) / 2;
+  return x - half < 0 ? 'start' : x + half > width ? 'end' : 'middle';
+}
+
 /** A responsive rating chart. */
 export function RatingChart({ series, height = 300, xDomain, timeZone, title, compact = false }: RatingChartProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -173,7 +179,7 @@ export function RatingChart({ series, height = 300, xDomain, timeZone, title, co
         ))}
         <line className="chart-baseline" x1={m.left} x2={m.left + innerW} y1={height - m.bottom} y2={height - m.bottom} />
         {xTicks.map(t => (
-          <text key={t.getTime()} className="chart-axis-text" x={x(t)} y={height - 6} textAnchor="middle">
+          <text key={t.getTime()} className="chart-axis-text" x={x(t)} y={height - 6} textAnchor={edgeAnchor(x(t), xFmt(t), width)}>
             {xFmt(t)}
           </text>
         ))}

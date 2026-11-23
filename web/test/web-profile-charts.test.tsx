@@ -6,7 +6,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { scaleTime, scaleUtc } from 'd3-scale';
 import { browserTimeZone } from '../src/app/api/hooks.ts';
-import { spacedTicks } from '../src/app/pages/profile/components/charts/RatingChart.tsx';
+import { edgeAnchor, spacedTicks } from '../src/app/pages/profile/components/charts/RatingChart.tsx';
 import { activity, CHESSCOM_ID, LICHESS_ID, profileHeader, worldMap } from './web-profile-fixtures.ts';
 import { renderProfile, searchOf } from './web-profile-render.tsx';
 
@@ -329,6 +329,10 @@ describe('rating chart axis', () => {
       const gap = x(kept[i]!) - x(kept[i - 1]!);
       expect(gap).toBeGreaterThanOrEqual((fmt(kept[i]!).length * 6.5 + 6 + fmt(kept[i - 1]!).length * 6.5 + 6) / 2);
     }
+    // The last label of a full-width axis ends at the chart's edge instead of being cut off.
+    expect(edgeAnchor(1186, 'Mon 23', 1200)).toBe('end');
+    expect(edgeAnchor(10, 'Sat 24', 1200)).toBe('start');
+    expect(edgeAnchor(600, 'November', 1200)).toBe('middle');
     // Ticks that already fit are all kept.
     const wide = scaleUtc().domain([Date.UTC(2025, 0, 1), Date.UTC(2026, 0, 1)]).range([0, 1100]);
     expect(spacedTicks(wide.ticks(12), wide, wide.tickFormat(), true)).toHaveLength(wide.ticks(12).length);

@@ -475,10 +475,11 @@ function startSources(db: Db, settings: InstanceSettings, viewer: AuthUser, atta
 /** `POST /api/profiles`: validates the accounts, creates the profile and queues the first syncs. */
 export async function createProfile(ctx: ProfilesCtx, viewer: AuthUser, body: CreateProfileRequest): Promise<ViewableProfile> {
   const { db } = ctx;
+  const slugTaken = () => body.slug !== undefined && db.value('SELECT 1 FROM profiles WHERE slug = ?', [body.slug]) !== undefined;
+  // A taken address is refused before the accounts are checked upstream (Lichess, Chess.com, FIDE).
+  if (slugTaken()) throw conflict(`The address "${body.slug}" is taken`, { field: 'slug' });
   const resolved = await resolveAll(ctx, viewer, body.sources);
-  if (body.slug !== undefined && db.value('SELECT 1 FROM profiles WHERE slug = ?', [body.slug]) !== undefined) {
-    throw conflict(`The address "${body.slug}" is taken`, { field: 'slug' });
-  }
+  if (slugTaken()) throw conflict(`The address "${body.slug}" is taken`, { field: 'slug' });
   const now = Date.now();
   const { profileId, attached } = db.tx(() => {
     const slug = body.slug ?? uniqueSlug(db, slugify(body.displayName));
