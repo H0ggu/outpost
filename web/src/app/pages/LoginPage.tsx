@@ -5,7 +5,7 @@
  * `?next=` (same-origin paths only; the Studio gets a full page load) or home.
  */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, Navigate, useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import type { SessionInfo } from '@outpost/shared/api';
 import { ApiError } from '../api/client.ts';
 import { useSession } from '../api/hooks.ts';
@@ -13,7 +13,7 @@ import { Button, ErrorBox, licon, Spinner } from '../components/index.ts';
 import { paths } from '../paths.ts';
 import { useLogin } from './account-hooks.ts';
 import { Flash, formErrors, PasswordField, TextField } from './components/account/forms.tsx';
-import { AuthCard, safeNext, useGoTo } from './components/account/misc.tsx';
+import { AuthCard, GoTo, safeNext, useGoTo } from './components/account/misc.tsx';
 
 export default function LoginPage() {
   const session = useSession();
@@ -28,7 +28,7 @@ export default function LoginPage() {
       </AuthCard>
     );
   }
-  if (session.data.user) return <Navigate to={next} replace />;
+  if (session.data.user) return <GoTo to={next} />;
   return <LoginForm info={session.data} next={next} />;
 }
 

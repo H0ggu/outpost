@@ -871,8 +871,8 @@ html[data-theme='black'] .acc-dialog {
 }
 
 .acc-rowmenu__menu {
-  top: calc(100% + 2px);
   min-width: 13rem;
+  max-width: calc(100vw - 16px);
   text-align: left;
 }
 

@@ -66,28 +66,58 @@ export interface RowAction {
   title?: string;
 }
 
-/** A "…" button opening a small menu of row actions (keeps tables narrow on phones). */
+/**
+ * A gear button opening a small menu of row actions (keeps tables narrow on phones). The menu is
+ * positioned against the viewport (`position: fixed`), so a table's scroll container cannot clip
+ * it; it opens upwards when there is no room below, follows its button on scroll and resize, and
+ * closes on Escape or a click elsewhere.
+ */
 export function RowMenu({ label, actions }: { label: string; actions: readonly RowAction[] }) {
-  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const open = pos !== null;
+
+  const place = () => {
+    const el = toggleRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const right = Math.max(8, window.innerWidth - r.right);
+    const roomBelow = window.innerHeight - r.bottom;
+    setPos(roomBelow < 40 * actions.length + 24 && r.top > roomBelow ? { bottom: window.innerHeight - r.top + 2, right } : { top: r.bottom + 2, right });
+  };
+
   useEffect(() => {
     if (!open) return;
+    const close = () => setPos(null);
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        close();
+        toggleRef.current?.focus();
+      }
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
     };
+    // `place` only reads refs and props that do not change while open.
   }, [open]);
+
+  const toggle = () => (open ? setPos(null) : place());
+
   return (
     <div className="acc-rowmenu" ref={ref}>
       <button
+        ref={toggleRef}
         type="button"
         className="acc-rowmenu__toggle"
         aria-haspopup="menu"
@@ -95,10 +125,10 @@ export function RowMenu({ label, actions }: { label: string; actions: readonly R
         aria-label={label}
         title={label}
         data-icon={licon.Gear}
-        onClick={() => setOpen(o => !o)}
+        onClick={toggle}
       />
-      {open && (
-        <div className="dropdown acc-rowmenu__menu" role="menu">
+      {pos && (
+        <div className="dropdown acc-rowmenu__menu" role="menu" style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, right: pos.right }}>
           {actions.map(a => (
             <button
               key={a.label}
@@ -109,7 +139,7 @@ export function RowMenu({ label, actions }: { label: string; actions: readonly R
               disabled={a.disabled}
               title={a.title}
               onClick={() => {
-                setOpen(false);
+                setPos(null);
                 a.onSelect();
               }}
             >
@@ -166,4 +196,12 @@ export function useGoTo(): (to: string) => void {
     if (/^\/studio(\/|\?|$)/.test(to)) window.location.assign(to);
     else navigate(to, { replace: true });
   };
+}
+
+/** Goes to `to` once rendered (a full page load for the Studio, see `useGoTo`). */
+export function GoTo({ to }: { to: string }) {
+  const goTo = useGoTo();
+  // Once per target; `goTo` is a new function on every render.
+  useEffect(() => goTo(to), [to]);
+  return null;
 }
