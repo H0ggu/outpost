@@ -3,7 +3,7 @@
  * endpoint hooks only these pages use, and small UI helpers (clock, element size, URL params).
  * Query keys live under the existing `queryKeys.profile(slug)` prefix (docs/CONVENTIONS.md).
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router';
 import {
@@ -11,6 +11,8 @@ import {
   type AddSourceRequest,
   type BookmarkResponse,
   type DatabasesResponse,
+  type EventsQuery,
+  type EventsResponse,
   type GameResponse,
   type Id,
   type OkResponse,
@@ -23,7 +25,7 @@ import {
 } from '@outpost/shared/api';
 import { statsQuery } from '@outpost/shared/filters';
 import { api } from '../../api/client.ts';
-import { queryKeys } from '../../api/hooks.ts';
+import { queryKeys, useDebouncedValue } from '../../api/hooks.ts';
 
 // ---------------------------------------------------------------------------
 // Layout → tab context
@@ -179,6 +181,25 @@ export function useOpponentNames(slug: string, enabled: boolean): string[] {
     staleTime: 5 * 60_000,
   });
   return useMemo(() => [...new Set(q.data?.rows.map(r => r.name) ?? [])], [q.data]);
+}
+
+/**
+ * Event names for the event filter's suggestions (`GET /api/profiles/:slug/events?q=`, decision
+ * 35): the profile's most played events containing the typed text, prefix matches first. `text`
+ * is null until the field is used; requests follow the typing after a short pause, and the
+ * previous list stays up while the next one loads.
+ */
+export function useEventNames(slug: string, text: string | null): string[] {
+  const q = useDebouncedValue((text ?? '').trim().slice(0, 200), 250);
+  const res = useQuery({
+    queryKey: [...queryKeys.profile(slug), 'events', q],
+    queryFn: ({ signal }) =>
+      api.get<EventsResponse>(API_ROUTES.stats.events(slug), (q ? { q } : {}) satisfies EventsQuery, signal),
+    enabled: text !== null,
+    staleTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
+  });
+  return useMemo(() => res.data?.events.map(e => e.name) ?? [], [res.data]);
 }
 
 /** `GET /api/databases` (to attach a PGN-database player as a source). */

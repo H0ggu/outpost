@@ -13,7 +13,7 @@ import { OPP_STRENGTHS, PERIODS, type OppStrength, type Period, type ProfileFilt
 import { useUrlFilters } from '../../../api/hooks.ts';
 import { licon, TIME_CLASS_ICONS, TIME_CLASS_LABELS } from '../../../components/index.ts';
 import { fmtLine, OPP_LABELS, OUTCOME_PLURAL, parseMovesInput, PERIOD_LABELS } from '../format.ts';
-import { useOpponentNames } from '../hooks.ts';
+import { useEventNames, useOpponentNames } from '../hooks.ts';
 import { Segmented, SelectField, SiteIcon, ToggleChip } from './bits.tsx';
 
 const PERIOD_SHORT: Readonly<Record<Period, string>> = {
@@ -63,7 +63,8 @@ export function describeFilters(f: ProfileFilters, header?: Pick<ProfileHeader, 
 
 /**
  * A text filter that commits on Enter, on blur, or after a short pause. `suggestions` feed a
- * `<datalist>`; `onFocus` lets the caller load them only when the field is used.
+ * `<datalist>`; `onFocus` lets the caller load them only when the field is used, and `onType`
+ * reports the text as it is typed (for suggestions that follow it).
  */
 function TextFilter({
   label,
@@ -72,13 +73,15 @@ function TextFilter({
   onCommit,
   suggestions,
   onFocus,
+  onType,
 }: {
   label: string;
   placeholder: string;
   value: string | undefined;
   onCommit: (v: string | undefined) => void;
   suggestions?: readonly string[];
-  onFocus?: () => void;
+  onFocus?: (text: string) => void;
+  onType?: (text: string) => void;
 }) {
   const id = useId();
   const listId = `${id}-list`;
@@ -116,8 +119,11 @@ function TextFilter({
           autoComplete="off"
           spellCheck={false}
           list={suggestions?.length ? listId : undefined}
-          onFocus={onFocus}
-          onChange={e => setText(e.target.value)}
+          onFocus={onFocus ? e => onFocus(e.target.value) : undefined}
+          onChange={e => {
+            setText(e.target.value);
+            onType?.(e.target.value);
+          }}
           onBlur={() => commit(text)}
           onKeyDown={e => {
             if (e.key === 'Enter') commit(text);
@@ -243,6 +249,9 @@ export function FiltersBar({ header, hideColor = false }: { header: ProfileHeade
   const [customPending, setCustomPending] = useState(false);
   const [wantNames, setWantNames] = useState(false);
   const opponentNames = useOpponentNames(header.slug, wantNames);
+  /** What the event field holds while it is used (null before): its suggestions follow it. */
+  const [eventText, setEventText] = useState<string | null>(null);
+  const eventNames = useEventNames(header.slug, eventText);
   const hasDates = !!(filters.from || filters.to);
   useEffect(() => {
     if (hasDates) setCustomPending(false);
@@ -433,7 +442,15 @@ export function FiltersBar({ header, hideColor = false }: { header: ProfileHeade
             suggestions={opponentNames}
             onFocus={() => setWantNames(true)}
           />
-          <TextFilter label="Event" placeholder="Tournament" value={filters.event} onCommit={v => set({ event: v })} />
+          <TextFilter
+            label="Event"
+            placeholder="Tournament"
+            value={filters.event}
+            onCommit={v => set({ event: v })}
+            suggestions={eventNames}
+            onFocus={setEventText}
+            onType={setEventText}
+          />
           <LineFilter line={filters.line} onChange={line => set({ line })} />
         </div>
       </div>

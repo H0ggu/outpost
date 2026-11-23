@@ -5,7 +5,6 @@
  * top-level prefixes so a whole area can be invalidated at once (`['databases']`, `['prep']`, …).
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
 import {
   API_ROUTES,
   type BookmarkResponse,
@@ -86,15 +85,8 @@ export function forgetQueries(qc: QueryClient, queryKey: QueryKey): void {
   });
 }
 
-/** `value`, updated only after it has been stable for `ms` (debounced search boxes). */
-export function useDebouncedValue<T>(value: T, ms = 300): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return debounced;
-}
+/** Promoted to the kit (`api/hooks.ts`) at integration; re-exported for the library pages. */
+export { useDebouncedValue } from '../api/hooks.ts';
 
 /** Everything that lists profiles (lists, search, bookmarks, one header) after a profile changed. */
 function invalidateProfileLists(qc: QueryClient, slug?: string): Promise<unknown> {

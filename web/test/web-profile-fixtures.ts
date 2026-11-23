@@ -13,6 +13,7 @@ import type {
   BehaviourRow,
   BehaviourStats,
   DatabasesResponse,
+  EventsResponse,
   GameResponse,
   GameRow,
   GamesPage,
@@ -316,6 +317,17 @@ export function openings(f: ProfileFilters, q: URLSearchParams): OpeningsRespons
   };
 }
 
+/** `GET …/events?q=`: distinct events of every game (no filters), prefix matches first, then most played. */
+export function events(q: string): EventsResponse {
+  const needle = q.trim().toLowerCase();
+  const counts = new Map<string, number>();
+  for (const g of ALL_GAMES) if (g.event && g.event.toLowerCase().includes(needle)) counts.set(g.event, (counts.get(g.event) ?? 0) + 1);
+  const rows = [...counts].map(([name, games]) => ({ name, games }));
+  const prefix = (n: string) => (n.toLowerCase().startsWith(needle) ? 0 : 1);
+  rows.sort((a, b) => prefix(a.name) - prefix(b.name) || b.games - a.games || a.name.localeCompare(b.name));
+  return { events: rows.slice(0, 20) };
+}
+
 export function opponents(f: ProfileFilters, q: URLSearchParams): OpponentsPage {
   const games = filterGames(f);
   const page = Number(q.get('page') ?? 1);
@@ -611,6 +623,8 @@ export function mockApi(method: string, rawUrl: string, body: unknown, opts: Moc
       return json(patched(opts, 'activity', activity(f, url.searchParams.get('tz') ?? 'UTC'), f));
     case 'GET rating':
       return json(patched(opts, 'rating', ratingStats(f), f));
+    case 'GET events':
+      return json(events(url.searchParams.get('q') ?? ''));
     default: {
       const src = /^sources\/(\d+)$/.exec(rest);
       if (src && method === 'DELETE') return json({ ...header, sources: header.sources.filter(s => s.id !== Number(src[1])) });

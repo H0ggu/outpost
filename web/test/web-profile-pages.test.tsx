@@ -253,6 +253,28 @@ describe('opponent name suggestions', () => {
   });
 });
 
+describe('event name suggestions (decision 35)', () => {
+  it('suggests the profile’s events matching what is typed', async () => {
+    const { requests } = renderProfile(`${SLUG}/games`);
+    fireEvent.click(await screen.findByRole('button', { name: /More filters/ }));
+    const input = screen.getByLabelText('Event') as HTMLInputElement;
+    expect(requests(api('events')).length).toBe(0);
+    // Focus loads the most played events (no q, no filters).
+    fireEvent.focus(input);
+    await waitFor(() => expect(requests(api('events')).length).toBe(1));
+    expect(requests(api('events'))[0]!.url.search).toBe('');
+    await waitFor(() => expect(input.getAttribute('list')).toBeTruthy());
+    const list = () => document.getElementById(input.getAttribute('list')!)!;
+    expect(list().tagName).toBe('DATALIST');
+    expect([...list().querySelectorAll('option')].map(o => o.getAttribute('value'))).toEqual(['Titled Arena']);
+    // Typing asks again (debounced) with the text; the filters never travel along.
+    fireEvent.change(input, { target: { value: 'tit' } });
+    await waitFor(() => expect(requests(api('events')).at(-1)!.url.searchParams.get('q')).toBe('tit'));
+    expect([...requests(api('events')).at(-1)!.url.searchParams.keys()]).toEqual(['q']);
+    expect(list().querySelector('option')!.getAttribute('value')).toBe('Titled Arena');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Explorer
 // ---------------------------------------------------------------------------

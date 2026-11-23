@@ -4,7 +4,7 @@
  * a key from `queryKeys`, `api.get` with the abort signal, contract types.
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import {
   API_ROUTES,
@@ -235,4 +235,14 @@ export function useUrlFilters(): [ProfileFilters, (next: ProfileFilters, opts?: 
     [setParams],
   );
   return [filters, setFilters];
+}
+
+/** `value`, updated only after it has been stable for `ms` (debounced search boxes, suggestions). */
+export function useDebouncedValue<T>(value: T, ms = 300): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return debounced;
 }
