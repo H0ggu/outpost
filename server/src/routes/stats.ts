@@ -1,4 +1,40 @@
-import type { FastifyPluginAsync } from 'fastify';
+import { Readable } from 'node:stream';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { z } from 'zod';
+import {
+  API_ROUTES,
+  type ActivityStats,
+  type BehaviourStats,
+  type GamesPage,
+  type OpeningsResponse,
+  type OpponentsPage,
+  type OverviewStats,
+  type RatingStats,
+  type WorldMapStats,
+} from '@outpost/shared/api';
+import { requireViewer } from '../auth/session.ts';
+import { getOpeningBook } from '../chess/openings.ts';
+import { validationError } from '../http/errors.ts';
+import { pageQuery, parseFiltersQuery, parseParams, parseQuery, slugParams } from '../http/validate.ts';
+import { loadProfileForViewer, type ViewableProfile } from '../profiles/access.ts';
+import {
+  activityStats,
+  behaviourStats,
+  GAMES_MAX_PAGE_SIZE,
+  GAMES_PAGE_SIZE,
+  gamesPage,
+  OPENINGS_MAX_MOVES,
+  openingsStats,
+  OPPONENTS_MAX_PAGE_SIZE,
+  OPPONENTS_PAGE_SIZE,
+  opponentsPage,
+  overviewStats,
+  prepareProfilePgnExport,
+  ratingStats,
+  resolveTimeZone,
+  worldMapStats,
+  type StatsScope,
+} from '../stats/index.ts';
 
 /**
  * Stats routes — PLAN §6 "Stats" (every endpoint takes the ProfileFilters query), §4 player_games.
@@ -6,7 +42,8 @@ import type { FastifyPluginAsync } from 'fastify';
  * Endpoints (request/response types in @outpost/shared/api):
  *   - GET /api/profiles/:slug/overview (OverviewStats)
  *   - GET /api/profiles/:slug/games (GamesQuery → GamesPage, pageSize 20)
- *   - GET /api/profiles/:slug/games.pgn (streamed application/x-chess-pgn, max 10,000 games, names normalised)
+ *   - GET /api/profiles/:slug/games.pgn (streamed application/x-chess-pgn, max 10,000 games, the
+ *     profile's side named after the profile; `X-Outpost-Total` / `X-Outpost-Exported` headers)
  *   - GET /api/profiles/:slug/openings (OpeningsQuery → OpeningsResponse)
  *   - GET /api/profiles/:slug/opponents (OpponentsQuery → OpponentsPage)
  *   - GET /api/profiles/:slug/behaviour (BehaviourStats)
@@ -14,20 +51,110 @@ import type { FastifyPluginAsync } from 'fastify';
  *   - GET /api/profiles/:slug/activity (ActivityQuery → ActivityStats)
  *   - GET /api/profiles/:slug/rating (RatingQuery → RatingStats)
  *
- * Use { preHandler: requireViewer } plus loadProfileForViewer (src/profiles/access.ts: 404 for private profiles of
- * others, visible source ids); parse filters with parseFiltersQuery (src/http/validate.ts) and turn them into SQL with
- * playerGamesWhere (src/stats/filterSql.ts — already implemented; it is shared with the explorer and prep, so change
- * semantics there, not per endpoint). Game lists: GAME_ROW_SELECT + toGameRow (src/stats/gameRows.ts). Queries live in src/stats/.
- * Endpoint params (OpeningsParams, OpponentsParams, ActivityParams) never reuse filter keys; parse them with parseQuery
- * on a schema that ignores unknown keys.
- *
- * TODO(stats): implement. Keep this file thin: validate with src/http/validate.ts, check access
- * with the preHandlers in src/auth/session.ts, call into the module, return contract types, and
- * throw HttpError (src/http/errors.ts) for failures. Build paths from API_ROUTES (pass ':param'
- * placeholders, e.g. API_ROUTES.profile(':slug')).
+ * Every route: requireViewer, then loadProfileForViewer (404 for private profiles of others; hidden
+ * sources only for editors); filters through playerGamesWhere (src/stats/filterSql.ts). The
+ * queries live in src/stats/. Each route has a per-client budget (`STATS_RATE_LIMIT`, the PGN
+ * export `PGN_EXPORT_RATE_LIMIT`): a large profile costs up to a few hundred ms per request.
  */
-const statsRoutes: FastifyPluginAsync = async _app => {
-  // TODO(stats)
+
+/** Requests per client and minute, per stats route (a profile page with filters uses a handful). */
+export const STATS_RATE_LIMIT = { max: 300, timeWindow: 60_000 } as const;
+/** Requests per client and minute of the PGN export (up to 10,000 games each). */
+export const PGN_EXPORT_RATE_LIMIT = { max: 20, timeWindow: 60_000 } as const;
+
+const boundedInt = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
+
+const openingsParams = z
+  .object({
+    side: z.enum(['white', 'black', 'both']).default('both'),
+    order: z.enum(['most', 'best', 'worst']).default('most'),
+    minGames: boundedInt(1, 1_000_000).optional(),
+    minMoves: boundedInt(1, OPENINGS_MAX_MOVES).optional(),
+    maxMoves: boundedInt(1, OPENINGS_MAX_MOVES).optional(),
+  })
+  .refine(p => p.minMoves === undefined || p.maxMoves === undefined || p.minMoves <= p.maxMoves, {
+    message: '`minMoves` must not be greater than `maxMoves`',
+    path: ['minMoves'],
+  });
+
+const opponentsParams = pageQuery(OPPONENTS_PAGE_SIZE, OPPONENTS_MAX_PAGE_SIZE).extend({
+  view: z.enum(['most', 'titled']).default('most'),
+});
+
+/** `tz` (IANA zone); absent or empty means UTC, like an empty filter value means no filter. */
+const activityParams = z.object({
+  tz: z
+    .string()
+    .trim()
+    .max(200)
+    .optional()
+    .transform(tz => tz || 'UTC'),
+});
+
+const statsRoutes: FastifyPluginAsync = async app => {
+  const book = () => getOpeningBook(app.config.openingsDir);
+
+  /** The profile and the stats scope of a request (404 / 400 on failure). */
+  const scopeOf = (req: FastifyRequest): { profile: ViewableProfile; scope: StatsScope } => {
+    const { slug } = parseParams(slugParams, req.params);
+    const profile = loadProfileForViewer(app.db, slug, req.user);
+    const filters = parseFiltersQuery(req.query);
+    return { profile, scope: { db: app.db, sourceIds: profile.sourceIds, filters } };
+  };
+  const opts = { preHandler: requireViewer, config: { rateLimit: STATS_RATE_LIMIT } };
+
+  app.get(API_ROUTES.stats.overview(':slug'), opts, async (req): Promise<OverviewStats> => overviewStats(scopeOf(req).scope, book()));
+
+  app.get(API_ROUTES.stats.games(':slug'), opts, async (req): Promise<GamesPage> => {
+    const { scope } = scopeOf(req);
+    const { page, pageSize } = parseQuery(pageQuery(GAMES_PAGE_SIZE, GAMES_MAX_PAGE_SIZE), req.query);
+    return gamesPage(scope, page, pageSize);
+  });
+
+  // PGN is not in mime-db's compressible list, so the export opts in to compression itself
+  // (a 10,000-game file shrinks about sixfold).
+  const pgnOpts = {
+    ...opts,
+    config: { rateLimit: PGN_EXPORT_RATE_LIMIT },
+    compress: { customTypes: /^application\/x-chess-pgn\b/, encodings: ['br', 'gzip'] as Array<'br' | 'gzip'> },
+  };
+  app.get(API_ROUTES.stats.gamesPgn(':slug'), pgnOpts, async (req, reply) => {
+    const { profile, scope } = scopeOf(req);
+    const exp = prepareProfilePgnExport(scope);
+    return reply
+      .type('application/x-chess-pgn; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${profile.slug}.pgn"`)
+      .header('cache-control', 'no-store')
+      .header('x-outpost-total', String(exp.total))
+      .header('x-outpost-exported', String(exp.exported))
+      .send(Readable.from(exp.chunks(), { objectMode: false }));
+  });
+
+  app.get(API_ROUTES.stats.openings(':slug'), opts, async (req): Promise<OpeningsResponse> => {
+    const { scope } = scopeOf(req);
+    const p = parseQuery(openingsParams, req.query);
+    return openingsStats(scope, p, book());
+  });
+
+  app.get(API_ROUTES.stats.opponents(':slug'), opts, async (req): Promise<OpponentsPage> => {
+    const { scope } = scopeOf(req);
+    const p = parseQuery(opponentsParams, req.query);
+    return opponentsPage(scope, { ...p, viewer: req.user });
+  });
+
+  app.get(API_ROUTES.stats.behaviour(':slug'), opts, async (req): Promise<BehaviourStats> => behaviourStats(scopeOf(req).scope));
+
+  app.get(API_ROUTES.stats.worldmap(':slug'), opts, async (req): Promise<WorldMapStats> => worldMapStats(scopeOf(req).scope));
+
+  app.get(API_ROUTES.stats.activity(':slug'), opts, async (req): Promise<ActivityStats> => {
+    const { scope } = scopeOf(req);
+    const { tz } = parseQuery(activityParams, req.query);
+    const zone = resolveTimeZone(tz);
+    if (zone === null) throw validationError('tz: not a known IANA time zone', { issues: [{ path: 'tz', message: 'unknown time zone' }] });
+    return activityStats(scope, zone);
+  });
+
+  app.get(API_ROUTES.stats.rating(':slug'), opts, async (req): Promise<RatingStats> => ratingStats(scopeOf(req).scope));
 };
 
 export default statsRoutes;

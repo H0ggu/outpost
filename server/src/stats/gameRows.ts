@@ -11,6 +11,7 @@
  */
 import type { DbGameRow, EpochMs, GameOrigin, GameResult, GameRow, Id, SourceKind, Termination, TimeClass } from '@outpost/shared/api';
 import { colorFromChar, isTitle, type ColorChar, type Outcome } from '@outpost/shared/chess';
+import { normalizeCountry } from './country.ts';
 
 /** `SELECT … FROM player_games pg JOIN games g … LEFT JOIN players_cache pc …`; append WHERE / ORDER / LIMIT. */
 export const GAME_ROW_SELECT = `SELECT pg.source_id, pg.game_id, pg.color, pg.outcome, pg.rating, pg.rating_after,
@@ -52,7 +53,7 @@ export interface GameRowRecord {
   opp_country: string | null;
 }
 
-/** `GAME_ROW_SELECT` row → `GameRow` (the profile player's perspective). */
+/** `GAME_ROW_SELECT` row → `GameRow` (the profile player's perspective; country as ISO alpha-2 or null). */
 export function toGameRow(r: GameRowRecord): GameRow {
   const color = colorFromChar(r.color);
   return {
@@ -77,7 +78,7 @@ export function toGameRow(r: GameRowRecord): GameRow {
       rating: r.opp_rating,
       title: isTitle(r.opp_title) ? r.opp_title : null,
       kind: r.opp_source_kind,
-      country: r.opp_country,
+      country: normalizeCountry(r.opp_country),
     },
     plies: r.ply_count,
     eco: r.eco,

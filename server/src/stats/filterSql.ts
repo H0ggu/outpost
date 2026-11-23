@@ -113,7 +113,10 @@ export function playerGamesWhere(filters: ProfileFilters, opts: PlayerGamesWhere
   if (filters.line?.length) {
     const key = posKeyAfterLine(filters.line);
     if (key === null) throw validationError('line: not a legal sequence of moves from the start position');
-    where.push(`EXISTS (SELECT 1 FROM positions f_ln WHERE f_ln.pos_key = ? AND f_ln.game_id = ${a}.game_id)`);
+    // INDEXED BY: with sqlite_stat1, SQLite otherwise walks each game's 51 positions by primary key.
+    where.push(
+      `EXISTS (SELECT 1 FROM positions f_ln INDEXED BY positions_key WHERE f_ln.pos_key = ? AND f_ln.game_id = ${a}.game_id)`,
+    );
     params.push(key);
   }
 
