@@ -3,8 +3,11 @@
  *
  * After every successful password sign-in (setup, signup, login) the browser gets the cookie
  * `outpost_device`: 32 random bytes, HttpOnly, SameSite=Strict, sent only to `POST /api/login`.
- * Only the SHA-256 of it is stored (`known_devices`, migration 101). A device stays known for a
- * year after its last sign-in; each account keeps its `MAX_DEVICES_PER_USER` most recent devices.
+ * Only the SHA-256 of it is stored (`known_devices`, migration 101), one row per account signed in
+ * from that browser: a browser keeps its token when another account signs in on it, as long as the
+ * server issued that token (an unknown value is replaced, so a planted cookie gains nothing). A
+ * device stays known for a year after its last sign-in; each account keeps its
+ * `MAX_DEVICES_PER_USER` most recent devices.
  *
  * A known device proves nothing by itself — the password (and TOTP code) are still required — it
  * only exempts the browser from the per-account sign-in ceiling (src/auth/throttle.ts), so failed
@@ -55,35 +58,30 @@ export function isKnownDevice(db: Db, req: FastifyRequest, username: string, now
 }
 
 /**
- * Remembers the requesting browser as a device of `userId` after a successful sign-in: refreshes its
- * token's `last_used_at` when it already belongs to this user, otherwise issues a new token.
+ * Remembers the requesting browser as a device of `userId` after a successful sign-in. Keeps the
+ * browser's token when the server issued it (for this or another account), otherwise issues one.
  */
 export function rememberDevice(req: FastifyRequest, reply: FastifyReply, userId: Id, now: number = Date.now()): void {
   const db = req.server.db;
-  const existing = tokenOf(req);
+  const sent = tokenOf(req);
   try {
-    let token = existing;
-    db.tx(() => {
-      const refreshed =
-        token !== null &&
-        db.run('UPDATE known_devices SET last_used_at = ? WHERE token_hash = ? AND user_id = ?', [now, hashSessionToken(token), userId])
-          .changes === 1;
-      if (!refreshed) {
-        token = randomBytes(32).toString('base64url');
-        db.run('INSERT INTO known_devices (token_hash, user_id, created_at, last_used_at) VALUES (?, ?, ?, ?)', [
-          hashSessionToken(token),
-          userId,
-          now,
-          now,
-        ]);
-        db.run(
-          `DELETE FROM known_devices WHERE user_id = ? AND token_hash NOT IN (
-             SELECT token_hash FROM known_devices WHERE user_id = ? ORDER BY last_used_at DESC LIMIT ?)`,
-          [userId, userId, MAX_DEVICES_PER_USER],
-        );
-      }
+    const token = db.tx(() => {
+      const issued = (token: string): boolean =>
+        db.get('SELECT 1 AS x FROM known_devices WHERE token_hash = ? LIMIT 1', [hashSessionToken(token)]) !== undefined;
+      const t = sent !== null && issued(sent) ? sent : randomBytes(32).toString('base64url');
+      db.run(
+        `INSERT INTO known_devices (token_hash, user_id, created_at, last_used_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (token_hash, user_id) DO UPDATE SET last_used_at = excluded.last_used_at`,
+        [hashSessionToken(t), userId, now, now],
+      );
+      db.run(
+        `DELETE FROM known_devices WHERE user_id = ? AND token_hash NOT IN (
+           SELECT token_hash FROM known_devices WHERE user_id = ? ORDER BY last_used_at DESC LIMIT ?)`,
+        [userId, userId, MAX_DEVICES_PER_USER],
+      );
+      return t;
     });
-    reply.setCookie(DEVICE_COOKIE, token!, deviceCookieOptions(req.server.config));
+    reply.setCookie(DEVICE_COOKIE, token, deviceCookieOptions(req.server.config));
   } catch (err) {
     // Only a convenience: never fail a sign-in over it.
     req.log.warn({ err }, 'could not remember the device');

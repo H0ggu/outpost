@@ -13,9 +13,10 @@ import {
   type TotpSetupResponse,
   type UserPrefs,
 } from '@outpost/shared/api';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
-import { hashSessionToken, purgeExpiredSessions, SESSION_TTL_MS } from '../src/auth/session.ts';
+import { DEVICE_COOKIE, DEVICE_TTL_MS } from '../src/auth/devices.ts';
+import { hashSessionToken, MAX_SESSIONS_PER_USER, purgeExpiredSessions, SESSION_TTL_MS } from '../src/auth/session.ts';
 import { FAILURE_LIMITS, IP_LIMITS } from '../src/auth/throttle.ts';
 import { totpCode } from '../src/auth/totp.ts';
 import { loadConfig } from '../src/config.ts';
@@ -71,6 +72,32 @@ const sessionCookie = (res: LightMyRequestResponse): string | null => {
 const sessionOf = async (t: TestApp, cookie: string | null): Promise<SessionInfo> => (await get(t, API_ROUTES.session, cookie)).json();
 
 const tokenOf = (cookie: string): string => cookie.slice(SESSION_COOKIE.length + 1);
+
+/** The `outpost_device` value a response set, or null. */
+const deviceOf = (res: LightMyRequestResponse): string | null => res.cookies.find(x => x.name === DEVICE_COOKIE)?.value ?? null;
+
+/** A valid scrypt hash of `password` with a low cost (ln=10): fast to verify, rehashed at the next sign-in. */
+async function weakHash(password: string): Promise<string> {
+  const { randomBytes, scrypt } = await import('node:crypto');
+  const salt = randomBytes(16);
+  const key = await new Promise<Buffer>((res, rej) => scrypt(password, salt, 64, { N: 1024, r: 8, p: 1 }, (e, k) => (e ? rej(e) : res(k))));
+  const b64 = (b: Buffer) => b.toString('base64').replace(/=+$/, '');
+  return `$scrypt$ln=10,r=8,p=1$${b64(salt)}$${b64(key)}`;
+}
+
+/**
+ * Runs `fn` with a fake `Date` (timers stay real). `skip()` moves the clock past one per-IP login
+ * window of @fastify/rate-limit, whose store reads `Date.now()`; the in-memory failure throttles keep
+ * real time, so failures spread over several IP windows still add up.
+ */
+async function withFakeDate(fn: (skip: () => void) => Promise<void>): Promise<void> {
+  vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+  try {
+    await fn(() => vi.setSystemTime(Date.now() + IP_LIMITS.login.timeWindowMs + 1));
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 async function setupAdmin(t: TestApp, username = 'Admin'): Promise<string> {
   const res = await post(t, API_ROUTES.setup, { token: SETUP_TOKEN, username, password: ADMIN_PW });
@@ -371,9 +398,48 @@ describe('login, logout and sessions', () => {
     expect(row.last_seen_at).toBeGreaterThan(old);
     expect(row.expires_at).toBeGreaterThan(Date.now() + SESSION_TTL_MS - 60_000);
     expect(row.user_agent).toBe('TestBrowser/1.0');
+    // The account's own activity stamp moves with it (it outlives the session).
+    expect(t.db.value("SELECT last_seen_at FROM users WHERE username = 'Alice'")).toBe(row.last_seen_at);
     const refreshed = res.cookies.find(x => x.name === SESSION_COOKIE)!;
     expect(`${SESSION_COOKIE}=${refreshed.value}`).toBe(c);
     expect(refreshed.maxAge).toBe(SESSION_TTL_MS / 1000);
+  });
+
+  it('keeps at most MAX_SESSIONS_PER_USER sessions per user, dropping the least recently used', async () => {
+    const id = t.db.value<number>("SELECT id FROM users WHERE username = 'Alice'")!;
+    t.db.run('DELETE FROM sessions WHERE user_id = ?', [id]);
+    const now = Date.now();
+    const seed = (i: number) => hashSessionToken(`seed-${i}`);
+    for (let i = 0; i < MAX_SESSIONS_PER_USER; i++) {
+      t.db.run('INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)', [
+        seed(i),
+        id,
+        now - 1000 * (i + 1),
+        now + SESSION_TTL_MS,
+        now - 1000 * (i + 1),
+      ]);
+    }
+    const { cookie } = await login(t, 'Alice', USER_PW);
+    expect(t.db.value('SELECT COUNT(*) FROM sessions WHERE user_id = ?', [id])).toBe(MAX_SESSIONS_PER_USER);
+    // The least recently used one made room; the newest seeded one and the new one stay.
+    expect(t.db.value('SELECT COUNT(*) FROM sessions WHERE id_hash = ?', [seed(MAX_SESSIONS_PER_USER - 1)])).toBe(0);
+    expect(t.db.value('SELECT COUNT(*) FROM sessions WHERE id_hash = ?', [seed(0)])).toBe(1);
+    expect((await sessionOf(t, cookie)).user?.username).toBe('Alice');
+
+    // The list is bounded too (rows written around createSession cannot make it grow).
+    for (let i = 0; i < 5; i++) {
+      t.db.run('INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)', [
+        hashSessionToken(`extra-${i}`),
+        id,
+        1,
+        now + SESSION_TTL_MS,
+        1,
+      ]);
+    }
+    const list = (await get(t, API_ROUTES.me.sessions, cookie)).json<SessionsResponse>().sessions;
+    expect(list).toHaveLength(MAX_SESSIONS_PER_USER);
+    expect(list[0]!.current).toBe(true);
+    t.db.run('DELETE FROM sessions WHERE user_id = ? AND id_hash != ?', [id, hashSessionToken(tokenOf(cookie!))]);
   });
 
   it('ignores expired sessions and purges them', async () => {
@@ -677,6 +743,20 @@ describe('TOTP', () => {
     });
   });
 
+  it('setup checks the current password when one is sent (and still works without a body)', async () => {
+    const wrong = await post(t, API_ROUTES.me.totpSetup, { password: 'not my password' }, { cookie });
+    expect(wrong.statusCode).toBe(403);
+    expect(wrong.json().error.message).toBe('Current password is incorrect');
+    expect(t.db.value("SELECT totp_pending_secret FROM users WHERE username = 'twofa'")).toBeNull();
+    const right = await post(t, API_ROUTES.me.totpSetup, { password: USER_PW }, { cookie });
+    expect(right.statusCode).toBe(200);
+    expect(right.json<TotpSetupResponse>().secret).toMatch(/^[A-Z2-7]{32}$/);
+    // An empty password counts as none; unknown keys are ignored like before.
+    expect((await post(t, API_ROUTES.me.totpSetup, { password: '' }, { cookie })).statusCode).toBe(200);
+    expect((await post(t, API_ROUTES.me.totpSetup, { password: 42 }, { cookie })).statusCode).toBe(400);
+    t.db.run("UPDATE users SET totp_pending_secret = NULL, totp_pending_at = NULL WHERE username = 'twofa'");
+  });
+
   it('a pending secret expires', async () => {
     const s = (await post(t, API_ROUTES.me.totpSetup, undefined, { cookie })).json<TotpSetupResponse>().secret;
     t.db.run("UPDATE users SET totp_pending_at = 1 WHERE username = 'twofa'");
@@ -694,7 +774,7 @@ describe('CSRF / Origin and throttling', () => {
     t = await makeTestApp({ env: { SETUP_TOKEN } });
     await setupAdmin(t);
     writeSettings(t.db, { signupMode: 'open' });
-    for (const u of ['victim', 'bystander', 'pwvictim', 'totpuser', 'totpvictim']) {
+    for (const u of ['victim', 'bystander', 'pwvictim', 'totpuser', 'totpvictim', 'owner']) {
       expect((await signup(t, u)).res.statusCode).toBe(200);
     }
   });
@@ -738,40 +818,104 @@ describe('CSRF / Origin and throttling', () => {
     expect((await login(t, 'bystander', USER_PW)).res.statusCode).toBe(200);
   });
 
-  it('limits failed logins per username across IPs, and leaves other accounts alone', async () => {
-    for (let i = 0; i < FAILURE_LIMITS.account.max; i++) {
-      expect((await login(t, 'victim', `wrong-${i}-password`)).res.statusCode).toBe(401);
-    }
-    // Even the right password is refused while the account is throttled.
-    const blocked = (await login(t, 'VICTIM', USER_PW)).res;
-    expect(blocked.statusCode).toBe(429);
-    expect(blocked.json().error.code).toBe('rate_limited');
-    expect(blocked.json().error.details.retryAfterSec).toBeGreaterThan(0);
-    expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
-    expect((await login(t, 'bystander', USER_PW)).res.statusCode).toBe(200);
+  it('a client failing for an account only locks itself out of it', async () => {
+    await withFakeDate(async skip => {
+      const ip = nextIp();
+      // Spread over several per-IP windows, so only the account + client budget can run out.
+      for (let i = 0; i < FAILURE_LIMITS.accountClient.max; i++) {
+        if (i > 0 && i % (IP_LIMITS.login.max - 1) === 0) skip();
+        expect((await login(t, 'victim', `wrong-${i}-password`, { ip })).res.statusCode).toBe(401);
+      }
+      skip();
+      // Even the right password is refused from that address…
+      const blocked = (await login(t, 'VICTIM', USER_PW, { ip })).res;
+      expect(blocked.statusCode).toBe(429);
+      expect(blocked.json().error).toMatchObject({ code: 'rate_limited', message: expect.stringMatching(/from your address/) as string });
+      expect(blocked.json().error.details.retryAfterSec).toBeGreaterThan(0);
+      expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+      // …while other accounts from it, and the owner from anywhere else, sign in as usual.
+      expect((await login(t, 'bystander', USER_PW, { ip })).res.statusCode).toBe(200);
+    });
+    expect((await login(t, 'victim', USER_PW)).res.statusCode).toBe(200);
   });
 
-  it('counts wrong current passwords against the account too', async () => {
+  it('failures from many addresses lock unknown browsers out of the account, never its known devices', async () => {
+    const first = await login(t, 'owner', USER_PW);
+    expect(first.res.statusCode).toBe(200);
+    const device = `${DEVICE_COOKIE}=${deviceOf(first.res)!}`;
+    const otherDevice = `${DEVICE_COOKIE}=${deviceOf((await login(t, 'bystander', USER_PW)).res)!}`;
+    // A cheap hash keeps the many failures fast (the next successful sign-in rehashes it).
+    t.db.run("UPDATE users SET password_hash = ? WHERE username = 'owner'", [await weakHash(USER_PW)]);
+    for (let i = 0; i < FAILURE_LIMITS.account.max; i += 10) {
+      const batch = await Promise.all(Array.from({ length: 10 }, (_, j) => login(t, 'owner', `wrong-${i + j}-password`)));
+      for (const r of batch) expect(r.res.statusCode).toBe(401);
+    }
+    const attempt = (cookie?: string) => post(t, API_ROUTES.login, { username: 'owner', password: USER_PW }, { cookie: cookie ?? null });
+    const blocked = await attempt();
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json().error.message).toMatch(/many addresses/);
+    // A device of another account, or a value the server never issued, does not help.
+    expect((await attempt(otherDevice)).statusCode).toBe(429);
+    expect((await attempt(`${DEVICE_COOKIE}=forged-device-value`)).statusCode).toBe(429);
+    // The owner's browser still signs in (with the password, as always) and keeps its token.
+    const ok = await attempt(device);
+    expect(ok.statusCode).toBe(200);
+    expect(`${DEVICE_COOKIE}=${deviceOf(ok)!}`).toBe(device);
+    expect((await post(t, API_ROUTES.login, { username: 'owner', password: 'wrong password' }, { cookie: device })).statusCode).toBe(401);
+  });
+
+  it('remembers browsers with a cookie sent only to the login route, one token for every account on it', async () => {
+    const a = await login(t, 'bystander', USER_PW);
+    const c = a.res.cookies.find(x => x.name === DEVICE_COOKIE)!;
+    expect(c).toMatchObject({ path: API_ROUTES.login, httpOnly: true, sameSite: 'Strict', maxAge: DEVICE_TTL_MS / 1000 });
+    expect(c.value).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // Only its hash is stored.
+    expect(t.db.value('SELECT COUNT(*) FROM known_devices WHERE token_hash = ?', [hashSessionToken(c.value)])).toBe(1);
+    expect(t.db.value('SELECT COUNT(*) FROM known_devices WHERE token_hash = ?', [c.value])).toBe(0);
+    // Another account signing in on the same browser keeps the token, known for both now.
+    const b = await post(t, API_ROUTES.login, { username: 'pwvictim', password: USER_PW }, { cookie: `${DEVICE_COOKIE}=${c.value}` });
+    expect(deviceOf(b)).toBe(c.value);
+    expect(t.db.value('SELECT COUNT(*) FROM known_devices WHERE token_hash = ?', [hashSessionToken(c.value)])).toBe(2);
+    // A value the server never issued is replaced, not adopted.
+    const forged = await post(t, API_ROUTES.login, { username: 'bystander', password: USER_PW }, { cookie: `${DEVICE_COOKIE}=planted-value` });
+    expect(deviceOf(forged)).not.toBe('planted-value');
+    expect(t.db.value('SELECT COUNT(*) FROM known_devices WHERE token_hash = ?', [hashSessionToken('planted-value')])).toBe(0);
+    // A failed sign-in sets nothing.
+    expect(deviceOf((await login(t, 'bystander', 'wrong password')).res)).toBeNull();
+  });
+
+  it('counts wrong current passwords and codes per user, apart from sign-in', async () => {
     const { cookie } = await login(t, 'pwvictim', USER_PW);
-    for (let i = 0; i < FAILURE_LIMITS.account.max; i++) {
+    for (let i = 0; i < FAILURE_LIMITS.reauth.max; i++) {
       const r = await post(t, API_ROUTES.me.password, { currentPassword: `bad-${i}-pass`, newPassword: 'whatever new' }, { cookie });
       expect(r.statusCode).toBe(403);
     }
     const r = await post(t, API_ROUTES.me.password, { currentPassword: USER_PW, newPassword: 'whatever new' }, { cookie });
     expect(r.statusCode).toBe(429);
-    expect((await login(t, 'pwvictim', USER_PW)).res.statusCode).toBe(429);
+    expect(r.json().error.details.retryAfterSec).toBeGreaterThan(0);
+    // The same budget covers the TOTP endpoints…
+    expect((await post(t, API_ROUTES.me.totpSetup, { password: USER_PW }, { cookie })).statusCode).toBe(429);
+    expect((await post(t, API_ROUTES.me.totpEnable, { code: '123456' }, { cookie })).statusCode).toBe(429);
+    // …but never signing in: a stolen session cannot lock the owner out.
+    expect((await login(t, 'pwvictim', USER_PW)).res.statusCode).toBe(200);
   });
 
-  it('counts wrong TOTP codes at login against the account', async () => {
+  it('wrong TOTP codes at sign-in count like wrong passwords', async () => {
     const secret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
     t.db.run("UPDATE users SET totp_secret = ? WHERE username = 'totpvictim'", [secret]);
-    for (let i = 0; i < FAILURE_LIMITS.account.max; i++) {
-      const r = (await login(t, 'totpvictim', USER_PW, { totp: totpCode(secret, Date.now() - 10 * 60_000 - i * 30_000) })).res;
-      expect(r.statusCode).toBe(401);
-      expect(r.json().error.code).toBe('totp_required');
-    }
-    const r = (await login(t, 'totpvictim', USER_PW, { totp: totpCode(secret) })).res;
-    expect(r.statusCode).toBe(429);
+    await withFakeDate(async skip => {
+      const ip = nextIp();
+      for (let i = 0; i < FAILURE_LIMITS.accountClient.max; i++) {
+        if (i > 0 && i % (IP_LIMITS.login.max - 1) === 0) skip();
+        const r = (await login(t, 'totpvictim', USER_PW, { ip, totp: totpCode(secret, Date.now() - 10 * 60_000 - i * 30_000) })).res;
+        expect(r.statusCode).toBe(401);
+        expect(r.json().error.code).toBe('totp_required');
+      }
+      skip();
+      expect((await login(t, 'totpvictim', USER_PW, { ip, totp: totpCode(secret) })).res.statusCode).toBe(429);
+      // Another address with a current code is fine.
+      expect((await login(t, 'totpvictim', USER_PW, { totp: totpCode(secret) })).res.statusCode).toBe(200);
+    });
   });
 
   it('limits setup attempts per IP', async () => {
