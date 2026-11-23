@@ -57,7 +57,9 @@ export const bind = (ctrl: AnalyseCtrl) => {
       ctrl.redraw();
     })
     .bind('f', ctrl.flip)
-    .bind('b', () => window.location.assign(ctrl.boardEditorUrl()))
+    .bind('b', () => {
+      if (!ctrl.opts.outpost) window.location.assign(ctrl.boardEditorUrl()); // outpost: no board editor
+    })
     .bind('?', () => showHelp(ctrl))
     .bind('l', () => {
       if (ctrl.isCevalAllowed() && ctrl.ceval.analysable) ctrl.cevalEnabled(!ctrl.cevalEnabled());
@@ -102,7 +104,10 @@ export const showHelp = (ctrl: AnalyseCtrl) => {
   return domDialog({
     closeButton: true,
     class: 'help.keyboard-help',
-    htmlUrl: xhr.url('/analysis/help', { study: !!ctrl.study }),
+    // outpost: no lila server to render /analysis/help
+    ...(ctrl.opts.outpost
+      ? { htmlText: ctrl.opts.outpost.keyboardHelpHtml() }
+      : { htmlUrl: xhr.url('/analysis/help', { study: !!ctrl.study }) }),
     modal: true,
     show: true,
     easyClose: 'clickOutside',

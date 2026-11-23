@@ -1,0 +1,164 @@
+diff --git a/analyse/src/ctrl.ts b/analyse/src/ctrl.ts
+index 4f2e84d..a5081df 100644
+--- a/analyse/src/ctrl.ts
++++ b/analyse/src/ctrl.ts
+@@ -520,6 +520,7 @@ export default class AnalyseCtrl implements CevalHandler {
+   }
+ 
+   changeFen(fen: FEN): void {
++    if (this.opts.outpost) return this.opts.outpost.changeFen(fen);
+     this.redirecting = true;
+     window.location.href =
+       '/analysis/' +
+diff --git a/analyse/src/ground.ts b/analyse/src/ground.ts
+index 22eb584..16e2361 100644
+--- a/analyse/src/ground.ts
++++ b/analyse/src/ground.ts
+@@ -68,8 +68,17 @@ export function makeConfig(ctrl: AnalyseCtrl): CgConfig {
+     },
+     drawable: {
+       enabled: true,
+-      eraseOnMovablePieceClick: !ctrl.opts.study || !!ctrl.opts.practice,
++      eraseOnMovablePieceClick: (!ctrl.opts.study || !!ctrl.opts.practice) && !ctrl.opts.outpost,
+       defaultSnapToValidMove: storage.boolean('arrow.snap').getOrDefault(true),
++      // outpost: keep drawn arrows and circles on the move, like a study chapter, so they reach the PGN
++      onChange: ctrl.opts.outpost
++        ? shapes => {
++            ctrl.tree.setShapes(
++              shapes.map(({ orig, dest, brush }) => ({ orig, dest, brush })),
++              ctrl.path,
++            );
++          }
++        : undefined,
+     },
+     highlight: {
+       lastMove: pref.highlight,
+diff --git a/analyse/src/interfaces.ts b/analyse/src/interfaces.ts
+index 6fb5311..e62038d 100644
+--- a/analyse/src/interfaces.ts
++++ b/analyse/src/interfaces.ts
+@@ -180,6 +180,16 @@ export interface AnalyseOpts {
+   embed?: boolean;
+   socketUrl?: string;
+   socketVersion?: number;
++  outpost?: OutpostHooks;
++}
++
++// Outpost (self-hosted, no lila server): behaviour that lila delegates to its server. Present only
++// when the board runs inside Outpost's Studio; every use falls back to lila's own behaviour.
++export interface OutpostHooks {
++  // set up a position in place (lila navigates to /analysis/<variant>/<fen>)
++  changeFen(fen: FEN): void;
++  // keyboard help dialog content (lila fetches /analysis/help)
++  keyboardHelpHtml(): string;
+ }
+ 
+ export interface JustCaptured extends Piece {
+diff --git a/analyse/src/keyboard.ts b/analyse/src/keyboard.ts
+index 482f0f0..23888c5 100644
+--- a/analyse/src/keyboard.ts
++++ b/analyse/src/keyboard.ts
+@@ -57,7 +57,9 @@ export const bind = (ctrl: AnalyseCtrl) => {
+       ctrl.redraw();
+     })
+     .bind('f', ctrl.flip)
+-    .bind('b', () => window.location.assign(ctrl.boardEditorUrl()))
++    .bind('b', () => {
++      if (!ctrl.opts.outpost) window.location.assign(ctrl.boardEditorUrl()); // outpost: no board editor
++    })
+     .bind('?', () => showHelp(ctrl))
+     .bind('l', () => {
+       if (ctrl.isCevalAllowed() && ctrl.ceval.analysable) ctrl.cevalEnabled(!ctrl.cevalEnabled());
+@@ -102,7 +104,10 @@ export const showHelp = (ctrl: AnalyseCtrl) => {
+   return domDialog({
+     closeButton: true,
+     class: 'help.keyboard-help',
+-    htmlUrl: xhr.url('/analysis/help', { study: !!ctrl.study }),
++    // outpost: no lila server to render /analysis/help
++    ...(ctrl.opts.outpost
++      ? { htmlText: ctrl.opts.outpost.keyboardHelpHtml() }
++      : { htmlUrl: xhr.url('/analysis/help', { study: !!ctrl.study }) }),
+     modal: true,
+     show: true,
+     easyClose: 'clickOutside',
+diff --git a/analyse/src/view/actionMenu.ts b/analyse/src/view/actionMenu.ts
+index 1e54822..878ab13 100644
+--- a/analyse/src/view/actionMenu.ts
++++ b/analyse/src/view/actionMenu.ts
+@@ -58,7 +58,7 @@ function autoplayButtons(ctrl: AnalyseCtrl): VNode {
+ const hiddenInput = (name: string, value: string) => hl('input', { attrs: { type: 'hidden', name, value } });
+ 
+ function studyButton(ctrl: AnalyseCtrl) {
+-  if (ctrl.study || ctrl.ongoing) return undefined;
++  if (ctrl.study || ctrl.ongoing || ctrl.opts.outpost) return undefined; // outpost: My Files instead
+   return hl(
+     'form',
+     {
+@@ -85,7 +85,8 @@ function studyButton(ctrl: AnalyseCtrl) {
+ 
+ export function view(ctrl: AnalyseCtrl): VNode {
+   const d = ctrl.data;
+-  const canContinue = !ctrl.ongoing && d.game.variant.key === 'standard';
++  // outpost: no games to continue against the AI or a friend, no board editor, no server review
++  const canContinue = !ctrl.ongoing && d.game.variant.key === 'standard' && !ctrl.opts.outpost;
+   const canPractice = ctrl.isCevalAllowed() && !ctrl.isEmbed && !ctrl.isGamebook() && !ctrl.practice;
+   const canRetro = !ctrl.study && !ctrl.isEmbed && !ctrl.retro && ctrl.hasFullComputerAnalysis();
+   const linkAttrs = { rel: ctrl.isEmbed ? '' : 'nofollow', target: ctrl.isEmbed ? '_blank' : '' };
+@@ -105,6 +106,7 @@ export function view(ctrl: AnalyseCtrl): VNode {
+         i18n.site.flipBoard,
+       ),
+       !ctrl.ongoing &&
++        !ctrl.opts.outpost &&
+         hl(
+           'a',
+           {
+@@ -149,6 +151,7 @@ export function view(ctrl: AnalyseCtrl): VNode {
+         ),
+       studyButton(ctrl),
+       ctrl.canAnalyseMainline() &&
++        !ctrl.opts.outpost &&
+         hl(
+           'button',
+           {
+diff --git a/analyse/src/view/settingsView.ts b/analyse/src/view/settingsView.ts
+index 597b74c..9fe4be0 100644
+--- a/analyse/src/view/settingsView.ts
++++ b/analyse/src/view/settingsView.ts
+@@ -264,7 +264,9 @@ function helpHtml() {
+ // iOS Safari has trouble rendering HTMLDialogElement content with replaced elements (i.e. <video>). It
+ // can't do flex without glitching, it treats block as inline, hence the <br> after videoHtml and imageHtml
+ 
++// outpost: site.asset.url gives '' for help media that is not shipped; show no media then
+ function videoHtml(path: string) {
++  if (!site.asset.url('video/' + path + '.webm')) return '';
+   return $html`
+     <video autoplay loop muted playsinline preload="auto">
+       <source src="${site.asset.url('video/' + path + '.webm')}" type="video/webm">
+@@ -273,6 +275,7 @@ function videoHtml(path: string) {
+ }
+ 
+ function imageHtml(path: string) {
++  if (!site.asset.url('images/help/' + path + '.webp')) return '';
+   return `<img src="${site.asset.url('images/help/' + path + '.webp')}" alt=""><br>`;
+ }
+ 
+diff --git a/lib/src/chessgroundResize.ts b/lib/src/chessgroundResize.ts
+index 1d5e776..d26cfac 100644
+--- a/lib/src/chessgroundResize.ts
++++ b/lib/src/chessgroundResize.ts
+@@ -35,7 +35,14 @@ export default function resizeHandle(
+     const initialZoom = parseInt(window.getComputedStyle(document.body).getPropertyValue('---zoom'));
+     let zoom = initialZoom;
+ 
+-    const saveZoom = debounce(() => xhr.text(`/pref/zoom?v=${zoom}`, { method: 'post' }), 700);
++    // outpost: no /pref endpoint; keep the zoom in this browser (read back by the Studio at startup)
++    const saveZoom = debounce(
++      () =>
++        document.body.dataset.zoomStorage
++          ? localStorage.setItem(document.body.dataset.zoomStorage, `${zoom}`)
++          : xhr.text(`/pref/zoom?v=${zoom}`, { method: 'post' }),
++      700,
++    );
+ 
+     const resize = (move: MouchEvent) => {
+       const pos = eventPosition(move)!;

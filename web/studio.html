@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="black">
+<html lang="en" data-theme="black" class="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -11,9 +11,15 @@
     <title>Studio · Outpost</title>
     <script src="/theme-init.js"></script>
   </head>
-  <!-- lila's analyse app expects #main-wrap.is2d > main.analyse and body[data-board] (docs/research/lila-ui-extraction.md). -->
-  <body data-board="brown">
+  <!--
+    lila's analysis board (web/vendor/lila, PLAN §8) expects #main-wrap.is2d > main.analyse, the board
+    theme on body[data-board], the sound set on body[data-sound-set] and the board zoom in ---zoom
+    (docs/research/lila-ui-extraction.md). header#top uses lila's own header styles; src/studio fills it.
+  -->
+  <body data-board="brown" data-sound-set="sfx" data-zoom-storage="outpost.studio.zoom" style="---zoom: 85">
+    <header id="top"></header>
     <div id="main-wrap" class="is2d">
+      <div id="studio-bar"></div>
       <main class="analyse"><p class="studio-loading">Studio loading…</p></main>
     </div>
     <script type="module" src="/src/studio/main.ts"></script>

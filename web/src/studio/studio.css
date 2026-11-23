@@ -1,0 +1,1099 @@
+/*
+ * Studio page styles on top of lila's own CSS (lib.theme.all, site, analyse.free, compiled from the
+ * vendored SCSS by vite.config.ts). Only lila's tokens (--c-*) and lila class conventions are used,
+ * so dark, light and Outpost's true black all work.
+ */
+
+/* lila declares its icon font in the server layout (layout.scala), not in SCSS. */
+@font-face {
+  font-family: 'lichess';
+  font-display: block;
+  src: url('/lichess/font/lichess.woff2') format('woff2');
+}
+
+/* -------------------------------------------------------------------------
+ * True black (Outpost default, for OLED screens): lila's dark theme with black surfaces.
+ * Font, primary and accent colours stay lila's. Boxes get a hairline instead of a lighter fill.
+ * ---------------------------------------------------------------------- */
+
+html[data-theme='black'] {
+  --c-bg: #000;
+  --c-bg-box: #000;
+  --c-bg-high: #000;
+  --c-bg-opaque: #000;
+  --c-page-input: #000;
+  --c-bg-page: #000;
+  --c-bg-mid: #0a0a0a;
+  --c-bg-low: #141414;
+  --c-bg-popup: #141414;
+  --c-bg-zebra: #0d0d0d;
+  --c-bg-zebra2: #161616;
+  --c-bg-variation: #050505;
+  --c-bg-input: #0a0a0a;
+  --c-bg-header-dropdown: #141414;
+  --c-body-gradient: #000;
+  --c-border: #222;
+  --c-border-page: #1c1c1c;
+  --c-metal-top: #161616;
+  --c-metal-bottom: #101010;
+  --c-metal-top-hover: #1e1e1e;
+  --c-metal-bottom-hover: #171717;
+  --c-font-shadow: transparent;
+  --c-studio-hairline: #1c1c1c;
+}
+
+html {
+  --c-studio-hairline: transparent;
+}
+
+html[data-theme='black'] body {
+  background: #000;
+}
+
+html[data-theme='black'] .analyse__tools,
+html[data-theme='black'] .studio-side,
+html[data-theme='black'] .analyse__underboard .copyables textarea,
+html[data-theme='black'] .analyse__underboard .copyables input {
+  border: 1px solid var(--c-studio-hairline);
+}
+
+/* -------------------------------------------------------------------------
+ * Page frame: header (lila #top) + Studio bar above lila's grid. lila sizes the board from the
+ * viewport minus `$site-header-outer-height`, which includes ---site-header-margin: the bar's
+ * height goes there, and #main-wrap's own margin is dropped because the bar fills it.
+ * ---------------------------------------------------------------------- */
+
+body {
+  ---studio-bar-height: 38px;
+  ---site-header-margin: var(---studio-bar-height);
+}
+
+body #main-wrap {
+  grid-template-areas:
+    '. . bar . .'
+    '. . main . .';
+  margin-top: var(---sticky-gap, 0px);
+}
+
+.studio-loading,
+.studio-fatal {
+  padding: 2em;
+  text-align: center;
+  color: var(--c-font-dim);
+}
+
+.studio-fatal {
+  color: var(--c-bad);
+}
+
+/* Header: lila's #top, not sticky here (lila's scroll handler that hides it isn't loaded, and the
+   Studio bar below it scrolls away with the page). */
+body #top {
+  position: relative;
+}
+
+/* Material difference beside the board: lila's grey mono pieces are replaced by cburnett white ones. */
+.material mpiece {
+  opacity: 0.75;
+}
+
+/* lila's "indexing" loader sprite isn't vendored: three dots instead. */
+.ddloader {
+  background: radial-gradient(circle, currentColor 1.5px, transparent 2.5px) 0 50% / 8px 8px repeat-x !important;
+  color: var(--c-font-dim);
+  animation: studio-dots 0.8s linear infinite !important;
+}
+
+@keyframes studio-dots {
+  to {
+    background-position: 8px 50%;
+  }
+}
+
+/* Header: Outpost wordmark in lila's .site-title */
+#top .site-title {
+  gap: 0.5rem;
+}
+
+.studio-site-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  transform: translateY(2px);
+}
+
+.studio-site-name {
+  color: var(--c-font);
+}
+
+#topnav a.studio-current {
+  color: var(--c-font-clear);
+}
+
+.site-buttons .studio-user span {
+  margin-inline-start: 0.4em;
+  display: inline-block;
+  max-width: 30vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.site-buttons .signin {
+  margin-inline-end: 1rem;
+}
+
+/* -------------------------------------------------------------------------
+ * Studio bar: board tabs + actions
+ * ---------------------------------------------------------------------- */
+
+.studio-bar {
+  grid-area: bar;
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  height: var(---studio-bar-height);
+  min-width: 0;
+  padding-bottom: 4px;
+  user-select: none;
+}
+
+.studio-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.studio-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.studio-tab {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: stretch;
+  min-width: 6.5em;
+  max-width: 16em;
+  border-radius: 4px 4px 0 0;
+  background: var(--c-bg-zebra);
+  border-bottom: 2px solid transparent;
+  color: var(--c-font-dim);
+}
+
+.studio-tab:hover {
+  color: var(--c-font);
+  background: var(--c-bg-zebra2);
+}
+
+.studio-tab.active {
+  background: var(--c-bg-box);
+  color: var(--c-font-clear);
+  border-bottom-color: var(--c-accent);
+  box-shadow: inset 0 0 0 1px var(--c-studio-hairline);
+}
+
+.studio-tab__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0 0.2em 0 0.6em;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.95em;
+}
+
+.studio-tab__title::before {
+  opacity: 0.7;
+  font-size: 1em !important;
+}
+
+.studio-tab__title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-tab__dirty {
+  flex: 0 0 auto;
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background: var(--c-accent);
+}
+
+.studio-tab__close,
+.studio-tab-new,
+.studio-action,
+.studio-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  color: var(--c-font-dim);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.studio-tab__close {
+  padding: 0 0.45em;
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+
+.studio-tab__close:hover {
+  opacity: 1;
+  color: var(--c-bad);
+}
+
+.studio-tab-new {
+  flex: 0 0 auto;
+  padding: 0 0.7em;
+}
+
+.studio-tab-new:hover,
+.studio-action:hover:not(:disabled),
+.studio-icon-btn:hover:not(:disabled) {
+  color: var(--c-font-clear);
+  background: var(--c-bg-zebra2);
+}
+
+.studio-tab-new::before,
+.studio-action::before,
+.studio-icon-btn::before,
+.studio-tab__close::before {
+  margin: 0 !important;
+}
+
+.studio-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.studio-action {
+  padding: 0 0.75em;
+  font-size: 1.05em;
+}
+
+.studio-action:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.studio-action--save:not(:disabled) {
+  color: var(--c-secondary);
+}
+
+.studio-menu-wrap {
+  position: relative;
+  display: flex;
+}
+
+.studio-menu-wrap.shown > .studio-action {
+  background: var(--c-bg-header-dropdown);
+  color: var(--c-font-clear);
+}
+
+.studio-menu {
+  position: absolute;
+  top: 100%;
+  inset-inline-end: 0;
+  z-index: 120;
+  min-width: 15rem;
+  padding: 0.4rem 0;
+  background: var(--c-bg-header-dropdown);
+  border-radius: 4px 0 4px 4px;
+  box-shadow: 2px 5px 6px rgb(0 0 0 / 0.3);
+  border: 1px solid var(--c-studio-hairline);
+}
+
+.studio-menu hr {
+  margin: 0.3rem 0;
+  border: 0;
+  border-top: 1px solid var(--c-border);
+}
+
+.studio-menu__title {
+  padding: 0.3rem 1rem 0.1rem;
+  font-size: 0.8em;
+  text-transform: uppercase;
+  color: var(--c-font-dimmer);
+}
+
+.studio-menu__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 0.6em;
+  padding: 0.5rem 1rem;
+  background: none;
+  border: 0;
+  color: var(--c-header-dropdown, var(--c-font));
+  text-align: start;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.studio-menu__item span {
+  flex: 1;
+}
+
+.studio-menu__item kbd {
+  font-size: 0.8em;
+  color: var(--c-font-dimmer);
+  background: none;
+  border: 0;
+}
+
+.studio-menu__item:hover:not(:disabled) {
+  background: var(--c-primary);
+  color: var(--c-over);
+}
+
+.studio-menu__item:hover kbd {
+  color: inherit;
+}
+
+.studio-menu__item.active {
+  color: var(--c-secondary);
+}
+
+.studio-menu__item.active:hover {
+  color: var(--c-over);
+}
+
+.studio-menu__item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* -------------------------------------------------------------------------
+ * Side panel (inside lila's grid area `side`)
+ * ---------------------------------------------------------------------- */
+
+.analyse__side.studio-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 12em;
+  background: var(--c-bg-box);
+  border-radius: var(---ui-roundness, 7px);
+  overflow: hidden;
+}
+
+@media (min-width: 1259.3px) {
+  .analyse__side.studio-side {
+    max-height: var(---col3-uniboard-width);
+    align-self: start;
+  }
+}
+
+@media (max-width: 1259.29px) {
+  .analyse__side.studio-side {
+    max-height: 75vh;
+  }
+}
+
+.studio-side__tabs {
+  flex: 0 0 auto;
+  display: flex;
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-bg-zebra);
+}
+
+.studio-side__tab {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3em;
+  min-width: 0;
+  padding: 0.6em 0.3em;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--c-font-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.95em;
+}
+
+.studio-side__tab:hover {
+  color: var(--c-font-clear);
+}
+
+.studio-side__tab.active {
+  color: var(--c-font-clear);
+  border-bottom-color: var(--c-secondary);
+}
+
+.studio-side__tab em {
+  font-style: normal;
+  font-size: 0.8em;
+  color: var(--c-font-dimmer);
+}
+
+.studio-side__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.studio-spinner {
+  margin: 2em auto;
+  width: 2em;
+  height: 2em;
+  border: 3px solid var(--c-border);
+  border-top-color: var(--c-primary);
+  border-radius: 50%;
+  animation: studio-spin 0.9s linear infinite;
+}
+
+@keyframes studio-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.studio-empty,
+.studio-error {
+  margin: 1em;
+  color: var(--c-font-dim);
+}
+
+.studio-error {
+  color: var(--c-bad);
+}
+
+.studio-files--signed-out {
+  padding: 1.2em;
+  text-align: center;
+  color: var(--c-font-dim);
+}
+
+.studio-files__tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0.3em 0.4em;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.studio-icon-btn {
+  min-width: 2em;
+  height: 2em;
+  padding: 0 0.4em;
+  gap: 0.2em;
+}
+
+.studio-icon-btn em {
+  font-style: normal;
+  font-size: 0.75em;
+}
+
+.studio-icon-btn.bad:hover {
+  color: var(--c-bad);
+}
+
+.studio-files__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.5em 0.6em;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.studio-files__head strong {
+  font-weight: normal;
+  color: var(--c-font-clear);
+}
+
+.studio-link {
+  background: none;
+  border: 0;
+  color: var(--c-link);
+  cursor: pointer;
+  padding: 0;
+}
+
+.studio-link:hover {
+  color: var(--c-link-hover);
+}
+
+.studio-tree ul,
+.studio-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.studio-tree ul ul {
+  padding-inline-start: 1em;
+}
+
+.studio-tree {
+  padding: 0.3em 0;
+}
+
+.studio-folder,
+.studio-file {
+  position: relative;
+}
+
+.studio-folder__toggle,
+.studio-file__open {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  width: 100%;
+  min-width: 0;
+  padding: 0.35em 4.6em 0.35em 0.7em;
+  background: none;
+  border: 0;
+  color: var(--c-font);
+  text-align: start;
+  cursor: pointer;
+}
+
+.studio-folder__toggle::before {
+  font-size: 0.7em !important;
+  width: 1em;
+  color: var(--c-font-dimmer);
+}
+
+.studio-file__open::before {
+  color: var(--c-font-dimmer);
+}
+
+.studio-folder__toggle:hover,
+.studio-file__open:hover,
+.studio-file.active > .studio-file__open {
+  background: var(--c-bg-zebra);
+  color: var(--c-font-clear);
+}
+
+.studio-file.active > .studio-file__open {
+  box-shadow: inset 3px 0 0 var(--c-secondary);
+}
+
+.studio-file.open > .studio-file__open .studio-file__name {
+  color: var(--c-font-clear);
+}
+
+.studio-folder__name,
+.studio-file__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-folder__toggle em,
+.studio-file__open time {
+  margin-inline-start: auto;
+  font-style: normal;
+  font-size: 0.8em;
+  color: var(--c-font-dimmer);
+  white-space: nowrap;
+}
+
+.studio-color {
+  flex: 0 0 auto;
+  width: 0.75em;
+  height: 0.75em;
+  border-radius: 50%;
+  border: 1px solid var(--c-font-dimmer);
+}
+
+.studio-color.white {
+  background: #fff;
+}
+
+.studio-color.black {
+  background: #222;
+}
+
+.studio-file__actions {
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0.2em;
+  display: flex;
+  height: 2.15em;
+  align-items: center;
+  opacity: 0;
+}
+
+.studio-folder:hover > .studio-file__actions,
+.studio-file:hover > .studio-file__actions,
+.studio-file__actions:focus-within,
+.studio-file__actions.shown {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .studio-file__actions {
+    opacity: 1;
+  }
+}
+
+.studio-file__actions .studio-icon-btn {
+  font-size: 0.9em;
+}
+
+.studio-trash .studio-file__open {
+  cursor: default;
+}
+
+.studio-trash .studio-file__open:hover {
+  background: none;
+}
+
+.studio-search__again {
+  margin: 0.8em;
+}
+
+.studio-hit {
+  padding: 0.5em 0.7em;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.studio-hit__file {
+  color: var(--c-font-clear);
+  margin-bottom: 0.3em;
+}
+
+.studio-hit__matches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em;
+}
+
+.studio-hit__match {
+  background: var(--c-bg-zebra2);
+  border: 0;
+  border-radius: 3px;
+  padding: 0.2em 0.6em;
+  color: var(--c-font);
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.studio-hit__match:hover {
+  background: var(--c-primary);
+  color: var(--c-over);
+}
+
+.studio-hit__next san {
+  font-family: 'Noto Chess', 'Noto Sans', sans-serif;
+}
+
+/* Annotate: lila's study glyph and comment panels (analyse/css/study/panel) inside the side box */
+.studio-annotate {
+  padding: 0.6em 0.7em 0.8em;
+}
+
+.studio-annotate__move {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6em;
+  margin-bottom: 0.6em;
+}
+
+.studio-annotate__move strong {
+  font-family: 'Noto Chess', 'Noto Sans', sans-serif;
+  color: var(--c-font-clear);
+  font-size: 1.1em;
+}
+
+.studio-annotate__hint {
+  font-size: 0.85em;
+  color: var(--c-font-dimmer);
+}
+
+.studio-annotate .study__glyphs {
+  align-items: flex-start;
+  font-size: 0.85em;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.studio-annotate .study__glyphs button {
+  background: none;
+  border: 0;
+  color: var(--c-font);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: start;
+  padding: 0;
+}
+
+.studio-annotate .study__comments .form3 {
+  margin-top: 0.8em;
+}
+
+.studio-annotate textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 5em;
+}
+
+.studio-games .studio-list li.active .studio-game {
+  background: var(--c-bg-zebra);
+  color: var(--c-font-clear);
+  box-shadow: inset 3px 0 0 var(--c-secondary);
+}
+
+.studio-game {
+  display: flex;
+  width: 100%;
+  gap: 0.6em;
+  padding: 0.5em 0.8em;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--c-border);
+  color: var(--c-font);
+  text-align: start;
+  cursor: pointer;
+}
+
+.studio-game span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-game em {
+  font-style: normal;
+  color: var(--c-font-dim);
+}
+
+.studio-game:hover {
+  background: var(--c-bg-zebra2);
+}
+
+.studio-games .studio-list {
+  counter-reset: none;
+}
+
+.studio-games__add,
+.studio-games__more {
+  margin: 0.8em;
+}
+
+.studio-games__more {
+  display: block;
+  margin-bottom: 0;
+}
+
+/* -------------------------------------------------------------------------
+ * Dialogs (lila's dialog + form3)
+ * ---------------------------------------------------------------------- */
+
+.dialog-content.studio-dialog {
+  text-align: start;
+  width: min(34rem, 92vw);
+}
+
+.studio-dialog h2 {
+  margin: 0 0 1em;
+  font-size: 1.6em;
+  font-weight: 300;
+}
+
+.studio-dialog .form-group {
+  margin-bottom: 1.1em;
+}
+
+.studio-dialog .form-label {
+  display: block;
+  margin-bottom: 0.35em;
+  color: var(--c-font-dim);
+}
+
+.studio-dialog .form-control {
+  width: 100%;
+}
+
+.studio-dialog textarea.form-control {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.studio-choices {
+  display: flex;
+  gap: 1.5em;
+}
+
+.studio-choices label {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  cursor: pointer;
+}
+
+.studio-dialog .error {
+  color: var(--c-bad);
+}
+
+.studio-dialog .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1em;
+  margin-top: 1.5em;
+}
+
+.studio-settings section {
+  margin-bottom: 1.4em;
+}
+
+.studio-settings h3 {
+  margin: 0 0 0.5em;
+  font-size: 1.1em;
+  color: var(--c-font-clear);
+}
+
+.studio-settings__where {
+  margin: -0.6em 0 1.2em;
+  color: var(--c-font-dim);
+}
+
+.studio-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.studio-theme {
+  flex: 1 1 8em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  padding: 0.7em 0.8em;
+  border: 2px solid var(--c-border);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: start;
+}
+
+.studio-theme span {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+.studio-theme--black {
+  background: #000;
+  color: #bababa;
+}
+
+.studio-theme--dark {
+  background: #262421;
+  color: #bababa;
+}
+
+.studio-theme--light {
+  background: #fff;
+  color: #4d4d4d;
+}
+
+.studio-theme.active,
+.studio-swatch.active {
+  border-color: var(--c-secondary);
+  box-shadow: 0 0 0 1px var(--c-secondary);
+}
+
+.studio-swatch {
+  width: 3.4em;
+  height: 3.4em;
+  padding: 0.2em;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: var(--c-bg-zebra);
+  cursor: pointer;
+}
+
+.studio-swatch img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 3px;
+}
+
+.studio-swatch:hover {
+  border-color: var(--c-border-light);
+}
+
+.studio-picker--sounds .button.active {
+  border-color: var(--c-secondary);
+  color: var(--c-secondary);
+}
+
+/* -------------------------------------------------------------------------
+ * lila explorer with Outpost's four databases (masters, reference, lichess, player): the title row
+ * keeps the settings gear clear and shortens a long player name instead of overflowing.
+ * ---------------------------------------------------------------------- */
+
+.explorer-box .explorer-title {
+  padding-inline-end: 2.2em;
+  overflow: hidden;
+}
+
+.explorer-box .explorer-title > * {
+  flex: 0 0 auto;
+}
+
+.explorer-box .explorer-title > .active {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.explorer-box .explorer-title > .active strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Player database active: the other databases are icons (scripts/lila-patches/002), the name gets the room. */
+.explorer-box .explorer-title > .button-link.compact {
+  padding: 0 0.55em;
+}
+
+.explorer-box .explorer-title > .button-link.compact::before {
+  font-size: 1.05em;
+}
+
+/* -------------------------------------------------------------------------
+ * Layout presets (body[data-studio-layout], PLAN §8.4)
+ * ---------------------------------------------------------------------- */
+
+/* Board only: no side panel, no FEN/PGN boxes. */
+body[data-studio-layout='focus'] .analyse__side.studio-side,
+body[data-studio-layout='focus'] .analyse__underboard {
+  display: none;
+}
+
+/* On wide screens, board only uses lila's two-column grid, so no empty side column is left. */
+@media (min-width: 1259.3px) {
+  body[data-studio-layout='focus'] main.analyse {
+    grid-template-columns:
+      var(---col2-uniboard-width) var(---analyse-gauge-col)
+      minmax(calc(240px - var(---analyse-gauge-offset)), calc(400px - var(---analyse-gauge-offset)));
+    grid-template-rows: fit-content(0);
+    grid-template-areas:
+      'board      gauge tools'
+      'kb-move    .     controls'
+      'under      .     controls'
+      'under      .     round-training'
+      'under      .     side'
+      'chat       .     side'
+      'uchat      .     side';
+  }
+}
+
+/* Files first: a wider side column on wide screens, the panel above the moves on narrow ones. */
+@media (min-width: 1259.3px) {
+  body[data-studio-layout='games'] {
+    ---col3-uniboard-side-min: 360px;
+  }
+}
+
+@media (max-width: 799.29px) and (orientation: portrait) {
+  body[data-studio-layout='games'] .analyse {
+    grid-template-areas:
+      'board'
+      'controls'
+      'kb-move'
+      'side'
+      'tools'
+      'round-training'
+      'under'
+      'chat'
+      'uchat';
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Embed (?embed=explorer, the profile Explorer tab iframe): board, moves and explorer only.
+ * ---------------------------------------------------------------------- */
+
+body.studio-embed {
+  ---site-header-height: 0px;
+  ---site-header-margin: 0px;
+  ---sticky-gap: 0px;
+  ---main-margin: 0px;
+  margin-bottom: 0;
+}
+
+body.studio-embed #top,
+body.studio-embed #studio-bar,
+body.studio-embed .analyse__underboard {
+  display: none;
+}
+
+/* Phones (lila's one-column layout): the explorer is what the embed is for, the move list only says
+   where you are, so the explorer takes most of the tools box. */
+@media (max-width: 799.29px) and (orientation: portrait) {
+  body.studio-embed .analyse__tools .explorer-box {
+    flex: 5 1 0;
+  }
+
+  body.studio-embed .analyse__tools .analyse__moves {
+    flex: 1 1 0;
+    min-height: 3.2em;
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Phones
+ * ---------------------------------------------------------------------- */
+
+@media (max-width: 799.29px) {
+  /* Tabs keep a readable title and the strip scrolls; only the active tab shows its close button. */
+  .studio-tab {
+    flex-shrink: 0;
+    min-width: 0;
+    max-width: 10.5em;
+  }
+
+  .studio-tab:not(.active) .studio-tab__close {
+    display: none;
+  }
+
+  .studio-tab:not(.active) .studio-tab__title {
+    padding-inline-end: 0.6em;
+  }
+
+  .studio-action {
+    padding: 0 0.6em;
+  }
+
+  .studio-bar {
+    padding: 0 4px 4px;
+  }
+
+  .studio-menu {
+    position: fixed;
+    top: auto;
+    inset-inline: 8px;
+    margin-top: var(---studio-bar-height);
+    max-height: 75vh;
+    overflow-y: auto;
+  }
+}

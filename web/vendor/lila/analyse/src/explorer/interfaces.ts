@@ -3,7 +3,7 @@ export interface Hovering {
   uci: Uci;
 }
 
-export type ExplorerDb = 'lichess' | 'masters' | 'player';
+export type ExplorerDb = 'lichess' | 'masters' | 'player' | 'reference'; // outpost: + local reference DB
 export type ExplorerMode = 'casual' | 'rated';
 export type ExplorerSpeed = Speed;
 
@@ -11,6 +11,25 @@ export interface ExplorerOpts {
   endpoint: string;
   tablebaseEndpoint: string;
   showRatings: boolean;
+  outpost?: ExplorerOutpost;
+}
+
+// Outpost: the "player" database reads an Outpost profile (or account) instead of a Lichess user,
+// "reference" is Outpost's local over-the-board database, and games open in Outpost.
+export interface ExplorerOutpost {
+  playerEndpoint(player: string): string; // absolute base URL for the player db (may carry filters)
+  playerLabel(player: string): string; // display name of a player spec
+  searchPlayers(term: string): Promise<ExplorerPlayerChoice[]>;
+  suggestedPlayers(onLoad?: () => void): ExplorerPlayerChoice[]; // onLoad: they arrived later
+  openGame(db: ExplorerDb, id: string, orientation: Color, fen: FEN): void;
+  requiresAuth(): boolean;
+  loginUrl: string;
+}
+
+export interface ExplorerPlayerChoice {
+  spec: string;
+  label: string;
+  hint?: string;
 }
 
 export interface ExplorerData {

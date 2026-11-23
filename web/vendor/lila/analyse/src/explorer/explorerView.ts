@@ -108,7 +108,7 @@ const showResult = (winner?: Color): VNode =>
 function showGameTable(ctrl: AnalyseCtrl, fen: FEN, title: string, games: OpeningGame[]): MaybeVNode {
   if (!ctrl.explorer.withGames || !games.length) return null;
   const openedId = ctrl.explorer.gameMenu();
-  const isMasters = ctrl.explorer.db() === 'masters';
+  const isMasters = ctrl.explorer.db() === 'masters' || ctrl.explorer.db() === 'reference';
   return hl('table.games', [
     hl('thead', [hl('tr', [hl('th.title', { attrs: { colspan: isMasters ? 4 : 5 } }, title)])]),
     hl(
@@ -157,6 +157,8 @@ function showGameTable(ctrl: AnalyseCtrl, fen: FEN, title: string, games: Openin
 
 function openGame(ctrl: AnalyseCtrl, gameId: string) {
   const orientation = ctrl.chessground.state.orientation;
+  const outpost = ctrl.explorer.opts.outpost;
+  if (outpost) return outpost.openGame(ctrl.explorer.db(), gameId, orientation, ctrl.node.fen);
   const fenParam = ctrl.node.ply > 0 ? '?fen=' + ctrl.node.fen : '';
   const prefix = ctrl.explorer.db() === 'masters' ? '/import/master/' : '/game/';
   const url = prefix + gameId + '/' + orientation + fenParam;
@@ -170,7 +172,7 @@ function gameActions(ctrl: AnalyseCtrl, game: OpeningGame): VNode {
     ctrl.redraw();
   };
   return hl('tr', { key: game.id + '-m' }, [
-    hl('td.game_menu', { attrs: { colspan: ctrl.explorer.db() === 'masters' ? 4 : 5 } }, [
+    hl('td.game_menu', { attrs: { colspan: ['masters', 'reference'].includes(ctrl.explorer.db()) ? 4 : 5 } }, [
       hl(
         'div.game_title',
         `${playerText(game.white, false)} - ${playerText(game.black, false)}, ${showResult(game.winner).text}, ${game.year}`,
@@ -238,7 +240,9 @@ const openingTitle = (ctrl: AnalyseCtrl, data?: OpeningData) => {
     return hl(
       'div.title',
       { attrs: { title } },
-      hl('a', { attrs: { href: `/opening/${opening.name}`, target: '_blank' } }, title),
+      ctrl.explorer.opts.outpost
+        ? hl('span', title) // outpost: no opening pages
+        : hl('a', { attrs: { href: `/opening/${opening.name}`, target: '_blank' } }, title),
     );
   }
   return hl('div.title', showTitle(ctrl.data.game.variant));
@@ -303,13 +307,20 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
   const db = explorer.db();
   const data = explorer.current();
   const queuePosition = data && isOpening(data) && data.queuePosition;
+  const outpost = explorer.opts.outpost;
+  const playerLabel = playerName && outpost ? outpost.playerLabel(playerName) : playerName;
+  const referenceExplanation = 'Over-the-board games in this Outpost\'s reference database';
+  // outpost: four databases share the title row, so the active one drops " database"; no lichess logo
+  const dbWord = outpost ? '' : ' database';
+  // outpost: a player's name (and side) needs the room, so the other databases shrink to their icons
+  const compact = !!outpost && db === 'player' && !!playerName;
 
-  const otherLink = (name: string, title: string) =>
+  const otherLink = (name: string, title: string, icon: LiconValue) =>
     hl(
-      'button.button-link',
+      `button.button-link${compact ? '.compact' : ''}`,
       {
         key: name,
-        attrs: { title },
+        attrs: compact ? { title: `${name}: ${title}`, 'aria-label': name, ...dataIcon(icon) } : { title },
         hook: bind(
           'click',
           () => {
@@ -321,7 +332,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
           explorer.reload,
         ),
       },
-      name,
+      compact ? undefined : name,
     );
   const active = (nodes: LooseVNodes, title: string, icon: LiconValue) =>
     hl(
@@ -335,16 +346,20 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
 
   return hl('div.explorer-title', [
     db === 'masters'
-      ? active([hl('strong', 'Masters'), ' database'], masterDbExplanation, licon.Book)
-      : explorer.config.allDbs.includes('masters') && otherLink('Masters', masterDbExplanation),
+      ? active([hl('strong', 'Masters'), dbWord], masterDbExplanation, licon.Book)
+      : explorer.config.allDbs.includes('masters') && otherLink('Masters', masterDbExplanation, licon.Book),
+    explorer.config.allDbs.includes('reference') &&
+      (db === 'reference'
+        ? active([hl('strong', 'Reference'), dbWord], referenceExplanation, licon.Trophy)
+        : otherLink('Reference', referenceExplanation, licon.Trophy)),
     db === 'lichess'
-      ? active([hl('strong', 'Lichess'), ' database'], i18n.site.lichessDbExplanation, licon.Logo)
-      : otherLink('Lichess', i18n.site.lichessDbExplanation),
+      ? active([hl('strong', 'Lichess'), dbWord], i18n.site.lichessDbExplanation, outpost ? licon.Globe : licon.Logo)
+      : otherLink('Lichess', i18n.site.lichessDbExplanation, outpost ? licon.Globe : licon.Logo),
     db === 'player'
       ? playerName
         ? active(
             [
-              hl(`strong${playerName.length > 14 ? '.long' : ''}`, playerName),
+              hl(`strong${playerLabel.length > 14 ? '.long' : ''}`, { attrs: { title: playerLabel } }, playerLabel),
               ` ${i18n.site[`as${capitalize(config.data.color())}`]}`,
               explorer.isIndexing() &&
                 !configOpened &&
@@ -359,7 +374,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
             i18n.site.switchSides,
             licon.User,
           )
-        : active([hl('strong', 'Player'), ' database'], '', licon.User)
+        : active([hl('strong', 'Player'), dbWord], '', licon.User)
       : hl(
           'button.button-link.player',
           {
@@ -413,8 +428,8 @@ const showAnon = (ctrl: AnalyseCtrl) =>
       hl('p.explanation', i18n.site.youNeedAnAccountToDoThat),
       hl(
         'a.button.button-empty.text',
-        { attrs: { ...dataIcon(licon.Checkmark), href: '/signup' } },
-        i18n.site.signUp,
+        { attrs: { ...dataIcon(licon.Checkmark), href: ctrl.explorer.opts.outpost?.loginUrl ?? '/signup' } },
+        ctrl.explorer.opts.outpost ? i18n.site.signIn : i18n.site.signUp,
       ),
       closeButton(ctrl),
     ]),

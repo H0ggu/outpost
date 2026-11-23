@@ -1,0 +1,383 @@
+diff --git a/analyse/src/explorer/explorerConfig.ts b/analyse/src/explorer/explorerConfig.ts
+index 2079cd4..54c66bb 100644
+--- a/analyse/src/explorer/explorerConfig.ts
++++ b/analyse/src/explorer/explorerConfig.ts
+@@ -11,7 +11,9 @@ import { userComplete } from 'lib/view/userComplete';
+ 
+ import type AnalyseCtrl from '../ctrl';
+ import { ucfirst } from './explorerUtil';
+-import type { ExplorerDb, ExplorerSpeed, ExplorerMode } from './interfaces';
++import { complete } from 'lib/view/complete';
++
++import type { ExplorerDb, ExplorerSpeed, ExplorerMode, ExplorerPlayerChoice } from './interfaces';
+ 
+ const allSpeeds: ExplorerSpeed[] = ['ultraBullet', 'bullet', 'blitz', 'rapid', 'classical', 'correspondence'];
+ const allModes: ExplorerMode[] = ['casual', 'rated'];
+@@ -57,6 +59,7 @@ export class ExplorerConfigCtrl {
+       name => name && name !== this.myName,
+     );
+     if (variant === 'standard') this.allDbs.unshift('masters');
++    if (variant === 'standard' && root.opts.explorer.outpost) this.allDbs.splice(1, 0, 'reference');
+     const byDbData = {} as ByDbSettings;
+     for (const db of this.allDbs) {
+       byDbData[db] = {
+@@ -135,13 +138,15 @@ export class ExplorerConfigCtrl {
+   fullHouse = () =>
+     this.data.byDb().since() <= `${minYear}-01` &&
+     (!this.data.byDb().until() || new Date().toISOString().slice(0, 7) <= this.data.byDb().until()) &&
+-    (this.data.db() === 'masters' || this.data.speed().length === allSpeeds.length) &&
++    (this.data.db() === 'masters' ||
++      this.data.db() === 'reference' ||
++      this.data.speed().length === allSpeeds.length) &&
+     (this.data.db() !== 'lichess' || this.data.rating().length === allRatings.length) &&
+     (this.data.db() !== 'player' || this.data.mode().length === allModes.length);
+ }
+ 
+ export const view = (ctrl: ExplorerConfigCtrl): VNode[] => [
+-  ctrl.data.db() === 'masters'
++  ctrl.data.db() === 'masters' || ctrl.data.db() === 'reference'
+     ? masterDb(ctrl)
+     : ctrl.data.db() === 'lichess'
+       ? lichessDb(ctrl)
+@@ -158,8 +163,14 @@ export const view = (ctrl: ExplorerConfigCtrl): VNode[] => [
+ 
+ const selectText = 'Select a Lichess player';
+ 
++// outpost: player specs are Outpost profiles or accounts; show their display names
++const outpostOf = (ctrl: ExplorerConfigCtrl) => ctrl.root.opts.explorer.outpost;
++const playerLabel = (ctrl: ExplorerConfigCtrl, name: string) =>
++  outpostOf(ctrl)?.playerLabel(name) ?? name;
++
+ const playerDb = (ctrl: ExplorerConfigCtrl) => {
+   const name = ctrl.data.playerName.value();
++  const select = outpostOf(ctrl) ? 'Select a player' : selectText;
+   return h('div.player-db', [
+     h('section.name', [
+       h('label', i18n.site.player),
+@@ -170,9 +181,9 @@ const playerDb = (ctrl: ExplorerConfigCtrl) => {
+             `button.player-name${name ? '.active' : ''}`,
+             {
+               hook: bind('click', () => playerModal(ctrl)),
+-              attrs: name ? { title: selectText } : undefined,
++              attrs: name ? { title: select } : undefined,
+             },
+-            name || selectText,
++            name ? playerLabel(ctrl, name) : select,
+           ),
+         ),
+         h(
+@@ -308,6 +319,30 @@ const monthSection = (ctrl: ExplorerConfigCtrl) => {
+   ]);
+ };
+ 
++// outpost: complete against Outpost profiles and accounts instead of Lichess users
++function outpostPlayerComplete(ctrl: ExplorerConfigCtrl, input: HTMLInputElement, onSelect: (spec: string) => void) {
++  const outpost = outpostOf(ctrl)!;
++  complete<ExplorerPlayerChoice>({
++    input,
++    minLength: 2,
++    fetch: term => outpost.searchPlayers(term),
++    render: c => {
++      const el = document.createElement('span');
++      el.className = 'complete-result';
++      el.textContent = c.label;
++      if (c.hint) {
++        const hint = document.createElement('em');
++        hint.textContent = ` ${c.hint}`;
++        el.append(hint);
++      }
++      return el;
++    },
++    populate: c => c.label,
++    onSelect: c => onSelect(c.spec),
++  });
++  setTimeout(() => input.focus());
++}
++
+ const playerModal = (ctrl: ExplorerConfigCtrl) => {
+   const nameToOptionalColor = (name?: string) => {
+     if (!name) return '';
+@@ -330,15 +365,17 @@ const playerModal = (ctrl: ExplorerConfigCtrl) => {
+         dlg.close();
+       };
+       return [
+-        h('h2', 'Personal opening explorer'),
++        h('h2', outpostOf(ctrl) ? 'Player opening explorer' : 'Personal opening explorer'),
+         h('div.input-wrapper', [
+           h('input', {
+             attrs: {
+-              placeholder: i18n.study.searchByUsername,
++              placeholder: outpostOf(ctrl) ? 'Search profiles and accounts' : i18n.study.searchByUsername,
+               spellcheck: 'false',
+             },
+             hook: onInsert<HTMLInputElement>(input =>
+-              userComplete({ input, focus: true, tag: 'span', onSelect: v => onSelect(v.name) }),
++              outpostOf(ctrl)
++                ? outpostPlayerComplete(ctrl, input, onSelect)
++                : userComplete({ input, focus: true, tag: 'span', onSelect: v => onSelect(v.name) }),
+             ),
+           }),
+         ]),
+@@ -349,13 +386,14 @@ const playerModal = (ctrl: ExplorerConfigCtrl) => {
+               ...(ctrl.myName ? [ctrl.myName] : []),
+               ...ctrl.participants,
+               ...ctrl.data.playerName.previous(),
++              ...(outpostOf(ctrl)?.suggestedPlayers(redraw).map(c => c.spec) ?? []),
+             ]),
+           ].map(name =>
+             h('div', { key: name }, [
+               h(
+                 `button.button${nameToOptionalColor(name)}`,
+                 { hook: bind('click', () => onSelect(name)) },
+-                name,
++                playerLabel(ctrl, name),
+               ),
+               name && ctrl.data.playerName.previous().includes(name)
+                 ? h('button.remove', {
+diff --git a/analyse/src/explorer/explorerCtrl.ts b/analyse/src/explorer/explorerCtrl.ts
+index 01454da..2371800 100644
+--- a/analyse/src/explorer/explorerCtrl.ts
++++ b/analyse/src/explorer/explorerCtrl.ts
+@@ -71,7 +71,8 @@ export default class ExplorerCtrl {
+     const parts = location.hash.split('/');
+     if (parts[0] === '#explorer' || parts[0] === '#opening') {
+       this.enabled(true);
+-      if (parts[1] === 'lichess' || parts[1] === 'masters') this.config.data.db(parts[1]);
++      if (parts[1] === 'lichess' || parts[1] === 'masters' || parts[1] === 'reference')
++        this.config.data.db(parts[1]);
+       else if (parts[1]?.match(/[A-Za-z0-9_-]{2,30}/)) {
+         this.config.selectPlayer(parts[1]);
+         this.config.data.color(parts[2] === 'black' ? 'black' : 'white');
+@@ -82,7 +83,8 @@ export default class ExplorerCtrl {
+ 
+   isAuth = () => defined(myUserId());
+ 
+-  requiresAuth = () => this.config.data.db() !== 'masters' && !this.isAuth();
++  requiresAuth = () =>
++    this.opts.outpost ? this.opts.outpost.requiresAuth() : this.config.data.db() !== 'masters' && !this.isAuth();
+ 
+   reload = () => {
+     this.directInteraction = true;
+@@ -93,6 +95,7 @@ export default class ExplorerCtrl {
+ 
+   private readonly baseXhrOpening = () => ({
+     endpoint: this.opts.endpoint,
++    playerEndpoint: this.opts.outpost?.playerEndpoint(this.config.data.playerName.value()),
+     config: this.config.data,
+   });
+ 
+diff --git a/analyse/src/explorer/explorerView.ts b/analyse/src/explorer/explorerView.ts
+index 5a4b85f..32efb67 100644
+--- a/analyse/src/explorer/explorerView.ts
++++ b/analyse/src/explorer/explorerView.ts
+@@ -108,7 +108,7 @@ const showResult = (winner?: Color): VNode =>
+ function showGameTable(ctrl: AnalyseCtrl, fen: FEN, title: string, games: OpeningGame[]): MaybeVNode {
+   if (!ctrl.explorer.withGames || !games.length) return null;
+   const openedId = ctrl.explorer.gameMenu();
+-  const isMasters = ctrl.explorer.db() === 'masters';
++  const isMasters = ctrl.explorer.db() === 'masters' || ctrl.explorer.db() === 'reference';
+   return hl('table.games', [
+     hl('thead', [hl('tr', [hl('th.title', { attrs: { colspan: isMasters ? 4 : 5 } }, title)])]),
+     hl(
+@@ -157,6 +157,8 @@ function showGameTable(ctrl: AnalyseCtrl, fen: FEN, title: string, games: Openin
+ 
+ function openGame(ctrl: AnalyseCtrl, gameId: string) {
+   const orientation = ctrl.chessground.state.orientation;
++  const outpost = ctrl.explorer.opts.outpost;
++  if (outpost) return outpost.openGame(ctrl.explorer.db(), gameId, orientation, ctrl.node.fen);
+   const fenParam = ctrl.node.ply > 0 ? '?fen=' + ctrl.node.fen : '';
+   const prefix = ctrl.explorer.db() === 'masters' ? '/import/master/' : '/game/';
+   const url = prefix + gameId + '/' + orientation + fenParam;
+@@ -170,7 +172,7 @@ function gameActions(ctrl: AnalyseCtrl, game: OpeningGame): VNode {
+     ctrl.redraw();
+   };
+   return hl('tr', { key: game.id + '-m' }, [
+-    hl('td.game_menu', { attrs: { colspan: ctrl.explorer.db() === 'masters' ? 4 : 5 } }, [
++    hl('td.game_menu', { attrs: { colspan: ['masters', 'reference'].includes(ctrl.explorer.db()) ? 4 : 5 } }, [
+       hl(
+         'div.game_title',
+         `${playerText(game.white, false)} - ${playerText(game.black, false)}, ${showResult(game.winner).text}, ${game.year}`,
+@@ -238,7 +240,9 @@ const openingTitle = (ctrl: AnalyseCtrl, data?: OpeningData) => {
+     return hl(
+       'div.title',
+       { attrs: { title } },
+-      hl('a', { attrs: { href: `/opening/${opening.name}`, target: '_blank' } }, title),
++      ctrl.explorer.opts.outpost
++        ? hl('span', title) // outpost: no opening pages
++        : hl('a', { attrs: { href: `/opening/${opening.name}`, target: '_blank' } }, title),
+     );
+   }
+   return hl('div.title', showTitle(ctrl.data.game.variant));
+@@ -303,13 +307,20 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+   const db = explorer.db();
+   const data = explorer.current();
+   const queuePosition = data && isOpening(data) && data.queuePosition;
++  const outpost = explorer.opts.outpost;
++  const playerLabel = playerName && outpost ? outpost.playerLabel(playerName) : playerName;
++  const referenceExplanation = 'Over-the-board games in this Outpost\'s reference database';
++  // outpost: four databases share the title row, so the active one drops " database"; no lichess logo
++  const dbWord = outpost ? '' : ' database';
++  // outpost: a player's name (and side) needs the room, so the other databases shrink to their icons
++  const compact = !!outpost && db === 'player' && !!playerName;
+ 
+-  const otherLink = (name: string, title: string) =>
++  const otherLink = (name: string, title: string, icon: LiconValue) =>
+     hl(
+-      'button.button-link',
++      `button.button-link${compact ? '.compact' : ''}`,
+       {
+         key: name,
+-        attrs: { title },
++        attrs: compact ? { title: `${name}: ${title}`, 'aria-label': name, ...dataIcon(icon) } : { title },
+         hook: bind(
+           'click',
+           () => {
+@@ -321,7 +332,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+           explorer.reload,
+         ),
+       },
+-      name,
++      compact ? undefined : name,
+     );
+   const active = (nodes: LooseVNodes, title: string, icon: LiconValue) =>
+     hl(
+@@ -335,16 +346,20 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+ 
+   return hl('div.explorer-title', [
+     db === 'masters'
+-      ? active([hl('strong', 'Masters'), ' database'], masterDbExplanation, licon.Book)
+-      : explorer.config.allDbs.includes('masters') && otherLink('Masters', masterDbExplanation),
++      ? active([hl('strong', 'Masters'), dbWord], masterDbExplanation, licon.Book)
++      : explorer.config.allDbs.includes('masters') && otherLink('Masters', masterDbExplanation, licon.Book),
++    explorer.config.allDbs.includes('reference') &&
++      (db === 'reference'
++        ? active([hl('strong', 'Reference'), dbWord], referenceExplanation, licon.Trophy)
++        : otherLink('Reference', referenceExplanation, licon.Trophy)),
+     db === 'lichess'
+-      ? active([hl('strong', 'Lichess'), ' database'], i18n.site.lichessDbExplanation, licon.Logo)
+-      : otherLink('Lichess', i18n.site.lichessDbExplanation),
++      ? active([hl('strong', 'Lichess'), dbWord], i18n.site.lichessDbExplanation, outpost ? licon.Globe : licon.Logo)
++      : otherLink('Lichess', i18n.site.lichessDbExplanation, outpost ? licon.Globe : licon.Logo),
+     db === 'player'
+       ? playerName
+         ? active(
+             [
+-              hl(`strong${playerName.length > 14 ? '.long' : ''}`, playerName),
++              hl(`strong${playerLabel.length > 14 ? '.long' : ''}`, { attrs: { title: playerLabel } }, playerLabel),
+               ` ${i18n.site[`as${capitalize(config.data.color())}`]}`,
+               explorer.isIndexing() &&
+                 !configOpened &&
+@@ -359,7 +374,7 @@ const explorerTitle = (ctrl: AnalyseCtrl) => {
+             i18n.site.switchSides,
+             licon.User,
+           )
+-        : active([hl('strong', 'Player'), ' database'], '', licon.User)
++        : active([hl('strong', 'Player'), dbWord], '', licon.User)
+       : hl(
+           'button.button-link.player',
+           {
+@@ -413,8 +428,8 @@ const showAnon = (ctrl: AnalyseCtrl) =>
+       hl('p.explanation', i18n.site.youNeedAnAccountToDoThat),
+       hl(
+         'a.button.button-empty.text',
+-        { attrs: { ...dataIcon(licon.Checkmark), href: '/signup' } },
+-        i18n.site.signUp,
++        { attrs: { ...dataIcon(licon.Checkmark), href: ctrl.explorer.opts.outpost?.loginUrl ?? '/signup' } },
++        ctrl.explorer.opts.outpost ? i18n.site.signIn : i18n.site.signUp,
+       ),
+       closeButton(ctrl),
+     ]),
+diff --git a/analyse/src/explorer/explorerXhr.ts b/analyse/src/explorer/explorerXhr.ts
+index 60bb1e4..cc5fa57 100644
+--- a/analyse/src/explorer/explorerXhr.ts
++++ b/analyse/src/explorer/explorerXhr.ts
+@@ -6,6 +6,7 @@ import type { ExplorerDb, OpeningData, TablebaseData } from './interfaces';
+ 
+ interface OpeningXhrOpts {
+   endpoint: string;
++  playerEndpoint?: string; // outpost: the player db may live under a filtered base
+   db: ExplorerDb;
+   rootFen: FEN;
+   play: string[];
+@@ -22,12 +23,12 @@ export async function opening(
+ ): Promise<void> {
+   const conf = opts.config;
+   const confByDb = conf.byDb();
+-  const url = new URL(`./${opts.db}`, opts.endpoint);
++  const url = new URL(`./${opts.db}`, (opts.db === 'player' && opts.playerEndpoint) || opts.endpoint);
+   const params = url.searchParams;
+   params.set('variant', opts.variant || 'standard');
+   params.set('fen', opts.rootFen);
+   params.set('play', opts.play.join(','));
+-  if (opts.db === 'masters') {
++  if (opts.db === 'masters' || opts.db === 'reference') {
+     if (confByDb.since()) params.set('since', confByDb.since().split('-')[0]);
+     if (confByDb.until()) params.set('until', confByDb.until().split('-')[0]);
+   } else {
+@@ -58,6 +59,11 @@ export async function opening(
+     signal,
+   });
+ 
++  if (!res.ok) {
++    const err = new Error(await errorMessage(res));
++    err.name = ''; // outpost: lila shows `error.toString()`; show just the server's sentence
++    throw err;
++  }
+   await readNdJson<Partial<OpeningData>>(res, data => {
+     data.isOpening = true;
+     data.fen = opts.fen;
+@@ -65,6 +71,15 @@ export async function opening(
+   });
+ }
+ 
++// outpost: show the server's reason (e.g. no Lichess token configured) instead of a bare status
++async function errorMessage(res: Response): Promise<string> {
++  try {
++    const body = await res.json();
++    if (body?.error?.message) return body.error.message;
++  } catch {}
++  return `Status ${res.status}`;
++}
++
+ export async function tablebase(
+   endpoint: string,
+   variant: VariantKey,
+diff --git a/analyse/src/explorer/interfaces.ts b/analyse/src/explorer/interfaces.ts
+index 8777441..00c78c4 100644
+--- a/analyse/src/explorer/interfaces.ts
++++ b/analyse/src/explorer/interfaces.ts
+@@ -3,7 +3,7 @@ export interface Hovering {
+   uci: Uci;
+ }
+ 
+-export type ExplorerDb = 'lichess' | 'masters' | 'player';
++export type ExplorerDb = 'lichess' | 'masters' | 'player' | 'reference'; // outpost: + local reference DB
+ export type ExplorerMode = 'casual' | 'rated';
+ export type ExplorerSpeed = Speed;
+ 
+@@ -11,6 +11,25 @@ export interface ExplorerOpts {
+   endpoint: string;
+   tablebaseEndpoint: string;
+   showRatings: boolean;
++  outpost?: ExplorerOutpost;
++}
++
++// Outpost: the "player" database reads an Outpost profile (or account) instead of a Lichess user,
++// "reference" is Outpost's local over-the-board database, and games open in Outpost.
++export interface ExplorerOutpost {
++  playerEndpoint(player: string): string; // absolute base URL for the player db (may carry filters)
++  playerLabel(player: string): string; // display name of a player spec
++  searchPlayers(term: string): Promise<ExplorerPlayerChoice[]>;
++  suggestedPlayers(onLoad?: () => void): ExplorerPlayerChoice[]; // onLoad: they arrived later
++  openGame(db: ExplorerDb, id: string, orientation: Color, fen: FEN): void;
++  requiresAuth(): boolean;
++  loginUrl: string;
++}
++
++export interface ExplorerPlayerChoice {
++  spec: string;
++  label: string;
++  hint?: string;
+ }
+ 
+ export interface ExplorerData {

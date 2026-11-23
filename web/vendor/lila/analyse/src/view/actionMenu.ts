@@ -58,7 +58,7 @@ function autoplayButtons(ctrl: AnalyseCtrl): VNode {
 const hiddenInput = (name: string, value: string) => hl('input', { attrs: { type: 'hidden', name, value } });
 
 function studyButton(ctrl: AnalyseCtrl) {
-  if (ctrl.study || ctrl.ongoing) return undefined;
+  if (ctrl.study || ctrl.ongoing || ctrl.opts.outpost) return undefined; // outpost: My Files instead
   return hl(
     'form',
     {
@@ -85,7 +85,8 @@ function studyButton(ctrl: AnalyseCtrl) {
 
 export function view(ctrl: AnalyseCtrl): VNode {
   const d = ctrl.data;
-  const canContinue = !ctrl.ongoing && d.game.variant.key === 'standard';
+  // outpost: no games to continue against the AI or a friend, no board editor, no server review
+  const canContinue = !ctrl.ongoing && d.game.variant.key === 'standard' && !ctrl.opts.outpost;
   const canPractice = ctrl.isCevalAllowed() && !ctrl.isEmbed && !ctrl.isGamebook() && !ctrl.practice;
   const canRetro = !ctrl.study && !ctrl.isEmbed && !ctrl.retro && ctrl.hasFullComputerAnalysis();
   const linkAttrs = { rel: ctrl.isEmbed ? '' : 'nofollow', target: ctrl.isEmbed ? '_blank' : '' };
@@ -105,6 +106,7 @@ export function view(ctrl: AnalyseCtrl): VNode {
         i18n.site.flipBoard,
       ),
       !ctrl.ongoing &&
+        !ctrl.opts.outpost &&
         hl(
           'a',
           {
@@ -149,6 +151,7 @@ export function view(ctrl: AnalyseCtrl): VNode {
         ),
       studyButton(ctrl),
       ctrl.canAnalyseMainline() &&
+        !ctrl.opts.outpost &&
         hl(
           'button',
           {

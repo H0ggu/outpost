@@ -11,7 +11,9 @@ import { userComplete } from 'lib/view/userComplete';
 
 import type AnalyseCtrl from '../ctrl';
 import { ucfirst } from './explorerUtil';
-import type { ExplorerDb, ExplorerSpeed, ExplorerMode } from './interfaces';
+import { complete } from 'lib/view/complete';
+
+import type { ExplorerDb, ExplorerSpeed, ExplorerMode, ExplorerPlayerChoice } from './interfaces';
 
 const allSpeeds: ExplorerSpeed[] = ['ultraBullet', 'bullet', 'blitz', 'rapid', 'classical', 'correspondence'];
 const allModes: ExplorerMode[] = ['casual', 'rated'];
@@ -57,6 +59,7 @@ export class ExplorerConfigCtrl {
       name => name && name !== this.myName,
     );
     if (variant === 'standard') this.allDbs.unshift('masters');
+    if (variant === 'standard' && root.opts.explorer.outpost) this.allDbs.splice(1, 0, 'reference');
     const byDbData = {} as ByDbSettings;
     for (const db of this.allDbs) {
       byDbData[db] = {
@@ -135,13 +138,15 @@ export class ExplorerConfigCtrl {
   fullHouse = () =>
     this.data.byDb().since() <= `${minYear}-01` &&
     (!this.data.byDb().until() || new Date().toISOString().slice(0, 7) <= this.data.byDb().until()) &&
-    (this.data.db() === 'masters' || this.data.speed().length === allSpeeds.length) &&
+    (this.data.db() === 'masters' ||
+      this.data.db() === 'reference' ||
+      this.data.speed().length === allSpeeds.length) &&
     (this.data.db() !== 'lichess' || this.data.rating().length === allRatings.length) &&
     (this.data.db() !== 'player' || this.data.mode().length === allModes.length);
 }
 
 export const view = (ctrl: ExplorerConfigCtrl): VNode[] => [
-  ctrl.data.db() === 'masters'
+  ctrl.data.db() === 'masters' || ctrl.data.db() === 'reference'
     ? masterDb(ctrl)
     : ctrl.data.db() === 'lichess'
       ? lichessDb(ctrl)
@@ -158,8 +163,14 @@ export const view = (ctrl: ExplorerConfigCtrl): VNode[] => [
 
 const selectText = 'Select a Lichess player';
 
+// outpost: player specs are Outpost profiles or accounts; show their display names
+const outpostOf = (ctrl: ExplorerConfigCtrl) => ctrl.root.opts.explorer.outpost;
+const playerLabel = (ctrl: ExplorerConfigCtrl, name: string) =>
+  outpostOf(ctrl)?.playerLabel(name) ?? name;
+
 const playerDb = (ctrl: ExplorerConfigCtrl) => {
   const name = ctrl.data.playerName.value();
+  const select = outpostOf(ctrl) ? 'Select a player' : selectText;
   return h('div.player-db', [
     h('section.name', [
       h('label', i18n.site.player),
@@ -170,9 +181,9 @@ const playerDb = (ctrl: ExplorerConfigCtrl) => {
             `button.player-name${name ? '.active' : ''}`,
             {
               hook: bind('click', () => playerModal(ctrl)),
-              attrs: name ? { title: selectText } : undefined,
+              attrs: name ? { title: select } : undefined,
             },
-            name || selectText,
+            name ? playerLabel(ctrl, name) : select,
           ),
         ),
         h(
@@ -308,6 +319,30 @@ const monthSection = (ctrl: ExplorerConfigCtrl) => {
   ]);
 };
 
+// outpost: complete against Outpost profiles and accounts instead of Lichess users
+function outpostPlayerComplete(ctrl: ExplorerConfigCtrl, input: HTMLInputElement, onSelect: (spec: string) => void) {
+  const outpost = outpostOf(ctrl)!;
+  complete<ExplorerPlayerChoice>({
+    input,
+    minLength: 2,
+    fetch: term => outpost.searchPlayers(term),
+    render: c => {
+      const el = document.createElement('span');
+      el.className = 'complete-result';
+      el.textContent = c.label;
+      if (c.hint) {
+        const hint = document.createElement('em');
+        hint.textContent = ` ${c.hint}`;
+        el.append(hint);
+      }
+      return el;
+    },
+    populate: c => c.label,
+    onSelect: c => onSelect(c.spec),
+  });
+  setTimeout(() => input.focus());
+}
+
 const playerModal = (ctrl: ExplorerConfigCtrl) => {
   const nameToOptionalColor = (name?: string) => {
     if (!name) return '';
@@ -330,15 +365,17 @@ const playerModal = (ctrl: ExplorerConfigCtrl) => {
         dlg.close();
       };
       return [
-        h('h2', 'Personal opening explorer'),
+        h('h2', outpostOf(ctrl) ? 'Player opening explorer' : 'Personal opening explorer'),
         h('div.input-wrapper', [
           h('input', {
             attrs: {
-              placeholder: i18n.study.searchByUsername,
+              placeholder: outpostOf(ctrl) ? 'Search profiles and accounts' : i18n.study.searchByUsername,
               spellcheck: 'false',
             },
             hook: onInsert<HTMLInputElement>(input =>
-              userComplete({ input, focus: true, tag: 'span', onSelect: v => onSelect(v.name) }),
+              outpostOf(ctrl)
+                ? outpostPlayerComplete(ctrl, input, onSelect)
+                : userComplete({ input, focus: true, tag: 'span', onSelect: v => onSelect(v.name) }),
             ),
           }),
         ]),
@@ -349,13 +386,14 @@ const playerModal = (ctrl: ExplorerConfigCtrl) => {
               ...(ctrl.myName ? [ctrl.myName] : []),
               ...ctrl.participants,
               ...ctrl.data.playerName.previous(),
+              ...(outpostOf(ctrl)?.suggestedPlayers(redraw).map(c => c.spec) ?? []),
             ]),
           ].map(name =>
             h('div', { key: name }, [
               h(
                 `button.button${nameToOptionalColor(name)}`,
                 { hook: bind('click', () => onSelect(name)) },
-                name,
+                playerLabel(ctrl, name),
               ),
               name && ctrl.data.playerName.previous().includes(name)
                 ? h('button.remove', {

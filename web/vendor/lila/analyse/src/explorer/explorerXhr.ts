@@ -6,6 +6,7 @@ import type { ExplorerDb, OpeningData, TablebaseData } from './interfaces';
 
 interface OpeningXhrOpts {
   endpoint: string;
+  playerEndpoint?: string; // outpost: the player db may live under a filtered base
   db: ExplorerDb;
   rootFen: FEN;
   play: string[];
@@ -22,12 +23,12 @@ export async function opening(
 ): Promise<void> {
   const conf = opts.config;
   const confByDb = conf.byDb();
-  const url = new URL(`./${opts.db}`, opts.endpoint);
+  const url = new URL(`./${opts.db}`, (opts.db === 'player' && opts.playerEndpoint) || opts.endpoint);
   const params = url.searchParams;
   params.set('variant', opts.variant || 'standard');
   params.set('fen', opts.rootFen);
   params.set('play', opts.play.join(','));
-  if (opts.db === 'masters') {
+  if (opts.db === 'masters' || opts.db === 'reference') {
     if (confByDb.since()) params.set('since', confByDb.since().split('-')[0]);
     if (confByDb.until()) params.set('until', confByDb.until().split('-')[0]);
   } else {
@@ -58,11 +59,25 @@ export async function opening(
     signal,
   });
 
+  if (!res.ok) {
+    const err = new Error(await errorMessage(res));
+    err.name = ''; // outpost: lila shows `error.toString()`; show just the server's sentence
+    throw err;
+  }
   await readNdJson<Partial<OpeningData>>(res, data => {
     data.isOpening = true;
     data.fen = opts.fen;
     processData(data as OpeningData);
   });
+}
+
+// outpost: show the server's reason (e.g. no Lichess token configured) instead of a bare status
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body?.error?.message) return body.error.message;
+  } catch {}
+  return `Status ${res.status}`;
 }
 
 export async function tablebase(

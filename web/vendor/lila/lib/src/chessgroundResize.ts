@@ -35,7 +35,14 @@ export default function resizeHandle(
     const initialZoom = parseInt(window.getComputedStyle(document.body).getPropertyValue('---zoom'));
     let zoom = initialZoom;
 
-    const saveZoom = debounce(() => xhr.text(`/pref/zoom?v=${zoom}`, { method: 'post' }), 700);
+    // outpost: no /pref endpoint; keep the zoom in this browser (read back by the Studio at startup)
+    const saveZoom = debounce(
+      () =>
+        document.body.dataset.zoomStorage
+          ? localStorage.setItem(document.body.dataset.zoomStorage, `${zoom}`)
+          : xhr.text(`/pref/zoom?v=${zoom}`, { method: 'post' }),
+      700,
+    );
 
     const resize = (move: MouchEvent) => {
       const pos = eventPosition(move)!;
