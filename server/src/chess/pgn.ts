@@ -177,11 +177,12 @@ export function pgnToNormalizedGame(
   ctx: { origin: 'pgn' | 'reference'; databaseId: Id },
 ): NormalizedGame | { skip: PgnSkipReason; detail?: string } {
   const variant = game.headers.get('Variant');
-  // chessops reads Chess960 as standard chess (same rules); without its FEN tag the game would be
-  // replayed from the standard start, so it is skipped as a variant like the others.
-  if (parseVariant(variant) !== 'chess' || (variant && CHESS960_RE.test(variant))) return { skip: 'variant' };
+  if (parseVariant(variant) !== 'chess') return { skip: 'variant' };
   const start = startingPosition(game.headers);
   if (start.isErr || epdOf(start.value) !== epdOf(Chess.default())) return { skip: 'fromPosition' };
+  // chessops reads Chess960 as standard chess (same rules): with its FEN it was skipped just above,
+  // but without one it would be replayed from the standard start, so it is skipped as a variant.
+  if (variant && CHESS960_RE.test(variant) && !game.headers.get('FEN')) return { skip: 'variant' };
   const result = parseResult(game.headers.get('Result'));
   if (!result) return { skip: 'noResult' };
 
