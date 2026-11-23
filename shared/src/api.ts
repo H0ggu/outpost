@@ -687,6 +687,11 @@ export interface SearchResults {
   lichess: ExternalPlayerHit[];
   chesscom: ExternalPlayerHit[];
   reference: ReferencePlayer[];
+  /**
+   * Lists whose lookup failed (upstream timeout, error or rate limit), so an empty list there means
+   * "unknown" rather than "no match". Optional: omitted (or empty) when every lookup answered.
+   */
+  unavailable?: Array<'lichess' | 'chesscom' | 'reference'>;
 }
 
 // ===========================================================================
