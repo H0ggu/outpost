@@ -1359,7 +1359,10 @@ export interface DatabaseInfo {
   builtin?: boolean;
 }
 
-/** `GET /api/databases`. Mine plus visible public ones. */
+/**
+ * `GET /api/databases`. Mine, then other users' public ones, then the reference databases the
+ * viewer may read (every public one; private ones for admins), each group by name.
+ */
 export interface DatabasesResponse {
   databases: DatabaseInfo[];
 }

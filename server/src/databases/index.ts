@@ -4,8 +4,9 @@
  * (`import.ts`). Reference databases are readable here too (instance-wide data); only admins may
  * change them, and their imports go through the reference module.
  *
- * Access: `loadDatabaseForViewer` (src/profiles/access.ts): owner or admin edit a `games`
- * database; others see it only while it is public (404 otherwise).
+ * Access: `loadDatabaseForViewer` (src/profiles/access.ts, the one database rule): owner or admin
+ * edit a `games` database; other signed-in users see it only while it is public; a reference
+ * database is readable by everyone unless an admin made it private (404 otherwise).
  */
 import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import type {
@@ -21,12 +22,14 @@ import type {
 } from '@outpost/shared/api';
 import { playerKey } from '@outpost/shared/chess';
 import { z } from 'zod';
+import { relinkFideSources } from '../chess/index.ts';
 import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
 import { forbidden, notFound } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import { getJob } from '../jobs/index.ts';
-import type { ViewableDatabase } from '../profiles/access.ts';
+import { READABLE_DATABASE_SQL, readerParams, type ViewableDatabase } from '../profiles/access.ts';
+import { BROADCAST_BUILTIN } from '../reference/databases.ts';
 import { cancelQueuedSyncs } from '../profiles/service.ts';
 import { DB_GAME_ROW_COLUMNS, likeContains, toDbGameRow, type DbGameRowRecord } from '../stats/index.ts';
 import { dropDatabaseUploads } from './import.ts';
@@ -152,15 +155,22 @@ export function databaseInfo(db: Db, database: ViewableDatabase, viewer: AuthUse
   return toInfo(db, row, viewer);
 }
 
-/** `GET /api/databases`: my `games` databases first, then the public ones of others (by name). */
+/**
+ * `GET /api/databases`: my `games` databases first, then the public ones of others, then the
+ * reference databases the viewer may read (instance-wide data, decision 2; private ones for admins
+ * only), each group by name.
+ */
 export function listDatabases(db: Db, viewer: AuthUser | null): DatabaseInfo[] {
-  const rows = db.all<DatabaseRow>(
-    `SELECT ${DATABASE_COLUMNS} FROM databases d LEFT JOIN users u ON u.id = d.owner_user_id
-      WHERE d.kind = 'games' AND (d.visibility = 'public' OR d.owner_user_id = ?)
-      ORDER BY (d.owner_user_id IS ?) DESC, d.name COLLATE NOCASE, d.id`,
-    [viewer?.id ?? null, viewer?.id ?? -1],
+  const rows = db.all<DatabaseRow & { builtin: string | null }>(
+    `SELECT ${DATABASE_COLUMNS}, r.builtin FROM databases d
+       LEFT JOIN users u ON u.id = d.owner_user_id
+       LEFT JOIN reference_databases r ON r.database_id = d.id
+      WHERE (d.kind = 'games' AND (d.visibility = 'public' OR d.owner_user_id = :me))
+         OR (d.kind = 'reference' AND ${READABLE_DATABASE_SQL})
+      ORDER BY d.kind = 'reference', (d.owner_user_id IS :me) DESC, (r.builtin IS NULL), d.name COLLATE NOCASE, d.id`,
+    readerParams(viewer),
   );
-  return rows.map(r => toInfo(db, r, viewer));
+  return rows.map(r => ({ ...toInfo(db, r, viewer), ...(r.kind === 'reference' ? { builtin: r.builtin === BROADCAST_BUILTIN } : {}) }));
 }
 
 /** 403 unless the viewer may change the database. */
@@ -183,7 +193,10 @@ export function createDatabase(db: Db, viewer: AuthUser, body: CreateDatabaseReq
   ).lastInsertRowid;
 }
 
-/** `PATCH /api/databases/:id`. */
+/**
+ * `PATCH /api/databases/:id`. A reference database made private becomes admins-only, which also
+ * takes it out of every FIDE player (and a public one puts it back): `relinkFideSources`.
+ */
 export function updateDatabase(db: Db, database: ViewableDatabase, patch: UpdateDatabaseRequest): void {
   requireDatabaseEditor(database);
   const sets: string[] = [];
@@ -199,7 +212,13 @@ export function updateDatabase(db: Db, database: ViewableDatabase, patch: Update
     sets.push(`${column} = ?`);
     params.push(v);
   }
-  if (sets.length) db.run(`UPDATE databases SET ${sets.join(', ')} WHERE id = ?`, [...params, database.id]);
+  if (sets.length === 0) return;
+  db.tx(() => {
+    db.run(`UPDATE databases SET ${sets.join(', ')} WHERE id = ?`, [...params, database.id]);
+    if (database.kind === 'reference' && patch.visibility !== undefined && patch.visibility !== database.visibility) {
+      relinkFideSources(db, database.id);
+    }
+  });
 }
 
 const DELETE_BATCH = 500;

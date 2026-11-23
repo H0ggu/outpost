@@ -11,11 +11,55 @@
  *     const profile = loadProfileForViewer(app.db, slug, req.user);
  *     const where = playerGamesWhere(parseFiltersQuery(req.query), { sourceIds: profile.sourceIds });
  *     …
+ *
+ * **The one database rule** (`canReadDatabase`, `READABLE_DATABASE_SQL`), applied by every path
+ * that reaches a database's games — the database pages, `db:<id>` explorers, `/api/games/:id`,
+ * masters `op<id>` PGNs, `pgn` sources of profiles, the reference explorer:
+ * - admins read every database;
+ * - a `games` database: its owner, and every **signed-in** user while it is public (database
+ *   reads need a session even with anonymous browsing on, decision 6);
+ * - a `reference` database: every viewer while it is public (instance-wide data, decision 2;
+ *   anonymous visitors too when anonymous browsing is on); a private one is admins only.
  */
 import type { DatabaseKind, Id, Visibility } from '@outpost/shared/api';
 import type { Db } from '../db/index.ts';
 import { notFound } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
+
+/** What read access to a database depends on (a `databases` row). */
+export interface DatabaseAccessRow {
+  kind: DatabaseKind;
+  visibility: Visibility;
+  owner_user_id: Id | null;
+}
+
+/** May `viewer` (null = anonymous) read the games of this database? See the module comment. */
+export function canReadDatabase(row: DatabaseAccessRow, viewer: AuthUser | null): boolean {
+  if (viewer?.role === 'admin') return true;
+  if (row.visibility === 'public') return row.kind === 'reference' || viewer !== null;
+  return row.kind === 'games' && viewer !== null && viewer.id === row.owner_user_id;
+}
+
+/**
+ * `canReadDatabase` as SQL over a `databases` row aliased `d`, with the named parameters `:me`
+ * (viewer id or null) and `:admin` (boolean): bind them with `readerParams(viewer)`.
+ */
+export const READABLE_DATABASE_SQL = `(:admin
+  OR (d.visibility = 'public' AND (d.kind = 'reference' OR :me IS NOT NULL))
+  OR (d.kind = 'games' AND d.owner_user_id = :me))`;
+
+/** The `:me` / `:admin` parameters of `READABLE_DATABASE_SQL`. */
+export const readerParams = (viewer: AuthUser | null): { me: Id | null; admin: boolean } => ({
+  me: viewer?.id ?? null,
+  admin: viewer?.role === 'admin',
+});
+
+/** Ids of the reference databases `viewer` may read (oldest first). */
+export function readableReferenceDatabaseIds(db: Db, viewer: AuthUser | null): Id[] {
+  return db
+    .all<{ id: Id }>(`SELECT d.id FROM databases d WHERE d.kind = 'reference' AND ${READABLE_DATABASE_SQL} ORDER BY d.id`, readerParams(viewer))
+    .map(r => r.id);
+}
 
 /** A profile the viewer may read. */
 export interface ViewableProfile {
@@ -29,7 +73,7 @@ export interface ViewableProfile {
   canEdit: boolean;
   /**
    * Source ids the viewer may see (hidden ones only when `canEdit`; `pgn` sources only when the
-   * viewer may read their database). Pass these to `playerGamesWhere`.
+   * viewer may read their database, `canReadDatabase`). Pass these to `playerGamesWhere`.
    */
   sourceIds: Id[];
 }
@@ -53,17 +97,17 @@ export function loadProfileForViewer(db: Db, slug: string, viewer: AuthUser | nu
   const canEdit = viewer !== null && (isAdmin || viewer.id === row.owner_user_id);
   if (row.visibility === 'private' && !canEdit) throw notFound('Profile not found');
   // A `pgn` source reads a database: its games count only while the viewer may read that database
-  // (a public profile must not expose a private PGN collection of someone else).
+  // (a public profile must not expose a private PGN collection of someone else; decision 6).
   const sourceIds = db
     .all<{ source_id: Id }>(
       `SELECT ps.source_id
          FROM profile_sources ps
          JOIN sources s ON s.id = ps.source_id
          LEFT JOIN databases d ON d.id = s.database_id
-        WHERE ps.profile_id = ? AND (ps.hidden = 0 OR ?)
-          AND (s.database_id IS NULL OR d.kind = 'reference' OR d.visibility = 'public' OR ? OR d.owner_user_id = ?)
+        WHERE ps.profile_id = :profile AND (ps.hidden = 0 OR :canEdit)
+          AND (s.database_id IS NULL OR ${READABLE_DATABASE_SQL})
         ORDER BY ps.source_id`,
-      [row.id, canEdit, isAdmin, viewer?.id ?? null],
+      { profile: row.id, canEdit, ...readerParams(viewer) },
     )
     .map(r => r.source_id);
   return {
@@ -90,19 +134,18 @@ export interface ViewableDatabase {
 }
 
 /**
- * Loads a database for `viewer`. Reference databases are instance-wide data and readable by every
- * viewer; a `games` database is readable by its owner and admins, or by every viewer when public.
- * Throws 404 otherwise.
+ * Loads a database for `viewer` under the one database rule (module comment: reference databases
+ * for every viewer unless private, `games` databases for their owner, or for signed-in users while
+ * public; admins read all). Throws 404 otherwise.
  */
 export function loadDatabaseForViewer(db: Db, id: Id, viewer: AuthUser | null): ViewableDatabase {
   const row = db.get<{ id: Id; name: string; kind: DatabaseKind; owner_user_id: Id | null; visibility: Visibility }>(
     'SELECT id, name, kind, owner_user_id, visibility FROM databases WHERE id = ?',
     [id],
   );
-  if (!row) throw notFound('Database not found');
+  if (!row || !canReadDatabase(row, viewer)) throw notFound('Database not found');
   const isAdmin = viewer?.role === 'admin';
   const canEdit = row.kind === 'reference' ? isAdmin : isAdmin || (viewer !== null && viewer.id === row.owner_user_id);
-  if (row.kind === 'games' && row.visibility === 'private' && !canEdit) throw notFound('Database not found');
   return { id: row.id, name: row.name, kind: row.kind, ownerUserId: row.owner_user_id, visibility: row.visibility, canEdit };
 }
 

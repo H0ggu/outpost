@@ -14,7 +14,7 @@ describe('rebuild and local sync jobs', () => {
     insertGame(t.db, testGame({ origin: 'pgn', originId: `${dbId}:a`, databaseId: dbId, white: { name: 'Carol Smith' }, black: { name: 'Dave Jones', fideId: '999001' } }));
     insertGame(t.db, testGame({ origin: 'pgn', originId: `${dbId}:b`, databaseId: dbId, white: { name: 'Dave Jones', fideId: '999001' }, black: { name: 'Carol Smith' }, result: '0-1' }));
     // The same player in a reference database: FIDE sources link these games only (decision 1).
-    refDb = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'reference', 0)").lastInsertRowid;
+    refDb = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('OTB', 'reference', 'public', 0)").lastInsertRowid;
     insertGame(t.db, testGame({ origin: 'reference', originId: `${refDb}:a`, databaseId: refDb, white: { name: 'Erin Park' }, black: { name: 'Jones, Dave', fideId: '999001' } }));
     insertGame(t.db, testGame({ origin: 'reference', originId: `${refDb}:b`, databaseId: refDb, white: { name: 'Jones, Dave', fideId: '999001' }, black: { name: 'Erin Park' }, result: '0-1' }));
   });

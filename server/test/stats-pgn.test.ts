@@ -163,7 +163,7 @@ describe('PGN export of OTB games', () => {
     cookie = createUserSession(t.db, { username: 'otb-viewer' }).cookie;
     // FIDE sources read reference databases only (decision 1), so the OTB games live in one; the
     // PGN spelling of the name is a `pgn` source of the same reference database.
-    const dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'reference', 0)").lastInsertRowid;
+    const dbId = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('OTB', 'reference', 'public', 0)").lastInsertRowid;
     const fide = createSource(t.db, { kind: 'fide', key: '999001', displayName: 'Testplayer, Anna' });
     const pgn = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(dbId, 'Testplayer, A'), displayName: 'Testplayer, A', databaseId: dbId });
     createProfile(t.db, { slug: 'anna', displayName: 'Anna T.', ownerUserId: null, sources: [{ id: pgn }, { id: fide }] });

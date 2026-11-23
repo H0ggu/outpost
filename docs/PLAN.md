@@ -120,6 +120,7 @@ Migrations at integration (2026-11-23), applied in number order on a fresh datab
 later rebuild of `games` must recreate them), `500_databases_files`, `501_sources_autoincrement`,
 `503_files_quota`, `600_reference`, `601_reference_fide_dedupe` (the one FIDE rule: `fide` sources
 link reference games only, one copy per game; decision 1). There is no `502` (merged into `601`).
+Added after the review: `602_reference_private_fide` (FIDE sources link public reference databases only, DECISIONS R2).
 
 - **users** `(id, username UNIQUE COLLATE NOCASE, password_hash, role 'admin'|'user', disabled, totp_secret, created_at, prefs_json)`
 - **sessions** `(id_hash PK, user_id, created_at, expires_at, last_seen_at, ip, user_agent)`
@@ -373,7 +374,7 @@ Follow `docs/research/lila-ui-extraction.md`, option A.
     (`font-src` allows `data:` for pgn-viewer's embedded icon font, `lpv-fontello`)
   - COOP/COEP as in §8
   - `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`
-- **Access.** Public profiles and their stats can be read anonymously only when `anonymousBrowsing` is on. Everything else needs a session, and owners or admins for mutations.
+- **Access.** Public profiles and their stats can be read anonymously only when `anonymousBrowsing` is on. Everything else needs a session, and owners or admins for mutations. Databases follow one rule wherever their games are read (DECISIONS R1): user databases need a session (owner, or anyone signed in while public); reference databases are open to every viewer unless an admin makes one private (then admins only, and it never feeds FIDE players, R2).
 - **Secrets.** The Lichess token never reaches the browser. All upstream calls go through the server.
 - **Uploads.** Size limits: PGN 50 MB (pasted PGN 5 MB), reference import 2 GB streamed to disk.
 - **Per-user limits** (decision 7): 2,000,000 games across a user's PGN databases (admins: none), 3 pending imports, 10 database exports per minute; Studio files 100 MB of PGN (recycle bin included), 10,000 files, 2,000,000 indexed positions; prep lines from each opponent's latest 5,000 games.

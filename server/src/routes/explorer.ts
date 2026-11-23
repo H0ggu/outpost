@@ -24,7 +24,8 @@ import {
 } from '../explorer/params.ts';
 import { gamePgn, loadPgnGame } from '../explorer/pgn.ts';
 import { createExplorerProxy, type ProxyResult } from '../explorer/proxy.ts';
-import { loadDatabaseForViewer } from '../profiles/access.ts';
+import type { AuthUser } from '../http/types.ts';
+import { canReadDatabase, loadDatabaseForViewer, type DatabaseAccessRow } from '../profiles/access.ts';
 import { readSettings } from '../settings.ts';
 
 /**
@@ -90,13 +91,16 @@ const explorerRoutes: FastifyPluginAsync = async app => {
   const E = API_ROUTES.explorer;
   const filtered = (db: string): string => `${E.filteredBase(':filters')}${db}`;
 
-  /** The reference DB behind the masters explorer, or null for Lichess (a missing DB falls back to Lichess). */
-  const mastersReferenceDb = (): Id | null => {
+  /**
+   * The reference DB behind the masters explorer for `viewer`, or null for Lichess: a missing DB
+   * falls back to Lichess, and so does a private one for viewers who may not read it (admins only).
+   */
+  const mastersReferenceDb = (viewer: AuthUser | null): Id | null => {
     const source = readSettings(app.db, app.config).mastersSource;
     if (!source.startsWith('reference:')) return null;
     const id = Number(source.slice('reference:'.length));
-    const kind = app.db.value<string>('SELECT kind FROM databases WHERE id = ?', [id]);
-    if (kind === 'reference') return id;
+    const row = app.db.get<DatabaseAccessRow>('SELECT kind, visibility, owner_user_id FROM databases WHERE id = ?', [id]);
+    if (row?.kind === 'reference') return canReadDatabase(row, viewer) ? id : null;
     app.log.warn({ mastersSource: source }, 'masters explorer: the configured reference database is missing; using Lichess');
     return null;
   };
@@ -118,7 +122,7 @@ const explorerRoutes: FastifyPluginAsync = async app => {
   // --- Reference explorer (masters shape) -----------------------------------------------------
   const reference = async (req: FastifyRequest, reply: FastifyReply) => {
     const q = parseQuery(referenceQuerySchema, req.query);
-    const res = await local.reference({ ...q, databaseId: null, filters: segmentFilters(req), signal: clientSignal(reply) });
+    const res = await local.reference({ ...q, databaseId: null, viewer: req.user, filters: segmentFilters(req), signal: clientSignal(reply) });
     return reply.header('cache-control', 'private, max-age=60').send(res);
   };
   app.get(E.reference, { preHandler: requireViewer, config: localLimit }, reference);
@@ -127,9 +131,9 @@ const explorerRoutes: FastifyPluginAsync = async app => {
   // --- Masters --------------------------------------------------------------------------------
   const masters = async (req: FastifyRequest, reply: FastifyReply) => {
     const q = parseQuery(mastersQuerySchema, req.query);
-    const refDb = mastersReferenceDb();
+    const refDb = mastersReferenceDb(req.user);
     if (refDb !== null) {
-      const res = await local.reference({ ...q, databaseId: refDb, filters: segmentFilters(req), signal: clientSignal(reply) });
+      const res = await local.reference({ ...q, databaseId: refDb, viewer: req.user, filters: segmentFilters(req), signal: clientSignal(reply) });
       return reply.header('x-outpost-source', 'reference').header('cache-control', 'private, max-age=60').send(res);
     }
     segmentFilters(req); // still validate the segment

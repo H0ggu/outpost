@@ -2,19 +2,20 @@
  * One stored game with its PGN (`GET /api/games/:id`, PLAN §6).
  *
  * Access (PLAN §10): admins see every game. Anyone else (anonymous only when anonymous browsing
- * is on, which the route's preHandler decides) sees a game when any of these holds:
- * - it is in a database they may read (`loadDatabaseForViewer`: reference databases, public
- *   databases, their own);
- * - a source of a profile they may read played it — a public profile's visible source, or any
- *   source of their own profile.
+ * is on, which the route's preHandler decides) sees:
+ * - a game stored in a database (PGN and reference games) only when they may read that database
+ *   (`canReadDatabase`, the one database rule). Nothing else counts: a `pgn` source on a public
+ *   profile never opens a private database (decision 6);
+ * - a site game (Lichess, Chess.com) when a source of a profile they may read played it — a
+ *   public profile's visible source, or any source of their own profile.
  * Otherwise the answer is 404, so private games don't reveal that they exist.
  */
 import type { GameDetail, GamePlayer, GameResponse, Id } from '@outpost/shared/api';
 import { isTitle } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
-import { HttpError, notFound } from '../http/errors.ts';
+import { notFound } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
-import { loadDatabaseForViewer } from '../profiles/access.ts';
+import { canReadDatabase, type DatabaseAccessRow } from '../profiles/access.ts';
 import { gameToPgn, parseHeaders, PGN_GAME_COLUMNS, pgnTags, type PgnGameRecord } from './pgnWriter.ts';
 
 /** A `games` row with everything `GameDetail` and the PGN need. */
@@ -33,12 +34,10 @@ interface GameDetailRecord extends PgnGameRecord {
 export function canViewGame(db: Db, game: { id: Id; database_id: Id | null }, viewer: AuthUser | null): boolean {
   if (viewer?.role === 'admin') return true;
   if (game.database_id !== null) {
-    try {
-      loadDatabaseForViewer(db, game.database_id, viewer);
-      return true;
-    } catch (e) {
-      if (!(e instanceof HttpError) || e.statusCode !== 404) throw e;
-    }
+    // Only the database decides: profiles reach database games through `pgn` / `fide` sources,
+    // which never grant more than the database itself.
+    const database = db.get<DatabaseAccessRow>('SELECT kind, visibility, owner_user_id FROM databases WHERE id = ?', [game.database_id]);
+    return database !== undefined && canReadDatabase(database, viewer);
   }
   const viewerId = viewer?.id ?? -1;
   return (

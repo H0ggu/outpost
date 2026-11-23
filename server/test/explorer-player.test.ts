@@ -359,6 +359,58 @@ describe('player explorer (/api/explorer/player)', () => {
     }
   });
 
+  it('keeps user databases closed to anonymous visitors, even public ones (decision 6)', async () => {
+    writeSettings(t.db, { anonymousBrowsing: true });
+    try {
+      expect((await get(`player=db:${gamesDb}&color=white`, null)).statusCode).toBe(404);
+      expect((await get(`player=db:${gamesDb}`, null, '/api/explorer/games')).statusCode).toBe(404);
+      expect((await t.app.inject({ url: `/api/explorer/masters/pgn/op${ids.g11}` })).statusCode).toBe(404);
+      expect((await t.app.inject({ url: `/api/games/${ids.g11}` })).statusCode).toBe(404);
+      // The public profile's pgn source does not count for them either; its site games do.
+      const anon = await explore('player=alice&color=white', null);
+      expect(move(anon, 'c2c4')).toBeUndefined();
+      expect(move(anon, 'e2e4')).toBeDefined();
+      // Reference databases stay open (decision 2).
+      expect((await get(`player=db:${refDb}&color=white`, null)).statusCode).toBe(200);
+      expect((await t.app.inject({ url: `/api/explorer/masters/pgn/op${ids.r1}` })).statusCode).toBe(200);
+    } finally {
+      writeSettings(t.db, { anonymousBrowsing: false });
+    }
+    expect((await t.app.inject({ url: `/api/explorer/masters/pgn/op${ids.g11}`, headers: { cookie: other } })).statusCode).toBe(200);
+  });
+
+  it('keeps a private reference database to admins: db:, ref:, the reference and masters explorers, its PGNs', async () => {
+    const ref = (cookie: string) => t.app.inject({ url: '/api/explorer/reference', headers: { cookie } });
+    const total = (body: string) => {
+      const r = JSON.parse(body) as { white: number; draws: number; black: number };
+      return r.white + r.draws + r.black;
+    };
+    expect(total((await ref(other)).body)).toBe(3);
+    t.db.run("UPDATE databases SET visibility = 'private' WHERE id = ?", [refDb]);
+    writeSettings(t.db, { mastersSource: `reference:${refDb}` });
+    try {
+      expect((await get(`player=db:${refDb}&color=white`)).statusCode).toBe(404);
+      expect((await get(`player=db:${refDb}&color=white`, admin)).statusCode).toBe(200);
+      expect(total((await ref(other)).body)).toBe(0);
+      expect(total((await ref(admin)).body)).toBe(3);
+      expect((await t.app.inject({ url: `/api/explorer/masters/pgn/op${ids.r1}`, headers: { cookie: other } })).statusCode).toBe(404);
+      // FIDE players are built from public reference databases only, for everyone.
+      expect((await explore('player=ref:99999901&color=white')).moves).toEqual([]);
+      expect((await explore('player=ref:99999901&color=white', admin)).moves).toEqual([]);
+      // A masters explorer backed by the private database: admins read it, everyone else gets Lichess.
+      const asAdmin = await t.app.inject({ url: '/api/explorer/masters', headers: { cookie: admin } });
+      expect(asAdmin.headers['x-outpost-source']).toBe('reference');
+      // (No network in tests: the Lichess proxy fails, but it is never answered from the reference DB.)
+      const asUser = await t.app.inject({ url: '/api/explorer/masters', headers: { cookie: other } });
+      expect(asUser.headers['x-outpost-source']).not.toBe('reference');
+      expect(asUser.statusCode).not.toBe(200);
+    } finally {
+      writeSettings(t.db, { mastersSource: 'lichess' });
+      t.db.run("UPDATE databases SET visibility = 'public' WHERE id = ?", [refDb]);
+    }
+    expect((await explore('player=ref:99999901&color=white')).moves).toHaveLength(2);
+  });
+
   it('validates its input like Lichess (400 for bad specs, colours, FENs and illegal moves)', async () => {
     const bad = async (q: string) => {
       const res = await get(q);

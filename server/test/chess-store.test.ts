@@ -196,7 +196,7 @@ describe('insertGame', () => {
   });
 
   it('matches pgn and fide sources in databases', () => {
-    const dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'reference', 0)").lastInsertRowid;
+    const dbId = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('OTB', 'reference', 'public', 0)").lastInsertRowid;
     const fide = createSource(t.db, { kind: 'fide', key: '1503014' });
     const pgnSrc = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(dbId, 'Carlsen, Magnus'), databaseId: dbId });
     const r = insertGame(

@@ -3,7 +3,7 @@
 //
 // Cross-module API (importers in jobs/sync, profiles/databases and reference all use these):
 //   - store.ts: NormalizedGame, insertGame (the only writer of games/positions/player_games),
-//     rebuildPlayerGames, pgnSourceKey; reindexGames / backfillPlayerTitle (jobs-internal repairs)
+//     rebuildPlayerGames, relinkFideSources, pgnSourceKey; reindexGames / backfillPlayerTitle (jobs-internal repairs)
 //   - replay.ts: replaySan, drawKindOf (how a draw ended, from the final position)
 //   - pgn.ts: parsePgnGames (streaming), pgnToNormalizedGame (dedupe id, skip reasons)
 //   - openings.ts: getOpeningBook, classifyOpening, openingAt (explorer `opening` fields)
@@ -38,6 +38,7 @@ export {
   pgnSourceKey,
   POSITION_MAX_PLY,
   rebuildPlayerGames,
+  relinkFideSources,
   reindexGames,
   type InsertGameResult,
   type NormalizedGame,

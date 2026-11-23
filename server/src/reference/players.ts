@@ -190,11 +190,27 @@ function toReferencePlayer(db: Db, row: PlayerRow, viewer: AuthUser | null): Ref
 }
 
 /**
+ * SQL condition (` AND …`, on `reference_players`) for the players a non-admin may find.
+ * Name-only players belong to one database: hidden with it when it is private. FIDE players
+ * aggregate the reference databases but are built from public ones only (migration 602): hidden
+ * when none of their games is in a public database. That check only runs while some reference
+ * database is private (the usual instance has none).
+ */
+function visiblePlayersSql(db: Db): string {
+  if (db.value("SELECT 1 FROM databases WHERE kind = 'reference' AND visibility <> 'public' LIMIT 1") === undefined) return '';
+  const visibleDbs = `SELECT d.id FROM databases d WHERE d.kind = 'reference' AND ${visibleReferenceDbSql(false)}`;
+  return ` AND (database_id IN (${visibleDbs})
+    OR (fide_id IS NOT NULL
+        AND (EXISTS (SELECT 1 FROM games g WHERE g.white_fide_id = reference_players.fide_id AND g.database_id IN (${visibleDbs}))
+          OR EXISTS (SELECT 1 FROM games g WHERE g.black_fide_id = reference_players.fide_id AND g.database_id IN (${visibleDbs})))))`;
+}
+
+/**
  * Reference-DB players matching a name or FIDE id prefix, best matches first (exact FIDE id, then
  * names starting with the query, then most games). An empty query lists the players with the most
  * games. `viewer` decides which profiles count for `profileSlug` (anonymous: public ones only) and
  * whether players of private reference databases show (admins only); pass it from routes
- * (`viewer: req.user`). FIDE players aggregate every reference database and always show.
+ * (`viewer: req.user`). FIDE players show to non-admins when a public database has their games.
  */
 export function searchReferencePlayers(
   db: Db,
@@ -204,11 +220,7 @@ export function searchReferencePlayers(
   const limit = Math.max(1, Math.min(PLAYER_SEARCH_MAX_LIMIT, Math.floor(opts.limit ?? PLAYER_SEARCH_DEFAULT_LIMIT)));
   const viewer = opts.viewer ?? null;
   const query = q.trim().slice(0, PLAYER_SEARCH_MAX_QUERY);
-  // Name-only players belong to one database: hidden with it when it is private (admins see all).
-  const visible =
-    viewer?.role === 'admin'
-      ? ''
-      : ` AND (database_id IS NULL OR database_id IN (SELECT d.id FROM databases d WHERE d.kind = 'reference' AND ${visibleReferenceDbSql(false)}))`;
+  const visible = viewer?.role === 'admin' ? '' : visiblePlayersSql(db);
   let rows: PlayerRow[];
   if (query === '') {
     rows = db.all<PlayerRow>(`SELECT ${PLAYER_COLUMNS} FROM reference_players WHERE games > 0${visible} ORDER BY games DESC, id LIMIT ?`, [
@@ -217,7 +229,7 @@ export function searchReferencePlayers(
   } else if (/^\d{1,12}$/.test(query)) {
     rows = db.all<PlayerRow>(
       `SELECT ${PLAYER_COLUMNS} FROM reference_players
-        WHERE fide_id GLOB ? AND games > 0
+        WHERE fide_id GLOB ? AND games > 0${visible}
         ORDER BY (fide_id = ?) DESC, games DESC, id LIMIT ?`,
       [`${query}*`, query, limit],
     );

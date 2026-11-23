@@ -263,9 +263,10 @@ async function checkChesscomUser(upstream: Upstream, key: string, fail: (m: stri
 }
 
 /**
- * A FIDE source reads reference-DB games only (PLAN §5; migration 502 enforces it for
- * `player_games`), so only those may name the player: a FideId tag in someone's private PGN
- * database must not leak through a public FIDE profile.
+ * A FIDE source reads games of public reference databases only (PLAN §5; migrations 601 and 602
+ * enforce it for `player_games`), so only those may name the player: a FideId tag in someone's
+ * private PGN database, or an admin's private reference database, must not leak through a public
+ * FIDE profile.
  */
 async function checkFideId(
   db: Db,
@@ -279,6 +280,7 @@ async function checkFideId(
     `SELECT CASE WHEN white_fide_id = ?1 THEN white ELSE black END AS name,
             CASE WHEN white_fide_id = ?1 THEN white_title ELSE black_title END AS title
        FROM games WHERE (white_fide_id = ?1 OR black_fide_id = ?1) AND origin = 'reference'
+        AND database_id IN (SELECT id FROM databases WHERE kind = 'reference' AND visibility = 'public')
       ORDER BY ended_at DESC LIMIT 1`,
     [fideId],
   );

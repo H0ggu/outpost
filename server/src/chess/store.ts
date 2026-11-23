@@ -115,11 +115,12 @@ function opponentIdentity(origin: GameOrigin, opp: SideFacts): { kind: SourceKin
 /**
  * Sources that played this game, with their colour (PLAN §7: one row per source that appears).
  *
- * `fide` sources link **reference-database games only** (PLAN §5 "A FIDE player profile is built
- * from reference-DB games"; docs/DECISIONS.md): a WhiteFideId / BlackFideId tag in a user's PGN
- * database never puts that game on a (possibly public) FIDE profile. Migration 601's trigger
- * `reference_fide_player_games` enforces the same rule for every writer and also keeps one copy
- * per game when several reference databases hold it (the first copy stored wins).
+ * `fide` sources link **games of public reference databases only** (PLAN §5 "A FIDE player profile
+ * is built from reference-DB games"; docs/DECISIONS.md): a WhiteFideId / BlackFideId tag in a
+ * user's PGN database never puts that game on a (possibly public) FIDE profile, and neither does
+ * an admin's private reference database. The trigger `reference_fide_player_games` (migrations
+ * 601, 602) enforces the rule for every writer and also keeps one copy per game when several
+ * reference databases hold it (the first copy stored wins).
  */
 function matchSources(db: Db, g: GameFacts): Array<{ sourceId: Id; color: Color }> {
   const out: Array<{ sourceId: Id; color: Color }> = [];
@@ -349,7 +350,10 @@ export function rebuildPlayerGames(db: Db, sourceId: Id): number {
       break;
     case 'fide':
       rows = db.all<GameSideRow>(
-        `SELECT ${cols} FROM games WHERE origin = 'reference' AND (white_fide_id = ? OR black_fide_id = ?) ORDER BY id`,
+        `SELECT ${cols} FROM games
+          WHERE origin = 'reference' AND (white_fide_id = ? OR black_fide_id = ?)
+            AND database_id IN (SELECT id FROM databases WHERE kind = 'reference' AND visibility = 'public')
+          ORDER BY id`,
         [src.key, src.key],
       );
       isWhite = r => r.white_fide_id === src.key;
@@ -383,6 +387,37 @@ export function rebuildPlayerGames(db: Db, sourceId: Id): number {
       if (writePlayerGame(db, sourceId, r.id, isWhite(r) ? 'white' : 'black', facts)) added++;
     }
     return added;
+  });
+}
+
+/**
+ * After an admin changed a reference database's visibility: `fide` sources link games of public
+ * reference databases only (migration 602), so each FIDE source with a game in that database
+ * drops its rows for games of non-public databases and gets the missing ones back (this
+ * database's games when it became public, another public database's copy of a game when it
+ * became private). Returns the number of sources relinked. Runs in one transaction.
+ */
+export function relinkFideSources(db: Db, databaseId: Id): number {
+  return db.tx(() => {
+    const ids = db
+      .all<{ id: Id }>(
+        `SELECT s.id FROM sources s
+          WHERE s.kind = 'fide'
+            AND (EXISTS (SELECT 1 FROM games g WHERE g.white_fide_id = s.key AND g.database_id = ?1)
+              OR EXISTS (SELECT 1 FROM games g WHERE g.black_fide_id = s.key AND g.database_id = ?1))`,
+        [databaseId],
+      )
+      .map(r => r.id);
+    for (const id of ids) {
+      db.run(
+        `DELETE FROM player_games AS pg
+          WHERE pg.source_id = ?
+            AND (SELECT d.visibility FROM games g JOIN databases d ON d.id = g.database_id WHERE g.id = pg.game_id) IS NOT 'public'`,
+        [id],
+      );
+      rebuildPlayerGames(db, id);
+    }
+    return ids.length;
   });
 }
 

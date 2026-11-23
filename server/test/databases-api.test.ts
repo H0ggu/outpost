@@ -12,8 +12,9 @@ import {
   saveUploadStream,
   sweepUploads,
 } from '../src/databases/index.ts';
+import { insertGame } from '../src/chess/index.ts';
 import { writeSettings } from '../src/settings.ts';
-import { createUserSession, makeJobContext, makeTestApp, mutationHeaders, type TestApp } from './helpers.ts';
+import { createSource, createUserSession, makeJobContext, makeTestApp, mutationHeaders, testGame, type TestApp } from './helpers.ts';
 import { MIXED_PGN, pgnGame, RUY } from './fixtures/profiles/pgn.ts';
 
 type Session = { userId: number; cookie: string };
@@ -343,11 +344,38 @@ describe('databases API', () => {
     const ref = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('Broadcasts', 'reference', 'public', 0)").lastInsertRowid;
     const info = (await req(other, 'GET', `/api/databases/${ref}`)).json<DatabaseInfo>();
     expect(info).toMatchObject({ kind: 'reference', canEdit: false, owner: null });
-    expect((await req(other, 'GET', '/api/databases')).json<DatabasesResponse>().databases.some(d => d.id === ref)).toBe(false);
+    // Listed after the user databases (contract: mine, others' public ones, then reference ones).
+    const listed = (await req(other, 'GET', '/api/databases')).json<DatabasesResponse>().databases;
+    expect(listed.find(d => d.id === ref)).toMatchObject({ kind: 'reference', canEdit: false, builtin: false });
+    expect(listed.findIndex(d => d.kind === 'reference')).toBe(listed.length - 1);
+    // A private reference database is admins-only: not listed, not readable, its players not addable.
+    t.db.run("UPDATE databases SET visibility = 'private' WHERE id = ?", [ref]);
+    try {
+      expect((await req(other, 'GET', '/api/databases')).json<DatabasesResponse>().databases.some(d => d.id === ref)).toBe(false);
+      expect((await req(admin, 'GET', '/api/databases')).json<DatabasesResponse>().databases.some(d => d.id === ref)).toBe(true);
+      for (const url of [`/api/databases/${ref}`, `/api/databases/${ref}/games`, `/api/databases/${ref}/export.pgn`]) {
+        expect((await req(other, 'GET', url)).statusCode, url).toBe(404);
+        expect((await req(admin, 'GET', url)).statusCode, url).toBe(200);
+      }
+    } finally {
+      t.db.run("UPDATE databases SET visibility = 'public' WHERE id = ?", [ref]);
+    }
     expect((await req(other, 'PATCH', `/api/databases/${ref}`, { name: 'x' })).statusCode).toBe(403);
     const imp = await req(admin, 'POST', `/api/databases/${ref}/import`, { pgn: RUY });
     expect(imp.statusCode).toBe(400);
     expect((await req(admin, 'PATCH', `/api/databases/${ref}`, { licence: 'CC BY-SA 4.0' })).json<DatabaseInfo>().licence).toBe('CC BY-SA 4.0');
+  });
+
+  it('takes a reference database an admin makes private out of FIDE players, and puts it back', async () => {
+    const ref = t.db.run("INSERT INTO databases (name, kind, visibility, created_at) VALUES ('Licensed', 'reference', 'public', 0)").lastInsertRowid;
+    const fide = createSource(t.db, { kind: 'fide', key: '24680' });
+    insertGame(t.db, testGame({ origin: 'reference', originId: `${ref}:f1`, databaseId: ref, white: { name: 'Fide, Player', fideId: '24680' } }));
+    const linked = () => t.db.value<number>('SELECT COUNT(*) FROM player_games WHERE source_id = ?', [fide]);
+    expect(linked()).toBe(1);
+    expect((await req(admin, 'PATCH', `/api/databases/${ref}`, { visibility: 'private' })).statusCode).toBe(200);
+    expect(linked()).toBe(0);
+    expect((await req(admin, 'PATCH', `/api/databases/${ref}`, { visibility: 'public' })).statusCode).toBe(200);
+    expect(linked()).toBe(1);
   });
 
   it('refuses every route on a private database to others and anonymous visitors', async () => {

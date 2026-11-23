@@ -124,18 +124,55 @@ describe('GET /api/games/:id', () => {
     expect(await status(ids.orphan!, admin.cookie)).toBe(200);
   });
 
-  it('follows database visibility, or a public profile that played the game', async () => {
-    const { owner, other } = w.users;
+  it('follows database visibility only for database games', async () => {
+    const { owner, other, admin } = w.users;
     expect(await status(ids.dbOnly!, owner.cookie)).toBe(200);
     expect(await status(ids.dbOnly!, other.cookie)).toBe(404);
-    expect(await status(ids.otb!, other.cookie)).toBe(200); // via the public alice-otb profile
+    // The public alice-otb profile has a pgn source in the private database: it never opens the
+    // database's games (decision 6), whether the owner or someone else made the profile.
+    expect(await status(ids.otb!, other.cookie)).toBe(404);
+    expect(await status(ids.otb!, owner.cookie)).toBe(200);
     expect(await status(ids.ref!, other.cookie)).toBe(200); // reference DBs are instance-wide
     t.db.run("UPDATE databases SET visibility = 'public' WHERE id = ?", [privateDb]);
     try {
       expect(await status(ids.dbOnly!, other.cookie)).toBe(200);
+      expect(await status(ids.otb!, other.cookie)).toBe(200);
     } finally {
       t.db.run("UPDATE databases SET visibility = 'private' WHERE id = ?", [privateDb]);
     }
+    // A reference database an admin made private is admins-only.
+    t.db.run("UPDATE databases SET visibility = 'private' WHERE id = ?", [refDb]);
+    try {
+      expect(await status(ids.ref!, other.cookie)).toBe(404);
+      expect(await status(ids.ref!, admin.cookie)).toBe(200);
+    } finally {
+      t.db.run("UPDATE databases SET visibility = 'public' WHERE id = ?", [refDb]);
+    }
+  });
+
+  it("never serves a private database's games through another user's public profile", async () => {
+    const { owner, other } = w.users;
+    // `other` attached a player of the owner's database while it was public, then the owner made it private again.
+    const club = t.db.run(
+      "INSERT INTO databases (owner_user_id, name, kind, visibility, created_at) VALUES (?, 'Club 2', 'games', 'public', 0)",
+      [owner.id],
+    ).lastInsertRowid;
+    const src = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(club, 'Doe, Jane'), displayName: 'Doe, Jane', databaseId: club });
+    createProfile(t.db, { slug: 'jane-by-other', ownerUserId: other.id, sources: [{ id: src }] });
+    const game = insertGame(
+      t.db,
+      testGame({ origin: 'pgn', originId: `${club}:jane`, databaseId: club, white: { name: 'Doe, Jane' }, black: { name: 'Roe, Rick' } }),
+    ).gameId;
+    expect(await status(game, other.cookie)).toBe(200);
+    t.db.run("UPDATE databases SET visibility = 'private' WHERE id = ?", [club]);
+    expect(await status(game, other.cookie)).toBe(404);
+    writeSettings(t.db, { anonymousBrowsing: true });
+    try {
+      expect(await status(game)).toBe(404);
+    } finally {
+      writeSettings(t.db, { anonymousBrowsing: false });
+    }
+    expect(await status(game, owner.cookie)).toBe(200);
   });
 
   it('needs a session unless anonymous browsing is on', async () => {
@@ -146,6 +183,14 @@ describe('GET /api/games/:id', () => {
       expect(await status(ids.ref!)).toBe(200);
       expect(await status(w.g.g6)).toBe(404);
       expect(await status(ids.dbOnly!)).toBe(404);
+      // Database reads need a session (decision 6): a public user database stays closed to anonymous visitors.
+      t.db.run("UPDATE databases SET visibility = 'public' WHERE id = ?", [privateDb]);
+      try {
+        expect(await status(ids.dbOnly!)).toBe(404);
+        expect(await status(ids.dbOnly!, w.users.other.cookie)).toBe(200);
+      } finally {
+        t.db.run("UPDATE databases SET visibility = 'private' WHERE id = ?", [privateDb]);
+      }
     } finally {
       writeSettings(t.db, { anonymousBrowsing: false });
     }

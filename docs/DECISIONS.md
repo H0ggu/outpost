@@ -80,6 +80,12 @@ E5. **W/D/L bar labels are always percentages**, shown where they fit (a contain
 E6. **Openings tables page locally** (20 lines a page): the endpoint's rows are bounded by the openings book, so the contract keeps returning them all.
 E7. **Expected upstream states are not errors in the log**: 503 `no_token` is info, other upstream 502/503s are warnings without a stack.
 
+## Taken while fixing the review findings (server, 2026-11-23)
+Same format. Each settles a finding where more than one fix was possible.
+
+R1. **One database rule for every read path** (`canReadDatabase` / `READABLE_DATABASE_SQL` in `profiles/access.ts`): admins read every database; a `games` database is read by its owner and, while public, by signed-in users only (decision 6); a reference database by every viewer while public (decision 2), by admins only once an admin makes it private. The database pages, `db:<id>` explorers, `/api/games/:id`, masters `op<id>` PGNs, the reference and reference-backed masters explorers, profile `pgn` sources and search all apply it. A game stored in a database is visible only through its database: a `pgn` source on a public profile never opens a private database's games, and pgn sources on public user databases don't count for anonymous visitors.
+R2. **A private reference database is kept out of FIDE players for everyone** (migration `602`): `fide` sources link games of public reference databases only, and `ref:<fideId>` reads the same games, so FIDE profiles stay instance-wide data with no per-viewer filtering (decision 2). Changing a reference database's visibility relinks the FIDE sources with games in it; FIDE players found only in private databases are hidden from non-admins' player search. A reference-backed masters explorer on a private database answers admins from it and everyone else from Lichess. `GET /api/databases` lists the readable reference databases after the user databases.
+
 ### Kept as the modules left them (open for the owner)
 - Chess.com geo lookups: after a capped run (1,000 requests) no new Chess.com lookup job starts for 50 minutes, so the hourly sweep continues; a fresh sync's new opponents wait for that too (about 1,000 lookups per hour at most).
 - Decision 8 is met at setup: `POST /api/me/totp/setup` needs the password, `enable` only a code for the secret that call created.

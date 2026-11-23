@@ -32,6 +32,7 @@ import { isTitle, playerKey } from '@outpost/shared/chess';
 import type { Db } from '../db/index.ts';
 import type { AuthUser } from '../http/types.ts';
 import { UPSTREAM, type Upstream } from '../http/upstream.ts';
+import { READABLE_DATABASE_SQL } from '../profiles/access.ts';
 import { profileSummaries } from '../profiles/service.ts';
 import { CHESSCOM_USERNAME_RE, chesscomDisplayName, LICHESS_USERNAME_RE } from '../profiles/sources.ts';
 import { upstreamJsonWithin } from '../profiles/upstreamJson.ts';
@@ -243,7 +244,7 @@ export function searchProfiles(db: Db, q: string, viewer: AuthUser | null, limit
                    LEFT JOIN databases d ON d.id = s.database_id
                   WHERE ps.profile_id = p.id
                     AND (ps.hidden = 0 OR p.owner_user_id = :me OR :admin)
-                    AND (s.database_id IS NULL OR d.kind = 'reference' OR d.visibility = 'public' OR d.owner_user_id = :me OR :admin)
+                    AND (s.database_id IS NULL OR ${READABLE_DATABASE_SQL})
                     AND (s.key LIKE :likeKey ESCAPE '\\' OR s.display_name LIKE :like ESCAPE '\\')))
         ORDER BY (lower(p.display_name) = :lower OR p.slug = :lower) DESC, (p.owner_user_id = :me) DESC, p.views DESC, p.id DESC
         LIMIT :limit`,

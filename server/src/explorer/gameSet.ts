@@ -9,11 +9,13 @@
  *   see it (attached, not hidden, to a profile the viewer may read; admins see all);
  * - `db:<id>` → every game of a database the viewer may read (`loadDatabaseForViewer`), seen from
  *   one side (the explorer's colour) so the player-perspective filters still mean something;
- * - `ref:<fideId>` → that FIDE player's games in the reference databases (instance-wide data),
- *   one copy per game when several reference databases hold it (the first stored), the same rule
- *   as a FIDE profile's `player_games` (migration 601, decision 1);
+ * - `ref:<fideId>` → that FIDE player's games in the public reference databases (instance-wide
+ *   data), one copy per game when several of them hold it (the first stored), the same rule as a
+ *   FIDE profile's `player_games` (migrations 601 and 602, decision 1; a private reference
+ *   database is admins-only and never feeds FIDE players);
  * - the reference explorer and a reference-backed masters explorer → every game of the reference
- *   databases (or of one), from White's side, with only the neutral filters applied.
+ *   databases the viewer may read (or of one), from White's side, with only the neutral filters
+ *   applied.
  *
  * Derived sets use `source_id = 0`, so `playerGamesWhere` gets `sourceIds: [0]`. Sets over whole
  * databases read `games_explorer_db` (a covering index, migration 401) and are versioned by
@@ -25,7 +27,7 @@ import { parsePlayerSpec, type PlayerSpec, type ProfileFilters } from '@outpost/
 import type { Db, SqlValue } from '../db/index.ts';
 import { notFound, validationError } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
-import { loadDatabaseForViewer, loadProfileForViewer } from '../profiles/access.ts';
+import { loadDatabaseForViewer, loadProfileForViewer, readableReferenceDatabaseIds } from '../profiles/access.ts';
 
 /** A row source aliased `pg` with player_games-compatible columns. */
 export interface GameSet {
@@ -143,9 +145,11 @@ function databaseIdRange(db: Db, ids: readonly Id[]): { lo: Id; hi: Id } | null 
   return lo <= hi ? { lo, hi } : null;
 }
 
-/** Ids of the reference databases. */
-const referenceDatabaseIds = (db: Db): Id[] =>
-  db.all<{ id: Id }>(`SELECT id FROM databases WHERE kind = 'reference' ORDER BY id`).map(r => r.id);
+/** The public reference databases (FIDE players are built from these only; migration 602). */
+const PUBLIC_REFERENCE_DBS = `SELECT id FROM databases WHERE kind = 'reference' AND visibility = 'public'`;
+
+/** Ids of the public reference databases. */
+const publicReferenceDatabaseIds = (db: Db): Id[] => db.all<{ id: Id }>(`${PUBLIC_REFERENCE_DBS} ORDER BY id`).map(r => r.id);
 
 /** Set statistics of a derived set (see `GameSet`). */
 interface DerivedStats {
@@ -254,19 +258,24 @@ export function resolveGameSet(db: Db, spec: PlayerSpec, viewer: AuthUser | null
     case 'ref':
       return derivedSet(
         spec,
-        side => ({ sql: `g.origin = 'reference' AND g.${side}_fide_id = ? AND ${NOT_A_LATER_REFERENCE_COPY}`, params: [spec.fideId] }),
+        side => ({
+          sql: `g.origin = 'reference' AND g.${side}_fide_id = ? AND g.database_id IN (${PUBLIC_REFERENCE_DBS}) AND ${NOT_A_LATER_REFERENCE_COPY}`,
+          params: [spec.fideId],
+        }),
         { perspective: 'neutral', cacheKey: `ref:${spec.fideId}`, bothSidesWhenUncoloured: true, stats: fideStats(spec.fideId), byDatabase: false },
       );
   }
 }
 
 /**
- * The reference databases as one set (`databaseId` null: every reference database, as they are
- * now), seen from White's side. For the reference explorer and a reference-backed masters
- * explorer. Membership is by database (`games_explorer_db` covers it), not by `origin`.
+ * The reference databases as one set (`databaseId` null: every reference database `viewer` may
+ * read, as they are now), seen from White's side. For the reference explorer and a
+ * reference-backed masters explorer (the caller checks that the viewer may read `databaseId`).
+ * Membership is by database (`games_explorer_db` covers it), not by `origin`; the version names
+ * the databases, so viewers who may read different ones never share a cached result.
  */
-export function referenceGameSet(db: Db, databaseId: Id | null): GameSet {
-  const ids = databaseId === null ? referenceDatabaseIds(db) : [databaseId];
+export function referenceGameSet(db: Db, databaseId: Id | null, viewer: AuthUser | null): GameSet {
+  const ids = databaseId === null ? readableReferenceDatabaseIds(db, viewer) : [databaseId];
   return derivedSet(
     { kind: 'reference', databaseId },
     () =>
@@ -284,14 +293,14 @@ export function referenceGameSet(db: Db, databaseId: Id | null): GameSet {
 }
 
 /**
- * `games g` is the first stored copy of its reference game: no other reference database holds the
- * same game (same `origin_id` hash, `<databaseId>:<hash>`) under a lower id. Lookups use the
- * UNIQUE (origin, origin_id) index, one per other reference database.
+ * `games g` is the first stored copy of its reference game: no other public reference database
+ * holds the same game (same `origin_id` hash, `<databaseId>:<hash>`) under a lower id. Lookups use
+ * the UNIQUE (origin, origin_id) index, one per other reference database.
  */
 const NOT_A_LATER_REFERENCE_COPY = `NOT EXISTS (
     SELECT 1 FROM databases d
       JOIN games o ON o.origin = 'reference' AND o.origin_id = d.id || substr(g.origin_id, instr(g.origin_id, ':')) AND o.id < g.id
-     WHERE d.kind = 'reference' AND d.id IS NOT g.database_id)`;
+     WHERE d.kind = 'reference' AND d.visibility = 'public' AND d.id IS NOT g.database_id)`;
 
 /**
  * Stats of a FIDE player's reference games (small sets; versioned with every reference database).
@@ -311,7 +320,7 @@ const fideStats = (fideId: string): DerivedStats => ({
     );
     return r?.lo != null && r.hi != null ? { lo: r.lo, hi: r.hi } : null;
   },
-  version: db => `ref.${databaseStats(db, referenceDatabaseIds(db)).version}`,
+  version: db => `ref.${databaseStats(db, publicReferenceDatabaseIds(db)).version}`,
 });
 
 /**
