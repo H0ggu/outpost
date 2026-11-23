@@ -7,9 +7,9 @@ import { roundStatus } from '../src/app/pages/components/library/broadcast.tsx';
 import { inCheck, liveClock, turnOf } from '../src/app/pages/components/library/MiniGame.tsx';
 import { extractBroadcastGame } from '../src/app/pages/components/library/broadcastPgn.ts';
 import { formatClock } from '../src/app/pages/components/library/format.ts';
-import { POLL, roundRefetchInterval } from '../src/app/pages/library-hooks.ts';
+import { isNoTokenError, POLL, roundRefetchInterval } from '../src/app/pages/library-hooks.ts';
 import { ApiError } from '../src/app/api/client.ts';
-import { ADMIN, apiError, renderPage, session, text, USER, withFakeServer } from './web-library-helpers.tsx';
+import { ADMIN, apiError, noTokenError, renderPage, session, text, USER, withFakeServer } from './web-library-helpers.tsx';
 
 const api = withFakeServer();
 
@@ -118,17 +118,33 @@ describe('BroadcastsPage', () => {
   it('explains a missing Lichess token, with the settings link for admins', async () => {
     api()
       .on('GET', '/api/session', session(ADMIN))
-      .on('GET', '/api/broadcasts', apiError(503, 'upstream_unavailable', 'No Lichess token is configured'));
+      .on('GET', '/api/broadcasts', noTokenError('No Lichess token is configured'));
     renderPage(<BroadcastsPage />, { route: '/broadcasts' });
-    expect(await screen.findByText("Live broadcasts aren't available on this server right now")).toBeTruthy();
+    expect(await screen.findByText("Live broadcasts aren't available on this server")).toBeTruthy();
     expect(screen.getByText('No Lichess token is configured')).toBeTruthy();
     expect((await screen.findByRole('link', { name: 'Admin → Settings' })).getAttribute('href')).toBe('/admin/settings');
+    // a missing token is not retried
+    expect(api().find('GET', '/api/broadcasts')).toHaveLength(1);
+  });
+
+  it('tells a transient Lichess outage apart from a missing token', async () => {
+    const retryAt = Date.now() + 60_000;
+    api()
+      .on('GET', '/api/session', session(ADMIN))
+      .on('GET', '/api/broadcasts', apiError(503, 'upstream_unavailable', 'lichess.org is rate-limiting us', { host: 'lichess.org', reason: 'rate_limited', retryAt }));
+    renderPage(<BroadcastsPage />, { route: '/broadcasts' });
+    expect(await screen.findByText("Lichess can't be reached right now", undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByText(/Try again after/)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Admin → Settings' })).toBeNull();
+    api().on('GET', '/api/broadcasts', { active: [], recent: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('No official broadcasts right now')).toBeTruthy();
   });
 
   it('tells other users to ask the admin', async () => {
     api()
       .on('GET', '/api/session', session(USER))
-      .on('GET', '/api/broadcasts', apiError(503, 'upstream_unavailable', 'No token'));
+      .on('GET', '/api/broadcasts', noTokenError('No token'));
     renderPage(<BroadcastsPage />, { route: '/broadcasts' });
     expect(await screen.findByText(/Ask the admin of this Outpost to add one/)).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Admin → Settings' })).toBeNull();
@@ -224,7 +240,7 @@ describe('BroadcastRoundPage', () => {
   it('explains the missing token here too', async () => {
     api()
       .on('GET', '/api/session', session(USER))
-      .on('GET', '/api/broadcasts/round/rnd00002', apiError(503, 'upstream_unavailable', 'Lichess token missing'));
+      .on('GET', '/api/broadcasts/round/rnd00002', noTokenError('Lichess token missing'));
     renderPage(<BroadcastRoundPage />, ROUTE);
     expect(await screen.findByText('Lichess token missing')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'All broadcasts' }).getAttribute('href')).toBe('/broadcasts');
@@ -275,7 +291,12 @@ describe('broadcast helpers', () => {
     const r = round();
     expect(roundRefetchInterval(r, null)).toBe(POLL.broadcastMs);
     expect(roundRefetchInterval({ ...r, round: { ...r.round, finished: true } }, null)).toBe(false);
-    expect(roundRefetchInterval(undefined, new ApiError(503, 'upstream_unavailable', 'x'))).toBe(false);
+    expect(roundRefetchInterval(undefined, new ApiError(503, 'upstream_unavailable', 'x', { reason: 'no_token' }))).toBe(false);
+    // Lichess briefly unreachable or rate-limited: keep polling
+    expect(roundRefetchInterval(r, new ApiError(503, 'upstream_unavailable', 'x', { reason: 'timeout' }))).toBe(POLL.broadcastMs);
+    expect(roundRefetchInterval(r, new ApiError(429, 'rate_limited', 'x'))).toBe(POLL.broadcastMs);
+    expect(isNoTokenError(new ApiError(503, 'upstream_unavailable', 'x'))).toBe(false);
+    expect(isNoTokenError(new ApiError(503, 'upstream_unavailable', 'x', { reason: 'no_token' }))).toBe(true);
     expect(roundRefetchInterval(undefined, new ApiError(404, 'not_found', 'x'))).toBe(false);
     expect(roundRefetchInterval(r, new ApiError(502, 'upstream_error', 'x'))).toBe(POLL.broadcastMs);
     expect(roundRefetchInterval(r, new ApiError(0, 'network', 'x'))).toBe(POLL.broadcastMs);

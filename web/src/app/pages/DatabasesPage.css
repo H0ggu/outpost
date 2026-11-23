@@ -72,30 +72,6 @@
 }
 
 /* One database */
-.lib-dbtitle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  overflow-wrap: anywhere;
-}
-
-.lib-icon-btn--inline {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.lib-rename {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.lib-rename input {
-  font-size: 1.1rem;
-  min-width: 0;
-  flex: 1 1 14rem;
-}
 
 .lib-dbmeta {
   display: flex;
@@ -174,6 +150,10 @@
   flex-direction: column;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.lib-import form > .lib-actions--end {
+  margin-top: 0.8rem;
 }
 
 .lib-drop:hover,
@@ -335,12 +315,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   vertical-align: middle;
-}
-
-.lib-eco {
-  font-family: var(--font-mono);
-  font-size: 0.85em;
-  color: var(--c-font-dim);
 }
 
 .lib-rowactions {

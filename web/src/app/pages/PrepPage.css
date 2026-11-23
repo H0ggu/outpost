@@ -301,6 +301,8 @@
 
 .lib-prep-side {
   min-width: 0;
+  /* the line tables reflow on the side's own width (phones, and two sides per sheet of paper) */
+  container-type: inline-size;
 }
 
 .lib-prep-side h3 {
@@ -397,9 +399,9 @@
 .lib-prep-lines__line a {
   display: block;
   color: var(--c-font-clear);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* the moves are the point of a prep card: wrap them rather than cut them off */
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 
 .lib-prep-lines__line a:hover {
@@ -420,12 +422,74 @@
   color: var(--c-font-clear);
 }
 
+/* Narrow sides: each line on its own row, its games, result bar and score underneath. */
+@container (width < 400px) {
+  .lib-prep-lines thead {
+    display: none;
+  }
+
+  .lib-prep-lines,
+  .lib-prep-lines tbody {
+    display: block;
+  }
+
+  .lib-prep-lines tr {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      'line line line'
+      'games bar score';
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    padding: 0.45rem 0.2rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
+  }
+
+  .lib-prep-lines td {
+    padding: 0;
+    border: 0;
+  }
+
+  .lib-prep-lines .num {
+    width: auto;
+  }
+
+  .lib-prep-lines__line {
+    grid-area: line;
+  }
+
+  .lib-prep-lines td.lib-prep-lines__games {
+    grid-area: games;
+    text-align: left;
+    color: var(--c-font-dim);
+    font-size: 0.85rem;
+  }
+
+  .lib-prep-lines td.lib-prep-lines__games::after {
+    content: ' ' attr(data-unit);
+  }
+
+  .lib-prep-lines td.lib-prep-lines__bar {
+    grid-area: bar;
+    width: auto;
+  }
+
+  .lib-prep-lines td.lib-prep-lines__score {
+    grid-area: score;
+  }
+}
+
 .lib-prep-bottom {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
   gap: 1.5rem 2rem;
   padding-top: 1.1rem;
   border-top: 1px solid var(--c-border);
+}
+
+.lib-prep-recent {
+  min-width: 0;
+  container-type: inline-size;
 }
 
 .lib-prep-recent ul {
@@ -513,7 +577,10 @@
   .lib-prep-activity__charts {
     grid-template-columns: 1fr;
   }
+}
 
+/* No room for the opening next to the opponent (phones, half a sheet of paper). */
+@container (width < 420px) {
   .lib-prep-recent__opening {
     display: none;
   }
@@ -573,6 +640,10 @@
 
 .lib-bars__labels span {
   white-space: nowrap;
+}
+
+.lib-bars--week .lib-bars__labels {
+  text-align: center;
 }
 
 /* --- Paper ---------------------------------------------------------------- */
@@ -647,7 +718,7 @@
 
   .lib-prep-sides,
   .lib-prep-bottom {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 1rem 1.5rem;
   }
 

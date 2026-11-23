@@ -165,6 +165,8 @@ export function ConfirmButton({
 export interface ParamTab<T extends string> {
   value: T;
   label: ReactNode;
+  /** Accessible name when `label` is not plain text (e.g. a long and a short form). */
+  name?: string;
   icon?: LiconValue;
 }
 
@@ -195,6 +197,7 @@ export function ParamTabs<T extends string>({
             data-icon={t.icon}
             className={t.value === active ? 'active' : undefined}
             aria-current={t.value === active ? 'page' : undefined}
+            aria-label={t.name}
             replace
           >
             {t.label}

@@ -334,6 +334,7 @@ export function useBroadcasts() {
     queryKey: libraryKeys.broadcasts,
     queryFn: ({ signal }) => api.get<BroadcastsResponse>(API_ROUTES.broadcasts, undefined, signal),
     staleTime: 60_000,
+    retry: broadcastRetry,
   });
 }
 
@@ -344,6 +345,7 @@ export function useBroadcastTour(tourId: string | undefined) {
     queryFn: ({ signal }) => api.get<BroadcastTour>(API_ROUTES.broadcastTour(tourId!), undefined, signal),
     enabled: !!tourId,
     staleTime: 60_000,
+    retry: broadcastRetry,
   });
 }
 
@@ -354,6 +356,7 @@ export function useBroadcastRound(roundId: string | undefined) {
     queryFn: ({ signal }) => api.get<BroadcastRound>(API_ROUTES.broadcastRound(roundId!), undefined, signal),
     enabled: !!roundId,
     staleTime: 5_000,
+    retry: broadcastRetry,
     refetchInterval: q => roundRefetchInterval(q.state.data, q.state.error),
     refetchIntervalInBackground: false,
   });
@@ -363,6 +366,22 @@ export function useBroadcastRound(roundId: string | undefined) {
 export const roundRefetchInterval = (data: BroadcastRound | undefined, error: unknown): number | false =>
   data?.round.finished || isPermanentError(error) ? false : POLL.broadcastMs;
 
+/**
+ * The server has no Lichess API token for an endpoint that needs one: 503 `upstream_unavailable`
+ * with `details.reason: 'no_token'` (server `upstreamHttpError`). Other 503s (Lichess unreachable,
+ * rate-limited, timed out) are transient.
+ */
+export const isNoTokenError = (e: unknown): boolean =>
+  e instanceof ApiError &&
+  e.code === 'upstream_unavailable' &&
+  typeof e.details === 'object' &&
+  e.details !== null &&
+  (e.details as { reason?: unknown }).reason === 'no_token';
+
 /** Errors that polling again won't fix: not found, not allowed, no Lichess token on the server. */
 export const isPermanentError = (e: unknown): boolean =>
-  e instanceof ApiError && (e.code === 'upstream_unavailable' || (e.status >= 400 && e.status < 500 && e.status !== 429));
+  isNoTokenError(e) || (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429);
+
+/** Query retry for the broadcast endpoints: the shared policy, minus retries a missing token can't pass. */
+const broadcastRetry = (failures: number, e: Error): boolean =>
+  !isNoTokenError(e) && !(e instanceof ApiError && e.status >= 400 && e.status < 500) && failures < 2;

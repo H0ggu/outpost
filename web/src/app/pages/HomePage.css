@@ -19,8 +19,15 @@
 /* Quick links: tiles with a lila icon, 2 per row on phones. */
 .lib-quick {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  /* six tiles: 3 × 2 on wide screens, 2 × 3 below, never a lone tile on its own row */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.6rem;
+}
+
+@media (max-width: 760px) {
+  .lib-quick {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .lib-quick__item {
@@ -72,10 +79,6 @@
 }
 
 @media (max-width: 480px) {
-  .lib-quick {
-    grid-template-columns: 1fr 1fr;
-  }
-
   .lib-quick__item {
     padding: 0.6rem 0.7rem;
     gap: 0.55rem;
@@ -138,7 +141,7 @@
   padding: 0;
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   counter-reset: lib-step;
 }
 

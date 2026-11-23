@@ -106,7 +106,7 @@ function NewProfileForm() {
                 {s.kind === 'fide' && s.label && <span className="muted">FIDE {s.key}</span>}
                 <button
                   type="button"
-                  className="lib-icon-btn"
+                  className="lib-icon-btn lib-icon-btn--danger"
                   data-icon={licon.X}
                   aria-label={`Remove ${s.label ?? s.key}`}
                   title="Remove"

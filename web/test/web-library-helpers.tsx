@@ -42,8 +42,12 @@ export const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 /** The server's error body. */
-export const apiError = (status: number, code: ApiErrorCode, message: string = code): Response =>
-  json(status, { error: { code, message } });
+export const apiError = (status: number, code: ApiErrorCode, message: string = code, details?: unknown): Response =>
+  json(status, { error: { code, message, ...(details === undefined ? {} : { details }) } });
+
+/** The server's answer when an endpoint needs the Lichess token and none is set (upstreamHttpError). */
+export const noTokenError = (message = 'A Lichess API token is required: set LICHESS_TOKEN or add one in the admin settings'): Response =>
+  apiError(503, 'upstream_unavailable', message, { host: 'lichess.org', reason: 'no_token' });
 
 /** Plain-text response (PGN). */
 export const text = (body: string, type = 'application/x-chess-pgn'): Response =>

@@ -8,11 +8,18 @@ import { ApiError } from '../../../api/client.ts';
 import { useSession } from '../../../api/hooks.ts';
 import { ErrorBox, licon } from '../../../components/index.ts';
 import { paths } from '../../../paths.ts';
-import { isUnauthorized, SignInPrompt } from './QueryView.tsx';
+import { isNoTokenError } from '../../library-hooks.ts';
 import { formatDateTime } from './format.ts';
+import { isUnauthorized, SignInPrompt } from './QueryView.tsx';
 
 /** True when the server could not reach Lichess or has no token for it (503 upstream_unavailable). */
 export const isUpstreamUnavailable = (e: unknown): boolean => e instanceof ApiError && e.code === 'upstream_unavailable';
+
+/** When Lichess will take requests again (`details.retryAt` of a rate-limit 503), if known. */
+const retryAtOf = (e: unknown): number | null => {
+  const d = e instanceof ApiError ? (e.details as { retryAt?: unknown } | null | undefined) : null;
+  return typeof d?.retryAt === 'number' ? d.retryAt : null;
+};
 
 /** Error panel of the broadcast pages: explains the Lichess token when that is the cause. */
 export function BroadcastError({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
@@ -20,29 +27,47 @@ export function BroadcastError({ error, onRetry }: { error: unknown; onRetry?: (
   const isAdmin = session.data?.user?.role === 'admin';
   if (isUnauthorized(error)) return <SignInPrompt what="live broadcasts" />;
   if (!isUpstreamUnavailable(error)) return <ErrorBox error={error} onRetry={onRetry} title="Could not load the broadcast" />;
+  const retryButton = onRetry && (
+    <button type="button" className="button button-secondary button-thin" data-icon={licon.Reload} onClick={onRetry}>
+      Try again
+    </button>
+  );
+  if (!isNoTokenError(error)) {
+    const retryAt = retryAtOf(error);
+    return (
+      <div className="lib-note lib-note--warn" role="alert">
+        <i data-icon={licon.RadioTower} aria-hidden />
+        <div>
+          <strong>Lichess can't be reached right now</strong>
+          <p className="muted">{(error as ApiError).message}</p>
+          <p>
+            Broadcasts come straight from Lichess, which didn't answer in time or asked us to slow down.
+            {retryAt && retryAt > Date.now() ? ` Try again after ${formatDateTime(retryAt)}.` : ' Try again in a minute.'}
+          </p>
+          {retryButton}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="lib-note lib-note--warn" role="alert">
       <i data-icon={licon.RadioTower} aria-hidden />
       <div>
-        <strong>Live broadcasts aren't available on this server right now</strong>
+        <strong>Live broadcasts aren't available on this server</strong>
         <p className="muted">{(error as ApiError).message}</p>
         <p>
           Outpost reads Lichess broadcasts with the server's own Lichess API token (Lichess asks apps to authenticate
-          broadcast requests), and either none is set or Lichess can't be reached.{' '}
+          broadcast requests), and none is set.{' '}
           {isAdmin ? (
             <>
               Add a personal token (any scope; <code>study:read</code> recommended) in{' '}
-              <Link to={paths.admin.settings}>Admin → Settings</Link>.
+              <Link to={paths.admin.settings}>Admin → Settings</Link>, or set <code>LICHESS_TOKEN</code>.
             </>
           ) : (
             'Ask the admin of this Outpost to add one.'
           )}
         </p>
-        {onRetry && (
-          <button type="button" className="button button-secondary button-thin" data-icon={licon.Reload} onClick={onRetry}>
-            Try again
-          </button>
-        )}
+        {retryButton}
       </div>
     </div>
   );

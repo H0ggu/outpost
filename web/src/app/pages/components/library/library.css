@@ -70,7 +70,83 @@
 }
 
 .lib-inline-form .form-group--narrow {
-  flex: 0 1 9rem;
+  /* as wide as its select's longest option, shrinking only when the row is too narrow */
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+/* Results that are being refreshed stay visible, dimmed. */
+.lib-results {
+  margin-top: 0.5rem;
+  transition: opacity 0.2s;
+}
+
+.lib-results--stale {
+  opacity: 0.6;
+}
+
+/* A box title with an inline rename button, and the rename form that replaces it. */
+.lib-dbtitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow-wrap: anywhere;
+}
+
+.lib-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.lib-rename input {
+  font-size: 1.1rem;
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+
+/* ECO code in front of an opening name. */
+.lib-eco {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--c-font-dim);
+}
+
+.lib-hit__note {
+  font-size: 0.85em;
+}
+
+/* A bare icon button (remove ×, rename ✎): no box until hovered. */
+.lib-icon-btn {
+  margin-inline-start: auto;
+  background: none;
+  border: 0;
+  padding: 0.35rem;
+  border-radius: var(--box-radius);
+  color: var(--c-font-dim);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.lib-icon-btn::before {
+  margin: 0 !important;
+}
+
+.lib-icon-btn:hover,
+.lib-icon-btn:focus-visible {
+  color: var(--c-font-clear);
+  background: var(--c-bg-zebra);
+}
+
+.lib-icon-btn--danger:hover,
+.lib-icon-btn--danger:focus-visible {
+  color: var(--c-bad);
+}
+
+.lib-icon-btn--inline {
+  margin: 0;
+  font-size: 1rem;
 }
 
 .lib-checkbox {
@@ -197,6 +273,13 @@
 .lib-search--big input[type='search'] {
   padding: 0.9rem 0;
   font-size: 1.15rem;
+}
+
+@media (max-width: 480px) {
+  .lib-search--big input[type='search'] {
+    padding: 0.75rem 0;
+    font-size: 1rem;
+  }
 }
 
 .lib-search__busy {
@@ -388,6 +471,36 @@
 
 .lib-tabs {
   margin: 0 var(--box-padding);
+  /* The kit's .tabs-horiz scrolls horizontally, which clips the active tab's underline where it
+     overlaps the bar's own bottom border (margin-bottom: -2px); draw the bar inside instead. */
+  border-bottom: 0;
+  box-shadow: inset 0 -2px 0 var(--c-border);
+}
+
+.lib-tabs a {
+  margin-bottom: 0;
+}
+
+.lib-tab-short {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .lib-tabs a {
+    padding: 0.65rem 0.7rem;
+  }
+
+  .lib-tabs a::before {
+    display: none;
+  }
+
+  .lib-tab-long {
+    display: none;
+  }
+
+  .lib-tab-short {
+    display: inline;
+  }
 }
 
 .lib-pagination {
@@ -676,6 +789,10 @@
 
   .lib-hit__main {
     flex-basis: 8rem;
+  }
+
+  .lib-hit__meta {
+    white-space: normal;
   }
 }
 

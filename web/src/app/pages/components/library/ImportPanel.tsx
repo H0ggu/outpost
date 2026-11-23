@@ -147,11 +147,16 @@ export function ImportPanel({ db }: { db: DatabaseInfo }) {
             <i data-icon={licon.UploadCloud} aria-hidden />
             {file ? (
               <span>
-                <strong>{file.name}</strong> <span className="muted">({(file.size / 1024).toFixed(file.size < 10240 ? 1 : 0)} KB)</span>
+                <span>
+                  <strong>{file.name}</strong> <span className="muted">({(file.size / 1024).toFixed(file.size < 10240 ? 1 : 0)} KB)</span>
+                </span>
+                <span className="lib-hint">Ready: press Import, or drop another file to replace it.</span>
               </span>
             ) : (
               <span>
-                Drop a <strong>.pgn</strong> file here or <span className="lib-link">choose one</span>
+                <span>
+                  Drop a <strong>.pgn</strong> file here or <span className="lib-link">choose one</span>
+                </span>
                 <span className="lib-hint">Up to 50 MB. Every game in the file is imported.</span>
               </span>
             )}

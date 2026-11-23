@@ -1,14 +1,5 @@
 /* Search page (`/search`). Hit rows (.lib-hit) live in library.css. */
 
-.lib-results {
-  margin-top: 0.5rem;
-  transition: opacity 0.2s;
-}
-
-.lib-results--stale {
-  opacity: 0.6;
-}
-
 .lib-manual {
   display: flex;
   flex-wrap: wrap;

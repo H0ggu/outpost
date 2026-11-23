@@ -10,10 +10,21 @@ import './components/library/library.css';
 
 type PlayersTab = ProfileListQuery['scope'] | 'bookmarks';
 
+/** A tab with a shorter label on phones; its accessible name is always the long one. */
+const shortOnPhones = (long: string, short: string) => ({
+  name: long,
+  label: (
+    <>
+      <span className="lib-tab-long">{long}</span>
+      <span className="lib-tab-short">{short}</span>
+    </>
+  ),
+});
+
 const ALL_TABS: ReadonlyArray<ParamTab<PlayersTab>> = [
   { value: 'public', label: 'Public', icon: licon.Globe },
-  { value: 'mine', label: 'My profiles', icon: licon.User },
-  { value: 'recent', label: 'Recently viewed', icon: licon.Clock },
+  { value: 'mine', ...shortOnPhones('My profiles', 'Mine'), icon: licon.User },
+  { value: 'recent', ...shortOnPhones('Recently viewed', 'Recent'), icon: licon.Clock },
   { value: 'bookmarks', label: 'Bookmarks', icon: licon.Star },
 ];
 

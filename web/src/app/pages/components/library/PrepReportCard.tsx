@@ -25,7 +25,8 @@ export function lineExplorerHref(slug: string, color: Color, filters: ProfileFil
 
 const HOUR_LABELS = Array.from({ length: 24 }, (_, h) => (h % 6 === 0 ? String(h) : ''));
 const HOUR_NAMES = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00–${String((h + 1) % 24).padStart(2, '0')}:00`);
-const DAY_LABELS = WEEKDAYS.map(d => d.slice(0, 2));
+/** One letter per day (the bar's tooltip names it), so seven labels fit under a narrow chart. */
+const DAY_LABELS = WEEKDAYS.map(d => d[0]!);
 
 export function PrepReportCard({ report, filters, utc }: { report: PrepOpponentReport; filters: ProfileFilters; utc: boolean }) {
   const p = report.profile;
@@ -162,11 +163,13 @@ function LineTable({
                 </span>
               )}
             </td>
-            <td className="num">{fullNumber(l.games)}</td>
+            <td className="num lib-prep-lines__games" data-unit={l.games === 1 ? 'game' : 'games'}>
+              {fullNumber(l.games)}
+            </td>
             <td className="lib-prep-lines__bar">
               <WdlBar w={l.w} d={l.d} l={l.l} />
             </td>
-            <td className="num">
+            <td className="num lib-prep-lines__score">
               <strong>{percent(l.score)}</strong>
             </td>
           </tr>

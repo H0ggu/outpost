@@ -52,7 +52,7 @@ export function AccountPicker({ picked, onAdd }: { picked: readonly PickedSource
         value={q}
         onChange={setQ}
         label="Search for an account"
-        placeholder="Search Lichess, Chess.com and the reference DB"
+        placeholder="Username, player name or FIDE id"
         busy={search.isFetching && term.length >= 2}
       />
       {term.length >= 2 && r && (

@@ -196,7 +196,7 @@ function OpponentChip({ profile, onRemove, disabled }: { profile: ProfileSummary
         {profile.displayName}
       </a>
       <SourceBadges sources={profile.sources} max={2} />
-      <button type="button" className="lib-icon-btn" data-icon={licon.X} aria-label={`Remove ${profile.displayName}`} title="Remove from this set" disabled={disabled} onClick={onRemove} />
+      <button type="button" className="lib-icon-btn lib-icon-btn--danger" data-icon={licon.X} aria-label={`Remove ${profile.displayName}`} title="Remove from this set" disabled={disabled} onClick={onRemove} />
     </li>
   );
 }

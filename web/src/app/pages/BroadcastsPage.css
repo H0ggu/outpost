@@ -176,7 +176,7 @@ a.lib-tour__name:hover {
 /* lila's multiboard grid (ui/analyse/css/study/panel/_multiboard.scss): two per row on phones. */
 .lib-boards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100% / 2, max(210px, 100% / 6)), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100% / 2, max(240px, 100% / 6)), 1fr));
 }
 
 .lib-mini {
@@ -237,6 +237,7 @@ a.lib-tour__name:hover {
 }
 
 .lib-mini .rating {
+  flex: 0 0 auto;
   font-family: var(--font-heading);
   font-size: 0.9em;
   color: var(--c-font-dim);
@@ -294,14 +295,13 @@ a.lib-tour__name:hover {
   z-index: 3;
 }
 
+/* Narrow boards (two per row on phones): the federation goes first, the rating stays. */
 @container (width < 250px) {
-  .lib-mini .rating {
-    display: none;
-  }
-}
-
-@container (width < 190px) {
   .lib-fed {
     display: none;
+  }
+
+  .lib-mini .mini-game__player {
+    font-size: 0.82rem;
   }
 }
