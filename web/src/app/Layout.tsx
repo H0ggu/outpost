@@ -2,8 +2,9 @@
  * Site chrome in Lichess's layout: top bar with the Outpost wordmark (our own icon, never the
  * Lichess logo), main navigation (a drop-down panel below 1180 px, where the seven links, the
  * search and the user menu no longer fit on one line; on phones with the search box inside),
- * player search, my running jobs, and the user menu; content outlet; footer with the AGPL notice
- * and the NOTICE.md attribution. Applies the theme, board and piece preferences (true black by
+ * player search, my running jobs, and the user menu; content outlet; footer with the AGPL notice,
+ * this instance's source code when the operator published it (`SessionInfo.sourceUrl`, env
+ * `SOURCE_URL`, AGPL-3.0 §13) and the NOTICE.md attribution. Applies the theme, board and piece preferences (true black by
  * default). Widths are in Layout.css.
  */
 import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent } from 'react';
@@ -23,6 +24,12 @@ const NoticeDialog = lazy(async () => ({ default: (await import('./pages/compone
 
 /** The licence text at the FSF. */
 const AGPL_URL = 'https://www.gnu.org/licenses/agpl-3.0.html';
+
+/** The instance's published source (`SOURCE_URL`), if it is an http(s) URL; the server checks it too. */
+export const sourceCodeUrl = (info: SessionInfo | undefined): string | null => {
+  const url = info?.sourceUrl;
+  return url && /^https?:\/\//i.test(url) ? url : null;
+};
 
 /** Main navigation (SPA routes; the Studio is added as a full-page link). */
 const NAV = [
@@ -62,6 +69,7 @@ export default function Layout() {
   }, [menuOpen]);
 
   const info = session.data;
+  const sourceUrl = sourceCodeUrl(info);
   const user = info?.user ?? null;
   // The auth pages explain setup themselves.
   const setupNeeded = info?.setupRequired && !/^\/(setup|login|signup)(\/|$)/.test(location.pathname);
@@ -137,6 +145,14 @@ export default function Layout() {
           open-source projects.
         </p>
         <p>
+          {sourceUrl && (
+            <>
+              <a href={sourceUrl} target="_blank" rel="noreferrer noopener">
+                Source code
+              </a>{' '}
+              ·{' '}
+            </>
+          )}
           <button type="button" className="site-footer__link" onClick={() => setNoticeOpen(true)}>
             Notices and attribution
           </button>{' '}

@@ -197,6 +197,18 @@ describe('Layout', () => {
     expect(dialog.textContent).toContain('cburnett');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // No SOURCE_URL configured: no source link.
+    expect(within(footer).queryByRole('link', { name: 'Source code' })).toBeNull();
+  });
+
+  it("links this instance's source code when the operator set SOURCE_URL (decision 30)", async () => {
+    api().on('GET', '/api/session', session(null, { sourceUrl: 'https://git.example.org/outpost' }));
+    renderAt(<Page />, { layout: true });
+    const footer = screen.getByRole('contentinfo');
+    const link = await within(footer).findByRole('link', { name: 'Source code' });
+    expect(link.getAttribute('href')).toBe('https://git.example.org/outpost');
+    expect(within(footer).getByRole('link', { name: 'GNU AGPL v3 or later' })).toBeTruthy();
+    expect(within(footer).getByRole('button', { name: 'Notices and attribution' })).toBeTruthy();
   });
 });
 
