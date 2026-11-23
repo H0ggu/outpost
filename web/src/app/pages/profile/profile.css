@@ -176,6 +176,34 @@ html[data-theme='light'] {
   background: color-mix(in oklab, var(--c-primary) 18%, var(--c-bg-box));
 }
 
+/*
+ * Phones: small links get a finger-sized hit area. A row's icon link and a card header's link
+ * reach past their text (an invisible layer, so the layout stays as it is); pager buttons and
+ * the opponents' games link grow to 32 px.
+ */
+@media (max-width: 640px) {
+  .profile-page td > .row-action,
+  .profile-page .card-link {
+    position: relative;
+  }
+
+  .profile-page td > .row-action::after,
+  .profile-page .card-link::after {
+    content: '';
+    position: absolute;
+    inset: -8px -8px;
+  }
+
+  .profile-page .pager .button,
+  .profile-page .opponents-table td.align-right .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    min-height: 32px;
+  }
+}
+
 /* ---------------------------------------------------------------------------
  * Small pieces: site badges, titles, players, outcomes
  * ------------------------------------------------------------------------ */
