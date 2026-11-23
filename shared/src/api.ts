@@ -303,6 +303,12 @@ export interface AdminSettings {
   /** Months of history for a source's first import; 0 = everything. */
   initialSyncMonths: number;
   mastersSource: MastersSource;
+  /**
+   * Import finished official Lichess broadcast rounds into the built-in "Lichess broadcasts"
+   * reference database automatically (needs the Lichess token; default off). Optional for
+   * compatibility; absent means off.
+   */
+  broadcastAutoImport?: boolean;
 }
 
 /**
@@ -318,6 +324,8 @@ export interface UpdateAdminSettingsRequest {
   updateCooldownMinutes?: number;
   initialSyncMonths?: number;
   mastersSource?: MastersSource;
+  /** See `AdminSettings.broadcastAutoImport`. */
+  broadcastAutoImport?: boolean;
 }
 
 /** One row of `GET /api/admin/users`. */
@@ -1344,6 +1352,8 @@ export interface BroadcastMonthStatus {
   status: 'available' | 'queued' | 'importing' | 'imported' | 'error';
   games: number;
   importedAt: EpochMs | null;
+  /** Why the last import failed (status `error`). */
+  error?: string | null;
 }
 
 /** `GET /api/reference`. */
@@ -1366,7 +1376,14 @@ export interface ReferencePlayer {
   games: number;
   lastPlayed: EpochMs | null;
   maxRating: number | null;
-  /** A visible local profile with this FIDE source, if any. */
+  /** Rating in the player's most recent game, when known. */
+  lastRating?: number | null;
+  /**
+   * Players without a FIDE id are indexed per reference database: its id (attach them as a `pgn`
+   * source with this `databaseId` and `key` = `name`). Null for FIDE players (every reference DB).
+   */
+  databaseId?: Id | null;
+  /** A visible local profile with this FIDE source (or pgn source, without a FIDE id), if any. */
   profileSlug: string | null;
 }
 

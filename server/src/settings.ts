@@ -23,6 +23,8 @@ export interface InstanceSettings {
   /** 0 = import everything. */
   initialSyncMonths: number;
   mastersSource: MastersSource;
+  /** Auto-import finished official Lichess broadcast rounds into the reference DB (reference module). */
+  broadcastAutoImport: boolean;
 }
 
 /** Defaults for a fresh instance. */
@@ -35,6 +37,7 @@ export const DEFAULT_SETTINGS: Readonly<InstanceSettings> = {
   updateCooldownMinutes: 15,
   initialSyncMonths: 0,
   mastersSource: 'lichess',
+  broadcastAutoImport: false,
 };
 
 /** Validators for stored values, one per key. */
@@ -47,6 +50,7 @@ export const SETTING_SCHEMAS = {
   updateCooldownMinutes: z.number().int().min(0).max(7 * 24 * 60),
   initialSyncMonths: z.number().int().min(0).max(600),
   mastersSource: z.custom<MastersSource>(v => typeof v === 'string' && /^(lichess|reference:[1-9]\d*)$/.test(v)),
+  broadcastAutoImport: z.boolean(),
 } satisfies { [K in keyof InstanceSettings]: z.ZodType<InstanceSettings[K]> };
 
 type Key = keyof InstanceSettings;
