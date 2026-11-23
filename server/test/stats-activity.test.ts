@@ -289,6 +289,7 @@ describe('activity with implausible dates', () => {
     return { body: res.body, ms, bytes: res.text.length };
   };
   const total = (cells: Array<{ games: number }>) => cells.reduce((s, c) => s + c.games, 0);
+  const historicDense: number[] = [];
 
   beforeAll(async () => {
     t = await makeTestApp();
@@ -314,6 +315,11 @@ describe('activity with implausible dates', () => {
     ]);
     profile('future-only', [Date.UTC(9999, 0, 1), now + 3 * 86_400_000]);
     profile('historic', [Date.UTC(1880, 4, 1, 15, 30), Date.UTC(2025, 0, 1, 9), Date.UTC(2025, 6, 1, 21)]);
+    // A dense old year (offset segments), a sparse one (per-instant lookups) and a recent game.
+    const rand = prng(11);
+    const year = (y: number, n: number) => Array.from({ length: n }, () => Date.UTC(y, 0, 1) + Math.floor(rand() * (Date.UTC(y + 1, 0, 1) - Date.UTC(y, 0, 1))));
+    historicDense.push(...year(1950, 450), ...year(1951, 40), Date.UTC(1950, 3, 23, 1, 30), Date.UTC(2025, 2, 1, 12));
+    profile('historic-dense', historicDense);
   });
   afterAll(async () => t.close());
 
@@ -353,4 +359,21 @@ describe('activity with implausible dates', () => {
       expect(total(body.byHour), tz).toBe(3);
     }
   });
+
+  it.each(['America/New_York', 'Europe/London', 'Europe/Oslo', 'Asia/Kolkata', 'Australia/Lord_Howe'])(
+    'matches an Intl oracle for a dense historical year in %s',
+    async tz => {
+      const { body } = await activity('historic-dense', tz);
+      const byHour = Array.from({ length: 24 }, () => 0);
+      const grid = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
+      for (const at of historicDense) {
+        const p = localParts(at, tz);
+        byHour[p.hour]!++;
+        grid[p.weekday]![p.hour]!++;
+      }
+      expect(body.byHour.map(c => c.games)).toEqual(byHour);
+      expect(body.grid.map(r => r.map(c => c.games))).toEqual(grid);
+      expect(body.days).toEqual([{ date: localParts(Date.UTC(2025, 2, 1, 12), tz).date, games: 1, score: 1 }]);
+    },
+  );
 });

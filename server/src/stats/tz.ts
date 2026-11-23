@@ -159,7 +159,8 @@ interface YearTransitions {
 const yearCache = new Map<string, YearTransitions>();
 const YEAR_CACHE_MAX = 5000;
 
-const yearStart = (year: number): number => {
+/** First instant of a UTC calendar year (any year, including those before 100). */
+export const yearStart = (year: number): number => {
   const d = new Date(0);
   d.setUTCFullYear(year, 0, 1);
   return d.getTime();
@@ -201,7 +202,7 @@ function transitionsInYear(tz: string, year: number): YearTransitions {
 }
 
 /** UTC year of an instant. */
-const utcYear = (t: number): number => new Date(t).getUTCFullYear();
+export const utcYear = (t: number): number => new Date(t).getUTCFullYear();
 
 /**
  * Offset segments of `tz` covering [from, to]: the first segment starts at `from`, later ones at

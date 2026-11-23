@@ -11,8 +11,8 @@
  *
  * Bounds: one PGN game with a typo'd date (year 1000 or 9999) must not make every request slow
  * and huge, so games dated before 1400 or after tomorrow are left out, offsets are precomputed
- * for at most the 40 years before the last game (older games get an exact per-instant lookup),
- * and `days` covers at most the last `ACTIVITY_MAX_DAYS`.
+ * for at most the 40 years before the last game (older games get exact lookups per instant or per
+ * year that has games), and `days` covers at most the last `ACTIVITY_MAX_DAYS`.
  *
  * Date-only games: a PGN or reference game whose headers give a date but no time is stored at
  * 00:00 UTC of that date (chess/pgn.ts). Its calendar date is the one written in the PGN, so it
@@ -33,7 +33,9 @@ import {
   offsetAt,
   offsetSegments,
   offsetSweeper,
+  utcYear,
   weekdayOfDay,
+  yearStart,
 } from './tz.ts';
 
 /**
@@ -73,11 +75,18 @@ export const ACTIVITY_FUTURE_MARGIN_MS = DAY_MS;
 /**
  * Most entries in `ActivityStats.days` (40 years, ending at the last game; `activityDays`).
  * Offsets come from precomputed segments over the same span before the last game; older games
- * (historical PGN collections) cost one `offsetAt` per distinct instant instead, so the work
- * grows with the number of games and never with the span of their dates.
+ * (historical PGN collections) cost one `offsetAt` per distinct instant, or their year's segments
+ * when that is cheaper, so the work is bounded by the number of games and of years that have
+ * games, never by the span between them.
  */
 export const ACTIVITY_MAX_DAYS = 14_610;
 const SEGMENT_SPAN_MS = ACTIVITY_MAX_DAYS * DAY_MS;
+/**
+ * Timed games in one UTC year (before the precomputed span) above which that year's offset
+ * segments are computed (about 370 `offsetAt` calls, cached per zone and year) instead of one
+ * `offsetAt` per game.
+ */
+const OLD_YEAR_SEGMENTS_FROM = 400;
 
 /**
  * Aggregates the games of `where` (over `player_games pg`) in zone `tz`; `range` optionally bounds
@@ -150,16 +159,28 @@ export function localActivity(
   // The first bucket may start before `segFrom`: take the offset where its games are.
   for (const r of rows) addAt(r.b, r.dateOnly ? 0 : offsetOf(Math.max(r.b, segFrom)), r.dateOnly, r);
 
-  // Older games: exact offsets per distinct end instant.
+  // Older games: exact offsets per distinct end instant, one UTC year at a time. A year with many
+  // timed games takes its (cached) offset segments; a sparse one an `offsetAt` per instant.
   if (span.lo < segFrom) {
     const old = scope.db.all<{ t: number; dateOnly: number } & Counter>(
       `SELECT pg.ended_at AS t, ${DATE_ONLY_SQL} AS dateOnly, COUNT(*) AS games, SUM(pg.outcome = 'w') AS w,
               SUM(pg.outcome = 'd') AS d
          FROM ${PLAYER_GAMES_BY_PK} WHERE ${cond} AND pg.ended_at < ?
-        GROUP BY 1, 2`,
+        GROUP BY 1, 2 ORDER BY 1, 2`,
       [...params, segFrom],
     );
-    for (const r of old) addAt(r.t, r.dateOnly ? 0 : offsetAt(tz, r.t), r.dateOnly, r);
+    for (let i = 0; i < old.length; ) {
+      const year = utcYear(old[i]!.t);
+      let end = i;
+      let timed = 0;
+      for (; end < old.length && utcYear(old[end]!.t) === year; end++) if (!old[end]!.dateOnly) timed++;
+      const last = Math.min(yearStart(year + 1) - 1, segFrom);
+      const offsetOf = timed > OLD_YEAR_SEGMENTS_FROM ? offsetSweeper(tz, offsetSegments(tz, old[i]!.t, last), last) : (t: number) => offsetAt(tz, t);
+      for (; i < end; i++) {
+        const r = old[i]!;
+        addAt(r.t, r.dateOnly ? 0 : offsetOf(r.t), r.dateOnly, r);
+      }
+    }
   }
   return out;
 }
