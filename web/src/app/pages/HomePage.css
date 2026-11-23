@@ -187,7 +187,7 @@
 .lib-steps strong::before {
   counter-increment: lib-step;
   content: counter(lib-step) '. ';
-  color: var(--c-font-dimmer);
+  color: var(--c-font-dim);
 }
 
 .lib-steps span,

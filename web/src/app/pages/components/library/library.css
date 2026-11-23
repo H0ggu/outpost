@@ -52,7 +52,7 @@
 }
 
 .lib-section-title .lib-count {
-  color: var(--c-font-dimmer);
+  color: var(--c-font-dim);
   font-size: 0.9em;
 }
 
@@ -460,7 +460,7 @@
 }
 
 .lib-plist__meta {
-  color: var(--c-font-dimmer);
+  color: var(--c-font-dim);
   font-size: 0.82rem;
 }
 
@@ -581,7 +581,7 @@
 }
 
 .lib-pagination span {
-  color: var(--c-font-dimmer);
+  color: var(--c-font-dim);
   cursor: default;
 }
 
@@ -813,7 +813,7 @@
 }
 
 .lib-hit__meta {
-  color: var(--c-font-dimmer);
+  color: var(--c-font-dim);
   font-size: 0.82rem;
   overflow: hidden;
   text-overflow: ellipsis;

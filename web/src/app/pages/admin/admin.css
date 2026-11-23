@@ -290,7 +290,7 @@
 
 .adm-job__meta {
   font-size: 0.82em;
-  color: var(--c-font-dimmer);
+  color: var(--c-font-dim);
 }
 
 .adm-job__progress {

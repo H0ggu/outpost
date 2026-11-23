@@ -277,9 +277,16 @@
  * Footer
  * ------------------------------------------------------------------------ */
 
+/*
+ * The kit greys the footer out with --c-font-dimmer, lila's token for decoration, which is far
+ * below 4.5:1 in the light theme (and under it elsewhere): the notice is text people read, so it
+ * uses lila's token for text on the page background, and its links stand out by colour and
+ * underline.
+ */
 .site-footer {
   border-top: 1px solid var(--c-border-page);
   margin-top: 1rem;
+  color: var(--c-font-page);
 }
 
 .site-footer p {
@@ -287,15 +294,16 @@
 }
 
 .site-footer strong {
-  color: var(--c-font-dim);
+  color: var(--c-font);
   font-weight: 500;
 }
 
+.site-footer a,
 .site-footer__link {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--c-font-dim);
+  color: var(--c-font);
   font-size: inherit;
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
@@ -303,6 +311,7 @@
   cursor: pointer;
 }
 
+.site-footer a:hover,
 .site-footer__link:hover {
   color: var(--c-link-hover);
 }
@@ -326,7 +335,7 @@
   border: 1px solid var(--c-border);
   border-radius: 999px;
   background: none;
-  color: var(--c-font-dim);
+  color: var(--c-font-page);
   font-size: 0.85rem;
   cursor: pointer;
 }

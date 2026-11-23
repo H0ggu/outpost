@@ -248,7 +248,7 @@ a.lib-tour__name:hover {
   font-size: 0.68em;
   font-weight: 600;
   letter-spacing: 0.03em;
-  color: var(--c-font-dimmer);
+  color: var(--c-font-dim);
   border: 1px solid var(--c-border);
   border-radius: 2px;
   padding: 0 0.2em;

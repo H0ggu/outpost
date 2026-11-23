@@ -61,7 +61,7 @@
 
 .lib-explorer-db__note {
   font-size: 0.85em;
-  color: var(--c-font-dimmer) !important;
+  color: var(--c-font-dim) !important;
 }
 
 .lib-explorer-db__go {
