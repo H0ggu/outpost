@@ -1289,7 +1289,8 @@ body[data-studio-layout='focus'] .analyse__underboard {
 }
 
 /* -------------------------------------------------------------------------
- * Embed (?embed=explorer, the profile Explorer tab iframe): board, moves and explorer only.
+ * Embed (?embed=explorer, the profile Explorer tab iframe): board, moves, explorer, and lila's FEN
+ * and PGN boxes to jump to a position (ChessMonitor's explorer has both).
  * ---------------------------------------------------------------------- */
 
 body.studio-embed {
@@ -1301,8 +1302,7 @@ body.studio-embed {
 }
 
 body.studio-embed #top,
-body.studio-embed #studio-bar,
-body.studio-embed .analyse__underboard {
+body.studio-embed #studio-bar {
   display: none;
 }
 
@@ -1319,6 +1319,61 @@ body.studio-embed .analyse__tools .analyse__moves {
 body.studio-embed .analyse__tools .explorer-box,
 body.studio-embed .analyse__tools .explorer-box.reduced {
   flex: 1 1 0;
+}
+
+/* FEN and PGN (lila's copyables; a FEN opens on the board, a PGN replaces the line), compact: side by
+   side in the room lila leaves under the board, the PGN box one line high until it has the focus. */
+body.studio-embed .analyse__underboard .copyables .pgn textarea {
+  min-height: 0;
+  height: 3.4em;
+  resize: vertical;
+}
+
+body.studio-embed .analyse__underboard .copyables .pgn textarea:focus {
+  height: 8em;
+}
+
+@media (min-width: 800px), (orientation: landscape) {
+  body.studio-embed .analyse__underboard .copyables {
+    display: flex;
+    align-items: flex-start;
+    gap: 1em;
+  }
+
+  body.studio-embed .analyse__underboard .copyables > .pair {
+    flex: 1 1 55%;
+    min-width: 0;
+  }
+
+  body.studio-embed .analyse__underboard .copyables .pgn {
+    flex: 1 1 45%;
+    min-width: 0;
+    margin: 0;
+  }
+
+  body.studio-embed .analyse__underboard .copyables .copyable {
+    padding-block: 0.3em;
+  }
+
+  body.studio-embed .analyse__underboard .copyables .pgn textarea:not(:focus) {
+    height: 2.1em;
+    overflow: hidden;
+    white-space: nowrap;
+    resize: none;
+  }
+
+  /* lila's "Import PGN" button and error line hang below the box, hidden but still scrollable: out
+     of the layout until they show, so the frame doesn't scroll for them. */
+  body.studio-embed .analyse__underboard .copyables .bottom-action,
+  body.studio-embed .analyse__underboard .copyables .bottom-error:not(.is-error) {
+    display: none;
+  }
+
+  body.studio-embed .analyse__underboard .copyables textarea:focus ~ .bottom-action,
+  body.studio-embed .analyse__underboard .copyables .bottom-action:active,
+  body.studio-embed .analyse__underboard .copyables .bottom-action:focus-visible {
+    display: block;
+  }
 }
 
 /* Phones (lila's one-column layout): the explorer is what the embed is for, the move list only says
