@@ -2,7 +2,7 @@
 
 Outpost is a self-hosted chess statistics and opponent-preparation app. It does what chessmonitor.com does, using only public Lichess and Chess.com data, and it reuses Lichess's own open-source code and assets wherever possible.
 
-This file is the source of truth for design decisions. The research behind it is in `docs/research/`:
+This file is the source of truth for design decisions. The answers given to the module agents' open questions at integration, each with its reason, are in `docs/DECISIONS.md`. The research behind it is in `docs/research/`:
 
 | File | Covers |
 |---|---|
@@ -88,10 +88,11 @@ Vendored lila commit: **`b071608bc4ce71b31cda36ffa493100e3dc3580f`** (2026-11-22
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8080` | Port to listen on |
+| `HOST` | `0.0.0.0` | Address to bind (Docker always binds `0.0.0.0` inside the container) |
 | `PUBLIC_ORIGIN` | (required in production) | e.g. `https://chess.example.com`. Used for the Origin/CSRF check and absolute links. |
 | `TRUSTED_PROXIES` | empty | IPs, CIDRs or `loopback`/`linklocal`/`uniquelocal`, passed to Fastify `trustProxy`. Gives correct client IPs for rate limits. `true`/`*` is refused (any client could spoof its IP). |
 | `DATA_DIR` | `./data` | Holds the SQLite file, NNUE cache and uploads |
-| `LICHESS_TOKEN` | empty | Personal token (any scope; `study:read` recommended). **Required** for the Lichess explorer, player explorer and broadcasts. Also speeds up game export and enables rating history. The admin can also set it in the UI; env wins. |
+| `LICHESS_TOKEN` | empty | Personal token (any scope; `study:read` recommended). **Required** for the Lichess opening explorer, live broadcasts and broadcast round imports (including auto-import). Also speeds up game export. The admin can also set it in the UI; env wins. (Outpost's own player explorer reads local data and needs no token.) |
 | `CHESSCOM_CONTACT` | empty | Contact text put in the Chess.com User-Agent, `Outpost/<ver> (self-hosted; contact: <value>)`. Chess.com returns 403 to anonymous user agents. The admin can set it in the UI. |
 | `SOURCE_URL` | empty | Public URL of this instance's source code (AGPL-3.0 §13). Sent as `SessionInfo.sourceUrl`; the footer links to it, or to the AGPL text and NOTICE when unset. |
 | `SETUP_TOKEN` | generated, printed to logs | One-time token to create the first admin |
@@ -111,6 +112,14 @@ Migration `001_init.sql` creates the following. Later modules add their own migr
 | profiles/db/files | 500–599 |
 | reference/broadcasts | 600–699 |
 | prep | 700–799 |
+
+Migrations at integration (2026-11-23), applied in number order on a fresh database:
+`001_init`, `100_auth_totp`, `101_auth_activity` (last seen, deleting users, known devices),
+`200_jobs_scheduler`, `201_job_checkpoints`, `300_stats_indexes` (`games_stats` covering index),
+`400_explorer_cache_status`, `401_explorer_database_stats` (triggers + `games_explorer_db` index: a
+later rebuild of `games` must recreate them), `500_databases_files`, `501_sources_autoincrement`,
+`503_files_quota`, `600_reference`, `601_reference_fide_dedupe` (the one FIDE rule: `fide` sources
+link reference games only, one copy per game; decision 1). There is no `502` (merged into `601`).
 
 - **users** `(id, username UNIQUE COLLATE NOCASE, password_hash, role 'admin'|'user', disabled, totp_secret, created_at, prefs_json)`
 - **sessions** `(id_hash PK, user_id, created_at, expires_at, last_seen_at, ip, user_agent)`
@@ -201,23 +210,23 @@ All endpoints are JSON under `/api` unless marked otherwise. Request and respons
 | POST | `/api/signup` | `{username, password, invite?}` |
 | GET/PUT | `/api/me/prefs` | `UserPrefs`: theme `dark`\|`black`\|`light`, boardTheme, pieceSet, soundSet, winratePerspective `player`\|`white`, timezone `local`\|`utc`, studioLayout |
 | POST | `/api/me/password` | |
-| POST | `/api/me/totp/setup`, `/api/me/totp/enable`, `/api/me/totp/disable` | |
+| POST | `/api/me/totp/setup`, `/api/me/totp/enable`, `/api/me/totp/disable` | Setup requires the current password (`TotpSetupRequest`, decision 8); enable takes a code for the pending secret; disable takes the password **or** a code |
 | GET | `/api/me/sessions` | |
 | DELETE | `/api/me/sessions/:id` | |
-| GET/PUT | `/api/admin/settings` | signupMode `closed`\|`invite`\|`open`, anonymousBrowsing, lichessToken (write-only, shown masked), chesscomContact, autoRefreshHourUtc, updateCooldownMinutes, initialSyncMonths (0 = all), mastersSource `lichess`\|`reference:<dbId>` |
+| GET/PUT | `/api/admin/settings` | signupMode `closed`\|`invite`\|`open`, anonymousBrowsing, lichessToken (write-only, shown masked), chesscomContact, autoRefreshHourUtc, updateCooldownMinutes, initialSyncMonths (0 = all), mastersSource `lichess`\|`reference:<dbId>`, broadcastAutoImport (default off, decision 22) |
 | GET | `/api/admin/users` | |
 | PATCH/DELETE | `/api/admin/users/:id` | |
 | GET/POST | `/api/admin/invites` | |
 | DELETE | `/api/admin/invites/:code` | |
 | GET | `/api/admin/jobs` | |
 | POST | `/api/admin/jobs/:id/retry`, `/api/admin/jobs/:id/cancel` | |
-| GET | `/api/admin/status` | Versions, DB size, token validity, upstream reachability |
+| GET | `/api/admin/status` | Versions, DB size, token validity, upstream reachability (cached about a minute; `?refresh=1` checks again), job counts per state |
 | GET | `/api/jobs/mine` | Queued and running jobs relevant to me, with queue positions |
 
 ### Search and profiles
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/search?q=` | `{profiles, lichess, chesscom, reference}` |
+| GET | `/api/search?q=` | `{profiles, lichess, chesscom, reference, unavailable?}`; `q` is 2–100 characters (`SEARCH_QUERY_MIN/MAX_LENGTH`) |
 | GET | `/api/profiles` | `?scope=mine\|public\|recent` |
 | POST | `/api/profiles` | `{displayName, slug?, sources:[{kind,key,databaseId?}]}`; for `pgn`, `key` is the player's name as written in the PGN and `databaseId` is required |
 | GET | `/api/profiles/:slug` | `ProfileHeader`: name, sources with sync status, visibility, owner?, bookmarked, totals, current ratings per source and time class, lastUpdated, queue info |
@@ -256,7 +265,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 | GET | `/api/explorer/reference` | Same shape as masters, from the local reference DB |
 | GET | `/api/explorer/games` | `?player&fen\|play&…filters&page`, plus lila's `speeds/modes/since/until` as in the player explorer: games that reach a position |
 | GET | `/api/tablebase/:variant` | Proxy to `tablebase.lichess.ovh` (cached). **No session required**: lila's tablebase request omits credentials. |
-| GET | `/api/cloud-eval` | Proxy to `lichess.org/api/cloud-eval` |
+| GET | `/api/cloud-eval` | Proxy to `lichess.org/api/cloud-eval`. A miss is 404, or 200 with `pvs: []` when the request sets `emptyOnMiss=1` (the Studio does, so the browser logs nothing; decision 12) |
 | GET | `/assets/lifat/nnue/:name` | Downloads the NNUE file once from `tests.stockfishchess.org/api/nn/:name` into `DATA_DIR/nnue` and serves it from there. Name allow-list: `^nn-[0-9a-f]{12}\.nnue$`. |
 
 ### Databases, files, reference, broadcasts and prep
@@ -264,7 +273,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 |---|---|---|
 | GET/POST | `/api/databases` | |
 | GET/PATCH/DELETE | `/api/databases/:id` | |
-| POST | `/api/databases/:id/import` | Multipart `.pgn` upload or `{pgn}` text; becomes a job |
+| POST | `/api/databases/:id/import` | Multipart `.pgn` upload (≤ 50 MB, `PGN_UPLOAD_MAX_BYTES`) or `{pgn}` text (≤ 5 MB, `PGN_PASTE_MAX_BYTES`); becomes a job. 429 with 3 imports pending, 403 past the owner's game allowance |
 | GET | `/api/databases/:id/games` | |
 | GET | `/api/databases/:id/export.pgn` | |
 | DELETE | `/api/databases/:id/games/:gameId` | |
@@ -274,7 +283,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
 | POST | `/api/files/:id/restore` | |
 | GET | `/api/files/search?fen=` | |
 | GET | `/api/folders` | |
-| GET | `/api/reference` | Databases, counts, licence/attribution |
+| GET | `/api/reference` | Databases (the built-in broadcast one flagged `builtin`), counts, broadcast months, licence/attribution |
 | GET | `/api/reference/players?q=` | |
 | POST | `/api/admin/reference/broadcast-months` | `{months:['YYYY-MM']}` becomes jobs |
 | POST | `/api/admin/reference/import` | Multipart PGN or `{url}`; becomes a job into a named reference DB |
@@ -300,7 +309,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
   2. Skip games that are a variant, `fromPosition`, against AI, or anonymous.
   3. UltraBullet counts as bullet.
   4. Ratings are stored pre-game; `rating_after = rating + ratingDiff`.
-  5. Profile info comes from `GET /api/user/{u}`; rating history from `/api/user/{u}/rating-history` (needs the token).
+  5. Profile info comes from `GET /api/user/{u}`. Rating charts are built from the synced games (`player_games`), so `/api/user/{u}/rating-history` is not used.
 - **Chess.com.**
   1. Fetch `/pub/player/{u}` and `/stats`, then `/games/archives`, then each month in order. Lowercase the username; zero-pad `MM`.
   2. Revalidate months with ETag `If-None-Match`; always re-poll the current and previous month.
@@ -308,7 +317,7 @@ Endpoint parameters never reuse a filter key. Mutations return the type listed i
   4. Parse moves from the PGN with chessops. Result codes map per the research notes.
 - **After inserting games:**
   1. Classify the opening: the deepest ply among the first 40 whose EPD matches lichess chess-openings.
-  2. Write `positions` (50 plies) and `player_games` (one row per source that appears in the game).
+  2. Write `positions` (50 plies) and `player_games` (one row per source that appears in the game). `fide` sources only link reference-database games, one copy per game across reference databases (migration `601`, decision 1), so a FIDE profile never shows a user's PGN database.
   3. Queue opponent geo lookups: Lichess `POST /api/users` (300 ids per batch, no limit per run); Chess.com `/pub/player/{u}` serially at low priority, most recently met opponents first, at most 1,000 requests per run (the hourly sweep continues after a pause).
 - **Scheduling.** Daily auto refresh at `autoRefreshHourUtc` for profiles with `auto_refresh`. Manual updates enforce `updateCooldownMinutes`. The initial import can be limited to the last N months (`initialSyncMonths`).
 
@@ -331,6 +340,8 @@ Follow `docs/research/lila-ui-extraction.md`, option A.
    - Board tabs, holding multiple PGNs switched with `changePgn`.
    - Layout presets and settings (board theme, piece set, sound set, true-black).
    - Query parameters: `?game=`, `?file=`, `?pgn=`, `?fen=`, `?explorer=player:<slug>&color=`, `?filters=`, `?embed=explorer` (minimal chrome, used in the profile Explorer tab iframe).
+   - The player explorer's picker suggests bookmarked, own and recent profiles, then the PGN databases the user may read (`db:<id>`, "my DBs"); search adds Lichess / Chess.com accounts and FIDE players (`ref:<fideId>`).
+   - The material difference uses lila's `mono` piece set (vendored, GPLv2+; decision 13).
 5. **Headers.** Every response sends `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`, so stockfish-web can use SharedArrayBuffer. Nothing cross-origin is embedded: we don't show avatars, and flags are emoji or local files.
 
 ## 9. Web app (React)
@@ -345,14 +356,15 @@ Follow `docs/research/lila-ui-extraction.md`, option A.
   - `/explorer` (global explorer, which goes to the Studio with the explorer open)
   - `/settings`, `/admin/*`
   - `/studio` is a separate page.
-- **Filters bar.** Shared by the Games, Explorer, Openings and Opponents tabs. State lives in the URL query.
+- **Filters bar.** Shared by the Games, Explorer, Openings and Opponents tabs. State lives in the URL query. The opponent and event fields suggest names (the most played opponents; `GET …/events?q=`, decision 35).
+- **Footer.** AGPL notice, NOTICE.md, and the instance's source code when `SOURCE_URL` is set (decision 30).
 - **Game previews.** `@lichess-org/pgn-viewer` (mounted imperatively into a child div). "Analyse" opens the Studio.
 - **Mobile.** Responsive down to 360 px, plus a PWA manifest.
 
 ## 10. Security
 - Passwords: `crypto.scrypt` (N=2^15, r=8, p=1, 64-byte key), compared in constant time.
 - Sessions: random 32-byte ids, stored as SHA-256 hashes, 30-day sliding expiry.
-- Optional TOTP (RFC 6238).
+- Optional TOTP (RFC 6238). Turning it on needs the current password (decision 8).
 - Login and signup throttled per IP and per username; IPs come from `TRUSTED_PROXIES`.
 - **Setup.** The first admin is created with `SETUP_TOKEN` (printed to the log once if it was generated).
 - **Signup** modes: `closed`, `invite` or `open`.
@@ -362,7 +374,8 @@ Follow `docs/research/lila-ui-extraction.md`, option A.
   - `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`
 - **Access.** Public profiles and their stats can be read anonymously only when `anonymousBrowsing` is on. Everything else needs a session, and owners or admins for mutations.
 - **Secrets.** The Lichess token never reaches the browser. All upstream calls go through the server.
-- **Uploads.** Size limits: PGN 50 MB, reference import 2 GB streamed to disk.
+- **Uploads.** Size limits: PGN 50 MB (pasted PGN 5 MB), reference import 2 GB streamed to disk.
+- **Per-user limits** (decision 7): 2,000,000 games across a user's PGN databases (admins: none), 3 pending imports, 10 database exports per minute; Studio files 100 MB of PGN (recycle bin included), 10,000 files, 2,000,000 indexed positions; prep lines from each opponent's latest 5,000 games.
 
 ## 11. Testing and verification
 - **Unit tests (Vitest):**

@@ -6,6 +6,10 @@ Read `docs/PLAN.md` first; this page is the "how" for code that lands in the sca
 
 - **The contract is `shared/src/api.ts`.** Server routes return exactly those types and the web app
   consumes them. If a shape must change, change it there first and keep every workspace compiling.
+- **Policies and limits shared by both sides are contract constants**, never copies: the account
+  policy (`ACCOUNT_USERNAME_RE`, `USERNAME_MIN/MAX_LENGTH`, `PASSWORD_MIN/MAX_LENGTH`), PGN sizes
+  (`PGN_UPLOAD_MAX_BYTES`, `PGN_PASTE_MAX_BYTES`), search lengths (`SEARCH_QUERY_MIN/MAX_LENGTH`),
+  `OPENINGS_RANK_MIN_GAMES`, `EVENT_SUGGESTIONS_MAX`.
 - **Dependencies are frozen.** Don't add npm packages (the Studio module may add what vendored lila needs).
   Node built-ins cover crypto, zstd (`node:zlib`), SQLite (`node:sqlite`) and fetch.
 - **Stay in your lane.** Each module owns its files below; touching another module's files causes merge
@@ -13,6 +17,9 @@ Read `docs/PLAN.md` first; this page is the "how" for code that lands in the sca
 - Before handing back: `npm run typecheck && npm test && npm run build` must pass.
 
 ## Ownership
+
+The modules were built in parallel and merged on 2026-11-23. Since then ownership no longer restricts
+edits, but keep each area's structure and conventions: the table still says where things live.
 
 | Module | Server | Web | Migrations |
 |---|---|---|---|
@@ -56,6 +63,8 @@ optimise a body but not change a signature or its semantics without updating eve
 |---|---|---|
 | Any Lichess / Chess.com / other upstream request | `app.upstream.fetch/json(url, {auth, signal, allowStatuses})` (`src/http/upstream.ts`); in a job `ctx.upstream`. Map failures with `upstreamHttpError(e)`. | shared kit |
 | Enqueue work, show it | `enqueueJob`, `enqueueSync`, `getJob`, `toJobInfo`, `queuePosition`, `sourceSyncStatus` (`src/jobs/`) | jobs |
+| Cancel queued work (e.g. a removed source's sync) | `cancelQueuedJobs(db, dedupeKey)` (`src/jobs/`); never `UPDATE jobs` from another module | jobs |
+| Apply the orphan policy (sources no profile uses, their games) | `sweepOrphans(db, {signal})` (`src/profiles/service.ts`; also run after a user is purged) | profiles |
 | Run your job kind | `registerJobHandler(kind, handler)` from your route plugin (`src/jobs/handlers.ts`) | jobs |
 | Store games | `NormalizedGame` + `insertGame` (only writer of `games`/`positions`/`player_games`), `rebuildPlayerGames` (`src/chess/store.ts`) | jobs |
 | Read PGN | `parsePgnGames` (stream), `pgnToNormalizedGame` (`src/chess/pgn.ts`) | jobs |
@@ -63,7 +72,7 @@ optimise a body but not change a signature or its semantics without updating eve
 | Filters → SQL | `playerGamesWhere(filters, { sourceIds })` (`src/stats/filterSql.ts`) | stats |
 | Game lists | `GAME_ROW_SELECT` + `toGameRow`, `DB_GAME_ROW_COLUMNS` + `toDbGameRow` (`src/stats/gameRows.ts`) | stats |
 | Read a profile / database | `loadProfileForViewer(db, slug, req.user)`, `loadDatabaseForViewer` (`src/profiles/access.ts`) | profiles |
-| Reference players in search | `searchReferencePlayers` (`src/reference/index.ts`; returns `[]` until reference implements it) | reference |
+| Reference players in search | `searchReferencePlayers(db, q, {limit, viewer})` (`src/reference/index.ts`); pass the viewer | reference |
 | Lila explorer settings → conditions | `explorerQueryRestrictions(query)` (`@outpost/shared/filters`): ANDed with the filters; never match `speeds`/`modes` literally | shared |
 | pgn source keys | `pgnSourceKey(databaseId, name)` (`src/chess/store.ts`): the only builder of `sources.key` for `pgn`; `NewSourceInput.key` is the name as written in the PGN | jobs |
 
@@ -106,7 +115,7 @@ optimise a body but not change a signature or its semantics without updating eve
 ## Web (React 19, React Router 8 data mode, TanStack Query 5)
 
 - Data: `api` from `src/app/api/client.ts` (adds `X-Outpost: 1`, throws `ApiError`) and hooks in
-  `src/app/api/hooks.ts`; add page-specific hooks next to your pages, with keys under the existing
+  `src/app/api/hooks.ts` (which also has `useDebouncedValue`, promoted from the library pages); add page-specific hooks next to your pages, with keys under the existing
   `queryKeys` prefixes (see "Shared web kit" above).
   Stats hooks take `filters` plus the endpoint's own params (`OpeningsParams`, …), which never reuse a
   filter key (`statsQuery` throws if they do); the rating chart narrows `filters.src`/`filters.tc`.

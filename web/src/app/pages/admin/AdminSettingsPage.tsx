@@ -122,7 +122,7 @@ function SettingsForm({ settings, saved, onSaved }: { settings: AdminSettings; s
                 </>
               ) : (
                 <>
-                  Needed for the Lichess opening explorer, the player explorer and live broadcasts; it also speeds up game imports.
+                  Needed for the Lichess opening explorer, live broadcasts and broadcast round imports; it also speeds up game imports.
                   Create a personal token at{' '}
                   <a href="https://lichess.org/account/oauth/token" target="_blank" rel="noreferrer noopener">
                     lichess.org/account/oauth/token

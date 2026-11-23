@@ -135,7 +135,7 @@ function StatusBody({ s }: { s: AdminStatus }) {
           </dl>
           {!s.lichessToken.configured && (
             <p className="acc-help">
-              The Lichess opening explorer, the player explorer and live broadcasts need a token. Add one in the settings above or
+              The Lichess opening explorer and live broadcasts need a token. Add one in the settings above or
               with <code>LICHESS_TOKEN</code>.
             </p>
           )}
