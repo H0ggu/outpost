@@ -52,10 +52,11 @@ export const libraryKeys = {
   referencePlayers: (q: string) => ['reference', 'players', q] as const,
 };
 
-/** Poll interval of a running database import (ms). */
-export const IMPORT_POLL_MS = 1500;
-/** Poll interval of a broadcast round (PLAN §6: clients poll every 10 s). */
-export const BROADCAST_POLL_MS = 10_000;
+/**
+ * Poll intervals (ms): a running database import, and a broadcast round (PLAN §6: clients poll
+ * every 10 s). Read at call time, so tests can shorten them.
+ */
+export const POLL = { importMs: 1500, broadcastMs: 10_000 };
 
 /** A job that is still queued or running. */
 export const isActiveJob = (job: JobInfo | null | undefined): job is JobInfo & { status: 'queued' | 'running' } =>
@@ -168,7 +169,7 @@ export function useDatabase(id: Id | undefined) {
     queryKey: libraryKeys.database(id ?? 0),
     queryFn: ({ signal }) => api.get<DatabaseInfo>(API_ROUTES.database(id!), undefined, signal),
     enabled: id !== undefined,
-    refetchInterval: q => (isActiveJob(q.state.data?.importJob) ? IMPORT_POLL_MS : false),
+    refetchInterval: q => (isActiveJob(q.state.data?.importJob) ? POLL.importMs : false),
   });
 }
 
@@ -353,10 +354,14 @@ export function useBroadcastRound(roundId: string | undefined) {
     queryFn: ({ signal }) => api.get<BroadcastRound>(API_ROUTES.broadcastRound(roundId!), undefined, signal),
     enabled: !!roundId,
     staleTime: 5_000,
-    refetchInterval: q => (q.state.data?.round.finished || isPermanentError(q.state.error) ? false : BROADCAST_POLL_MS),
+    refetchInterval: q => roundRefetchInterval(q.state.data, q.state.error),
     refetchIntervalInBackground: false,
   });
 }
+
+/** Poll a round every 10 s until it is finished or fails for good. */
+export const roundRefetchInterval = (data: BroadcastRound | undefined, error: unknown): number | false =>
+  data?.round.finished || isPermanentError(error) ? false : POLL.broadcastMs;
 
 /** Errors that polling again won't fix: not found, not allowed, no Lichess token on the server. */
 export const isPermanentError = (e: unknown): boolean =>

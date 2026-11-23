@@ -35,11 +35,13 @@ interface Tracked {
 
 /** Turns the last seen state of a finished job into the summary. */
 export function importOutcome(tracked: Tracked, finished: JobInfo | null, db: DatabaseInfo): ImportOutcome {
+  // No final state seen: the server dropped the job from `importJob`, which it does when it is done
+  // (unless the last state we saw already was the end).
   const job = finished ?? tracked.last;
   const counts = { ...(job.progress?.counts ?? {}) };
-  const status = finished ? finished.status : 'done';
+  const status = isActiveJob(job) ? 'done' : job.status;
   const added = counts.imported ?? Math.max(0, db.gameCount - tracked.before);
-  return { status, added, counts, error: finished?.error ?? null, totalNow: db.gameCount };
+  return { status, added: status === 'done' ? added : (counts.imported ?? 0), counts, error: job.error ?? null, totalNow: db.gameCount };
 }
 
 export function ImportPanel({ db }: { db: DatabaseInfo }) {

@@ -7,7 +7,7 @@ import { paths } from '../paths.ts';
 import { BroadcastError, formatTourDates, MiniGame, RoundStatusPill } from './components/library/broadcast.tsx';
 import { extractBroadcastGame } from './components/library/broadcastPgn.ts';
 import { timeAgo } from './components/library/format.ts';
-import { BROADCAST_POLL_MS, useBroadcastRound, useBroadcastTour } from './library-hooks.ts';
+import { POLL, useBroadcastRound, useBroadcastTour } from './library-hooks.ts';
 import './components/library/library.css';
 import './BroadcastsPage.css';
 
@@ -55,7 +55,7 @@ export default function BroadcastRoundPage() {
 
   // Seconds since the snapshot: since we received it, plus how old the server's copy was (≤ cache).
   const receivedAt = round.dataUpdatedAt;
-  const serverAge = data ? Math.min(BROADCAST_POLL_MS, Math.max(0, receivedAt - data.fetchedAt)) / 1000 : 0;
+  const serverAge = data ? Math.min(POLL.broadcastMs, Math.max(0, receivedAt - data.fetchedAt)) / 1000 : 0;
   const elapsedSec = data ? Math.max(0, (now - receivedAt) / 1000) + serverAge : 0;
 
   const onOpen = useCallback(

@@ -42,7 +42,8 @@ export const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 /** The server's error body. */
-export const apiError = (status: number, code: ApiErrorCode, message = code): Response => json(status, { error: { code, message } });
+export const apiError = (status: number, code: ApiErrorCode, message: string = code): Response =>
+  json(status, { error: { code, message } });
 
 /** Plain-text response (PGN). */
 export const text = (body: string, type = 'application/x-chess-pgn'): Response =>
@@ -53,8 +54,16 @@ export class FakeServer {
   readonly calls: Call[] = [];
   private routes: Array<{ method: string; path: string | RegExp; handler: Handler }> = [];
 
-  on(method: string, path: string | RegExp, handler: Handler | unknown): this {
-    const h: Handler = typeof handler === 'function' ? (handler as Handler) : () => handler;
+  /** A handler, or a fixed answer (a value sent as JSON, or a Response). */
+  on(method: string, path: string | RegExp, handler: Handler): this;
+  on(method: string, path: string | RegExp, value: object): this;
+  on(method: string, path: string | RegExp, handler: unknown): this {
+    const h: Handler =
+      typeof handler === 'function'
+        ? (handler as Handler)
+        : handler instanceof Response
+          ? () => (handler as Response).clone()
+          : () => handler;
     // Later registrations win, so a test can override a default.
     this.routes.unshift({ method, path, handler: h });
     return this;
