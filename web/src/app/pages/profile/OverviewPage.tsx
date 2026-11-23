@@ -9,7 +9,7 @@ import { ColumnChart, type ColumnDatum } from './components/charts/ColumnChart.t
 import { ActivityTip, ScoreLegend, Swatch } from './components/charts/common.tsx';
 import { RatingChart } from './components/charts/RatingChart.tsx';
 import { mostPlayed, toChartSeries } from './components/charts/ratingSeries.ts';
-import { fmtInt, fmtIsoDay, fmtLine, fmtMoves, fmtRating, fmtRelative, scoreOfWdl, TERMINATION_LABELS } from './format.ts';
+import { fmtInt, fmtIsoDay, fmtLine, fmtMoves, fmtRating, fmtRelative, MONTHS_SHORT, scoreOfWdl, TERMINATION_LABELS } from './format.ts';
 import { useProfile } from './hooks.ts';
 import { explorerTabAt, studioGameLink } from './links.ts';
 
@@ -190,7 +190,7 @@ function ColorCard({ slug, o, perspective }: { slug: string; o: OverviewStats; p
 function ActivityCard({ slug, o }: { slug: string; o: OverviewStats }) {
   const data: ColumnDatum[] = o.activity.map(d => ({
     key: d.date,
-    label: d.date.endsWith('-01') ? new Date(`${d.date}T00:00:00Z`).toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' }) : '',
+    label: d.date.endsWith('-01') ? MONTHS_SHORT[Number(d.date.slice(5, 7)) - 1]! : '',
     games: d.games,
     score: d.score,
     tip: <ActivityTip title={fmtIsoDay(d.date)} games={d.games} score={d.score} />,

@@ -6,7 +6,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { scrollFadeClass, useScrollEdges } from '../../../../components/index.ts';
 import type { ActivityCell, ActivityDay } from '@outpost/shared/api';
-import { fmtHour, fmtIsoDay, WEEKDAYS, WEEKDAYS_SHORT } from '../../format.ts';
+import { fmtHour, fmtIsoDay, MONTHS_SHORT, WEEKDAYS, WEEKDAYS_SHORT } from '../../format.ts';
 import { useElementWidth } from '../../hooks.ts';
 import { ActivityTip, ChartTooltip, clamp, scoreBin, scoreColor, seqBin, seqColor, type TooltipState } from './common.tsx';
 
@@ -14,7 +14,7 @@ import { ActivityTip, ChartTooltip, clamp, scoreBin, scoreColor, seqBin, seqColo
 export type HeatMode = 'games' | 'score';
 
 const DAY_MS = 86_400_000;
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+const MONTHS = MONTHS_SHORT;
 
 /** Today's date (`YYYY-MM-DD`) in an IANA zone. */
 export function isoToday(timeZone: string, now: number = Date.now()): string {

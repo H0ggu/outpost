@@ -7,7 +7,7 @@ import { bisector, extent } from 'd3-array';
 import { scaleLinear, scaleTime, scaleUtc } from 'd3-scale';
 import { line } from 'd3-shape';
 import { useId, useRef, useState, type PointerEvent } from 'react';
-import { fmtDate, fmtRating } from '../../format.ts';
+import { fmtDate, fmtRating, timeTickFormat } from '../../format.ts';
 import { useElementWidth } from '../../hooks.ts';
 import { ChartTooltip, clamp, TipRow, type TooltipState } from './common.tsx';
 
@@ -111,8 +111,9 @@ export function RatingChart({ series, height = 300, xDomain, timeZone, title, co
   const path = line<readonly [number, number]>()
     .x(d => x(d[0]))
     .y(d => y(d[1]));
-  const xFmt = x.tickFormat();
-  const xTicks = spacedTicks(x.ticks(Math.max(2, Math.floor(innerW / (compact ? 110 : 90)))), x, xFmt, utc);
+  const rawTicks = x.ticks(Math.max(2, Math.floor(innerW / (compact ? 110 : 90))));
+  const xFmt = timeTickFormat(rawTicks, timeZone);
+  const xTicks = spacedTicks(rawTicks, x, xFmt, utc);
   const yTicks = y.ticks(compact ? 3 : 5);
 
   const onMove = (e: PointerEvent<SVGSVGElement>) => {
