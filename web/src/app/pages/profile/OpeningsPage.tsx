@@ -1,10 +1,11 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { OPENINGS_RANK_MIN_GAMES, type OpeningRow, type OpeningsParams } from '@outpost/shared/api';
 import type { Color } from '@outpost/shared/chess';
-import { isEmptyFilters } from '@outpost/shared/filters';
+import { filtersKey, isEmptyFilters } from '@outpost/shared/filters';
 import { useOpenings, useUrlFilters } from '../../api/hooks.ts';
 import { Box, EmptyState, ErrorBox, licon, Spinner, WdlBar } from '../../components/index.ts';
-import { ColorDot, rowClick, ScoreText, Segmented, SelectField } from './components/bits.tsx';
+import { ColorDot, Pager, rowClick, ScoreText, Segmented, SelectField } from './components/bits.tsx';
 import { fmtInt, fmtLine, fmtMoves, scoreOfWdl } from './format.ts';
 import { oneOf, useProfile, useQueryParam, useSetQueryParams } from './hooks.ts';
 import { explorerTabAt } from './links.ts';
@@ -16,11 +17,15 @@ type Order = (typeof ORDERS)[number];
 type MinGames = (typeof MIN_GAMES)[number];
 type Moves = (typeof MOVES)[number];
 
+/** Lines per page of each colour's table (the endpoint returns every line; the pages are local). */
+export const OPENINGS_PAGE_SIZE = 20;
+
 /**
  * Openings tab (PLAN §5, §6 `GET /api/profiles/:slug/openings`): opening lines per colour with
  * most played / best / worst order, minimum games and a move range (1–5 full moves). The side
  * control is the filters' colour (the filters bar hides its own colour control on this tab), so
- * it carries over to the other tabs. A row opens the Explorer tab at that line.
+ * it carries over to the other tabs. A row opens the Explorer tab at that line. Each table shows
+ * `OPENINGS_PAGE_SIZE` lines at a time, back on its first page whenever the controls change.
  */
 export default function OpeningsPage() {
   const { slug } = useProfile();
@@ -111,7 +116,7 @@ export default function OpeningsPage() {
       <div className={['openings-tables', sides.length === 2 && 'openings-tables--two', openings.isPlaceholderData && 'is-stale'].filter(Boolean).join(' ')}>
         {sides.map(c => (
           <OpeningsTable
-            key={c}
+            key={`${c} ${filtersKey(filters)} ${JSON.stringify(params)}`}
             color={c}
             rows={openings.data[c]}
             linkOf={linkOf}
@@ -147,6 +152,8 @@ function OpeningsTable({
   /** Under best / worst: the fewest games a ranked line has. */
   rankMin: number | null;
 }) {
+  const [page, setPage] = useState(1);
+  const shown = rows.slice((page - 1) * OPENINGS_PAGE_SIZE, page * OPENINGS_PAGE_SIZE);
   return (
     <section className="openings-table" aria-label={color === 'white' ? 'As White' : 'As Black'}>
       <h3 className="openings-table__title">
@@ -170,7 +177,7 @@ function OpeningsTable({
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => (
+              {shown.map(r => (
                 <tr key={`${r.eco}-${r.line}`} className="clickable" title={`Open ${r.name} in the explorer`} onClick={rowClick(() => onOpen(r))}>
                   <td className="op-name">
                     <Link to={linkOf(r)} className="row-action">
@@ -192,6 +199,7 @@ function OpeningsTable({
               ))}
             </tbody>
           </table>
+          <Pager page={page} pageSize={OPENINGS_PAGE_SIZE} total={rows.length} onPage={setPage} />
         </div>
       )}
     </section>

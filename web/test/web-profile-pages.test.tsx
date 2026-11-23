@@ -4,7 +4,9 @@
  */
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OpeningRow } from '@outpost/shared/api';
 import { decodeFiltersSegment } from '@outpost/shared/filters';
+import { OPENINGS_PAGE_SIZE } from '../src/app/pages/profile/OpeningsPage.tsx';
 import { ALL_GAMES, CHESSCOM_ID, filterGames, gamesPage, LICHESS_ID, overview, profileHeader } from './web-profile-fixtures.ts';
 import { renderProfile, searchOf } from './web-profile-render.tsx';
 
@@ -421,6 +423,21 @@ describe('Openings tab', () => {
     expect(q.get('color')).toBe('white');
     expect(q.get('tc')).toBe('blitz');
     expect(q.get('line')).toBeTruthy();
+  });
+
+  it(`pages each side ${OPENINGS_PAGE_SIZE} lines at a time, back to the first page when the controls change`, async () => {
+    const many = (rows: OpeningRow[]): OpeningRow[] =>
+      Array.from({ length: 45 }, (_, i) => ({ ...rows[0]!, eco: `A${String(i).padStart(2, '0')}`, name: `Synthetic line ${i + 1}`, line: `e2e4,x${i}` }));
+    renderProfile(`${SLUG}/openings?color=white`, { patch: { openings: r => ({ ...r, white: many(r.white) }) } });
+    const table = await screen.findByRole('region', { name: 'As White' });
+    expect(within(table).getAllByRole('row')).toHaveLength(OPENINGS_PAGE_SIZE + 1);
+    expect(within(table).getByText('1–20 of 45')).toBeTruthy();
+    fireEvent.click(within(table).getByRole('button', { name: 'Last page' }));
+    expect(within(table).getByText('41–45 of 45')).toBeTruthy();
+    expect(within(table).getByText('Synthetic line 45')).toBeTruthy();
+    expect(within(table).queryByText('Synthetic line 1')).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: 'Worst' }));
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'As White' })).getByText('1–20 of 45')).toBeTruthy());
   });
 
   it('shows empty sides and errors', async () => {
