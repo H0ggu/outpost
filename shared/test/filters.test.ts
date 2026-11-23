@@ -112,6 +112,13 @@ describe('date ranges and opponent strength', () => {
     expect(resolveDateRange({ period: '24h' }, now)).toEqual({ from: now - 86_400_000, to: now });
     expect(resolveDateRange({ period: '3m' }, now)).toEqual({ from: Date.UTC(2026, 7, 23, 12, 0, 0), to: now });
     expect(resolveDateRange({ period: '12m' }, now)).toEqual({ from: Date.UTC(2025, 10, 23, 12, 0, 0), to: now });
+    // Month ends clamp to the target month's last day instead of rolling into the next month.
+    const may31 = Date.UTC(2026, 4, 31, 9, 30);
+    expect(resolveDateRange({ period: '3m' }, may31).from).toBe(Date.UTC(2026, 1, 28, 9, 30));
+    expect(resolveDateRange({ period: '6m' }, Date.UTC(2026, 7, 31)).from).toBe(Date.UTC(2026, 1, 28));
+    expect(resolveDateRange({ period: '12m' }, Date.UTC(2028, 1, 29)).from).toBe(Date.UTC(2027, 1, 28));
+    expect(resolveDateRange({ period: '3m' }, Date.UTC(2028, 4, 31)).from).toBe(Date.UTC(2028, 1, 29));
+    expect(resolveDateRange({ period: '12m' }, Date.UTC(2026, 0, 31)).from).toBe(Date.UTC(2025, 0, 31));
   });
 
   it('resolves custom dates as inclusive UTC days', () => {
