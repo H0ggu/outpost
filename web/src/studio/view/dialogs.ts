@@ -175,7 +175,7 @@ export function askSaveAs(ctrl: StudioCtrl): Promise<SaveAsInput | null> {
             state.error ? h('p.error', state.error) : null,
             h('div.form-actions', [
               h('button.button.button-empty.cancel', { attrs: { type: 'button' }, on: { click: () => dlg.close('cancel') } }, i18n.site.cancel),
-              h('button.button', { attrs: { type: 'submit', ...dataIcon(licon.UploadCloud) } }, 'Save'),
+              h('button.button.text', { attrs: { type: 'submit', ...dataIcon(licon.UploadCloud) } }, 'Save'),
             ]),
           ],
         ),
@@ -411,7 +411,7 @@ export async function settingsDialog(ctrl: StudioCtrl): Promise<void> {
             'div.studio-picker.studio-picker--sounds',
             SOUND_SETS.map(s =>
               h(
-                'button.button.button-empty',
+                'button.button.button-empty.text',
                 {
                   class: { active: p.soundSet === s },
                   attrs: { type: 'button', 'aria-pressed': String(p.soundSet === s), ...dataIcon(s === 'silent' ? licon.Mute : licon.Voice) },

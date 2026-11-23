@@ -106,7 +106,7 @@ function trashView(ctrl: StudioCtrl): VNode {
   const trash = ctrl.files.trash;
   return h('div.studio-trash', [
     h('div.studio-files__head', [
-      button('.studio-link', { icon: licon.Back, onClick: () => ctrl.setFilesView('files') }, 'My Files'),
+      button('.studio-link.text', { icon: licon.Back, onClick: () => ctrl.setFilesView('files') }, 'My Files'),
       h('strong', 'Recycle bin'),
     ]),
     trash === null
@@ -137,10 +137,10 @@ function searchView(ctrl: StudioCtrl): VNode {
   const stale = !!s && !!current && s.fen !== current;
   return h('div.studio-search', [
     h('div.studio-files__head', [
-      button('.studio-link', { icon: licon.Back, onClick: () => ctrl.setFilesView('files') }, 'My Files'),
+      button('.studio-link.text', { icon: licon.Back, onClick: () => ctrl.setFilesView('files') }, 'My Files'),
       h('strong', 'This position in My Files'),
     ]),
-    stale ? button('.button.button-empty.studio-search__again', { icon: licon.Search, onClick: () => void ctrl.searchPosition() }, 'Search the position on the board') : null,
+    stale ? button('.button.button-empty.text.studio-search__again', { icon: licon.Search, onClick: () => void ctrl.searchPosition() }, 'Search the position on the board') : null,
     !s || s.status === 'loading'
       ? spinner()
       : s.status === 'error'
@@ -304,7 +304,7 @@ function gamesView(ctrl: StudioCtrl): VNode {
         ]);
       }),
     ),
-    button('.button.button-empty.studio-games__add', { icon: licon.PlusButton, onClick: () => ctrl.addGame() }, 'Add a game'),
+    button('.button.button-empty.text.studio-games__add', { icon: licon.PlusButton, onClick: () => ctrl.addGame() }, 'Add a game'),
   ]);
 }
 

@@ -58,7 +58,8 @@ function restorePath(analyse: AnalyseCtrl, tab: StudioTab): void {
 }
 
 export async function boot(params: StudioParams, prefs: StudioPrefs): Promise<void> {
-  const session = await loadSession();
+  // like lila's analyse entry: the piece images are decoded before the board is drawn
+  const [session] = await Promise.all([loadSession(), window.site.asset.loadPieces]);
   const ctrl = new StudioCtrl(params, prefs, params.embed ? null : sessionStorage);
   ctrl.setSession(session);
   if (!params.embed) ctrl.tabs.load();

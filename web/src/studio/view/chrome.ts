@@ -43,8 +43,8 @@ export function mountChrome(ctrl: StudioCtrl, els: ChromeElements): void {
 
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      void ctrl.save(() => askSaveAs(ctrl));
+      e.preventDefault(); // never the browser's "save page"
+      if (!document.querySelector('dialog:modal')) void ctrl.save(() => askSaveAs(ctrl));
     } else if (e.key === 'Escape' && ctrl.menu) {
       ctrl.menu = null;
       ctrl.redraw();
