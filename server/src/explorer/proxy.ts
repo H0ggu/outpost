@@ -71,6 +71,8 @@ export interface ExplorerProxyDeps {
   upstream: Upstream;
   now?: () => number;
   budgets?: Partial<Record<BudgetName, BudgetOptions>>;
+  /** Upstream timeouts (defaults: `UPSTREAM_HEADERS_TIMEOUT_MS`, `UPSTREAM_BODY_TIMEOUT_MS`). */
+  timeouts?: { headersMs?: number; bodyMs?: number };
   log?: { warn(obj: object, msg: string): void };
 }
 
@@ -169,6 +171,8 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
   }
   const flights = new Map<string, Flight>();
   const hasToken = (): boolean => readSettings(deps.db, deps.config).lichessToken !== null;
+  const headersMs = deps.timeouts?.headersMs ?? UPSTREAM_HEADERS_TIMEOUT_MS;
+  const bodyMs = deps.timeouts?.bodyMs ?? UPSTREAM_BODY_TIMEOUT_MS;
 
   const fromEntry = (kind: CacheKind, e: CacheEntry, outcome: CacheOutcome): ProxyResult => ({
     status: e.status,
@@ -185,8 +189,8 @@ export function createExplorerProxy(deps: ExplorerProxyDeps): ExplorerProxy {
       await req.budget.acquire(signal);
       const res = await deps.upstream.fetch(req.url, {
         auth: req.auth,
-        timeoutMs: UPSTREAM_HEADERS_TIMEOUT_MS,
-        signal: AbortSignal.any([signal, AbortSignal.timeout(UPSTREAM_BODY_TIMEOUT_MS)]),
+        timeoutMs: headersMs,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(bodyMs)]),
         allowStatuses: [...req.answers, 400, 401],
         headers: {
           accept: req.kind === 'masters-pgn' ? 'application/x-chess-pgn' : 'application/json',
