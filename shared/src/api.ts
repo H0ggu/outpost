@@ -647,7 +647,25 @@ export interface ProfileSummary {
   gameCount: number;
   lastUpdated: EpochMs | null;
   bookmarked: boolean;
+  /**
+   * Current ratings of the visible accounts (as in `SourceSummary.ratings`), one per time class: the
+   * account with the most games in it. Most played first, at most `PROFILE_SUMMARY_RATINGS`. `unknown`
+   * only for FIDE and PGN accounts (over-the-board games without a time control).
+   */
+  ratings: ProfileSummaryRating[];
 }
+
+/** One rating of a `ProfileSummary`. */
+export interface ProfileSummaryRating {
+  kind: SourceKind;
+  timeClass: TimeClass;
+  rating: number;
+  /** Games in this time class in Outpost's data. */
+  games: number;
+}
+
+/** Most ratings a `ProfileSummary` carries. */
+export const PROFILE_SUMMARY_RATINGS = 3;
 
 /** `GET /api/profiles` query. `recent` = profiles I viewed recently. */
 export interface ProfileListQuery {

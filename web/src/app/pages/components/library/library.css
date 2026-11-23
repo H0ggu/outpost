@@ -460,8 +460,16 @@
 }
 
 .lib-plist__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.8rem;
   color: var(--c-font-dimmer);
   font-size: 0.82rem;
+}
+
+.lib-plist__meta .lib-rating {
+  color: var(--c-font-dim);
 }
 
 .lib-ptable__player {
@@ -490,6 +498,63 @@
 
 .lib-ptable th[data-col='games'] {
   width: 6rem;
+}
+
+.lib-ptable th[data-col='rating'] {
+  width: 10.5rem;
+}
+
+/* Ratings (most played time classes) and the headers that sort by a column. */
+.lib-ratings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.8rem;
+}
+
+.lib-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.lib-rating .tc-icon {
+  color: var(--c-font-dim);
+}
+
+.lib-rating__otb {
+  font-size: 0.75em;
+  font-weight: bold;
+  color: var(--c-font-dim);
+}
+
+.lib-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.lib-sort i {
+  font-size: 0.7em;
+  opacity: 0.35;
+}
+
+.lib-sort:hover,
+.lib-sort--active {
+  color: var(--c-link);
+}
+
+.lib-sort--active i {
+  opacity: 1;
 }
 
 .lib-ptable th[data-col='updated'] {
@@ -522,8 +587,17 @@
     width: 4.5rem;
   }
 
+  .lib-ptable th[data-col='rating'] {
+    width: 5.5rem;
+  }
+
   .lib-ptable th[data-col='star'] {
     width: 2.75rem;
+  }
+
+  /* Phones: the main rating only. */
+  .lib-rating + .lib-rating {
+    display: none;
   }
 }
 

@@ -40,7 +40,7 @@ import type {
   UpdateProfileRequest,
   Visibility,
 } from '@outpost/shared/api';
-import { SLUG_RE, slugify } from '@outpost/shared/api';
+import { PROFILE_SUMMARY_RATINGS, SLUG_RE, slugify, type ProfileSummaryRating } from '@outpost/shared/api';
 import { isTitle, playerKey } from '@outpost/shared/chess';
 import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { z } from 'zod';
@@ -53,7 +53,7 @@ import type { Upstream } from '../http/upstream.ts';
 import { cancelQueuedJobs, enqueueSync, JOB_PRIORITY, sourceSyncStatus, syncDedupeKey } from '../jobs/index.ts';
 import { readSettings, type InstanceSettings } from '../settings.ts';
 import { loadProfileByIdForViewer, type ViewableProfile } from './access.ts';
-import { insertSource, resolveSource, SOURCE_COLUMNS, sourceSummaries, type ResolvedSource, type SourceRow } from './sources.ts';
+import { currentRatings, insertSource, resolveSource, SOURCE_COLUMNS, sourceSummaries, type ResolvedSource, type SourceRow } from './sources.ts';
 
 // ---------------------------------------------------------------------------
 // Request schemas
@@ -255,8 +255,17 @@ export function profileSummaries(db: Db, ids: readonly Id[], viewer: AuthUser | 
     }
     const row = profileRow(db, id);
     const sources = profile.sourceIds.length
-      ? db.all<{ kind: SourceKind; key: string; display_name: string; title: string | null; country: string | null; last_synced_at: EpochMs | null }>(
-          `SELECT s.kind, s.key, s.display_name, s.title, s.country, s.last_synced_at
+      ? db.all<{
+          id: Id;
+          kind: SourceKind;
+          key: string;
+          display_name: string;
+          title: string | null;
+          country: string | null;
+          profile_json: string | null;
+          last_synced_at: EpochMs | null;
+        }>(
+          `SELECT s.id, s.kind, s.key, s.display_name, s.title, s.country, s.profile_json, s.last_synced_at
              FROM profile_sources ps JOIN sources s ON s.id = ps.source_id
             WHERE ps.profile_id = ? AND s.id IN (${placeholders(profile.sourceIds.length)}) ORDER BY ps.position, s.id`,
           [id, ...profile.sourceIds],
@@ -284,9 +293,27 @@ export function profileSummaries(db: Db, ids: readonly Id[], viewer: AuthUser | 
       gameCount: games,
       lastUpdated: maxOrNull(sources.map(s => s.last_synced_at)),
       bookmarked: isBookmarked(db, viewer, row.id),
+      ratings: summaryRatings(db, sources),
     });
   }
   return out;
+}
+
+/**
+ * A profile's ratings for lists (`ProfileSummary.ratings`): per time class the visible account with
+ * the most games there (the higher rating on a tie), most played first. `unknown` counts only for
+ * FIDE and PGN accounts, whose over-the-board games often have no time control.
+ */
+export function summaryRatings(db: Db, sources: ReadonlyArray<Pick<SourceRow, 'id' | 'kind' | 'profile_json'>>): ProfileSummaryRating[] {
+  const best = new Map<string, ProfileSummaryRating>();
+  for (const s of sources)
+    for (const r of currentRatings(db, s)) {
+      if (r.timeClass === 'unknown' && s.kind !== 'fide' && s.kind !== 'pgn') continue;
+      const prev = best.get(r.timeClass);
+      if (!prev || r.games > prev.games || (r.games === prev.games && r.rating > prev.rating))
+        best.set(r.timeClass, { kind: s.kind, timeClass: r.timeClass, rating: r.rating, games: r.games });
+    }
+  return [...best.values()].sort((a, b) => b.games - a.games || b.rating - a.rating).slice(0, PROFILE_SUMMARY_RATINGS);
 }
 
 /** Most profiles a list returns. */

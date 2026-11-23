@@ -185,6 +185,7 @@ export function profile(over: Partial<ProfileSummary> = {}): ProfileSummary {
     gameCount: 120,
     lastUpdated: Date.now() - 3_600_000,
     bookmarked: false,
+    ratings: [],
     ...over,
   };
 }
