@@ -50,7 +50,7 @@ import type { Db } from '../db/index.ts';
 import { conflict, forbidden, HttpError, validationError } from '../http/errors.ts';
 import type { AuthUser } from '../http/types.ts';
 import type { Upstream } from '../http/upstream.ts';
-import { enqueueSync, JOB_PRIORITY, sourceSyncStatus, syncDedupeKey } from '../jobs/index.ts';
+import { cancelQueuedJobs, enqueueSync, JOB_PRIORITY, sourceSyncStatus, syncDedupeKey } from '../jobs/index.ts';
 import { readSettings, type InstanceSettings } from '../settings.ts';
 import { loadProfileByIdForViewer, type ViewableProfile } from './access.ts';
 import { insertSource, resolveSource, SOURCE_COLUMNS, sourceSummaries, type ResolvedSource, type SourceRow } from './sources.ts';
@@ -576,19 +576,13 @@ function collectBatch(db: Db, ids: readonly Id[]): number {
 
 /**
  * Cancels the queued sync job of sources that are going away (call inside the transaction that
- * deletes them), so it neither waits in a lane nor counts in other profiles' queue positions.
- * The jobs module exposes no cancel call to other modules (its runner is private to its plugin),
- * so this makes the same conditional `queued → cancelled` transition as its admin cancel. A sync
- * already running finishes on its own (see the module comment). Returns the number cancelled.
+ * deletes them), so it neither waits in a lane nor counts in other profiles' queue positions,
+ * through the jobs module's `cancelQueuedJobs`. A sync already running finishes on its own (see
+ * the module comment). Returns the number cancelled.
  */
 export function cancelQueuedSyncs(db: Db, sourceIds: readonly Id[], now = Date.now()): number {
   let n = 0;
-  for (const id of sourceIds) {
-    n += db.run("UPDATE jobs SET status = 'cancelled', finished_at = ?, run_after = NULL WHERE dedupe_key = ? AND status = 'queued'", [
-      now,
-      syncDedupeKey(id),
-    ]).changes;
-  }
+  for (const id of sourceIds) n += cancelQueuedJobs(db, syncDedupeKey(id), now);
   return n;
 }
 

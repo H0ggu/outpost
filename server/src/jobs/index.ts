@@ -4,7 +4,7 @@
 //
 // Cross-module API (other modules import only from here):
 //   - queue.ts: enqueueJob, enqueueSync, getJob, toJobInfo, queuePosition, sourceSyncStatus,
-//     JOB_PRIORITY, syncDedupeKey — the only way to write to `jobs`.
+//     JOB_PRIORITY, syncDedupeKey, plus ops.ts's cancelQueuedJobs — the only way to write to `jobs`.
 //   - handlers.ts: registerJobHandler / JobContext — how profiles (pgnImport) and reference
 //     (referenceImport, broadcastMonth, broadcastRound) plug in their import handlers;
 //     RequeueJob lets a long handler yield its lane.
@@ -36,6 +36,7 @@ export { notifyJobsQueued, onJobsQueued } from './notify.ts';
 export { clearJobCheckpoint, loadJobCheckpoint, saveJobCheckpoint } from './checkpoint.ts';
 export {
   cancelJob,
+  cancelQueuedJobs,
   claimNextJob,
   JOB_KINDS,
   JOB_STATUSES,

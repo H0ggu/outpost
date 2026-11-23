@@ -1,8 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  cancelQueuedJobs,
   enqueueJob,
   enqueueSync,
   getJob,
+  loadJobCheckpoint,
+  saveJobCheckpoint,
+  syncDedupeKey,
   getJobHandler,
   JOB_PRIORITY,
   jobWaitingAhead,
@@ -33,6 +37,21 @@ describe('job queue', () => {
       userId: null,
     });
     expect(getJob(t.db, job.id)).toEqual(job);
+  });
+
+  it('cancels the queued jobs of a dedupe key (and their checkpoints), never a running one', () => {
+    const src = createSource(t.db, { kind: 'lichess', key: 'to-be-dropped' });
+    const queued = enqueueSync(t.db, src);
+    saveJobCheckpoint(t.db, queued.id, { since: 1 }); // a sync that yielded its lane and waits again
+    expect(cancelQueuedJobs(t.db, syncDedupeKey(src), 1234)).toBe(1);
+    expect(getJob(t.db, queued.id)).toMatchObject({ status: 'cancelled', finishedAt: 1234 });
+    expect(loadJobCheckpoint(t.db, queued.id)).toBeNull();
+    // Nothing queued any more; a running job is left alone.
+    expect(cancelQueuedJobs(t.db, syncDedupeKey(src))).toBe(0);
+    const running = enqueueSync(t.db, src);
+    t.db.run("UPDATE jobs SET status = 'running', started_at = 1 WHERE id = ?", [running.id]);
+    expect(cancelQueuedJobs(t.db, syncDedupeKey(src))).toBe(0);
+    expect(getJob(t.db, running.id)!.status).toBe('running');
   });
 
   it('deduplicates active jobs and raises their priority', () => {

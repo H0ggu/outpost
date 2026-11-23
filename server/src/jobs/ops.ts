@@ -172,6 +172,21 @@ export function cancelJob(db: Db, id: Id, now: EpochMs, onCancelled?: (id: Id) =
 }
 
 /**
+ * Cancels the queued jobs with `dedupeKey`, e.g. `syncDedupeKey(sourceId)` when the profiles module
+ * drops a source: the admin cancel's conditional `queued → cancelled` transition (checkpoint
+ * cleared too). A running job is left to finish on its own. Returns the number cancelled.
+ */
+export function cancelQueuedJobs(db: Db, dedupeKey: string, now: EpochMs = Date.now()): number {
+  return db.tx(() => {
+    let n = 0;
+    for (const { id } of db.all<{ id: Id }>("SELECT id FROM jobs WHERE dedupe_key = ? AND status = 'queued'", [dedupeKey])) {
+      if (finish(db, id, "UPDATE jobs SET status = 'cancelled', finished_at = ?, run_after = NULL WHERE id = ? AND status = 'queued'", [now, id])) n++;
+    }
+    return n;
+  });
+}
+
+/**
  * Admin retry:
  * - a finished job (done, error, cancelled) is queued again with a fresh attempt count — unless
  *   another active job with the same dedupe key exists, which is returned instead;
