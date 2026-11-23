@@ -8,6 +8,12 @@
  * Asia/Kolkata or Asia/Kathmandu), then each bucket is shifted by the zone's offset at that
  * instant (tz.ts). So DST, historical offsets and half-hour zones are exact, and the work in
  * JavaScript is per bucket rather than per game.
+ *
+ * Date-only games: a PGN or reference game whose headers give a date but no time is stored at
+ * 00:00 UTC of that date (chess/pgn.ts). Its calendar date is the one written in the PGN, so it
+ * counts on that day and weekday in every zone, and it is left out of `byHour` and `grid`, which
+ * would otherwise pile such games into one hour. They are recognised as games from a PGN or the
+ * reference DB (opponent kind `pgn` / `fide`) ending exactly at a UTC midnight (`DATE_ONLY_SQL`).
  */
 import type { ActivityCell, ActivityDay, ActivityStats } from '@outpost/shared/api';
 import { floorToSql, PLAYER_GAMES_BY_PK, scopeWhere, scoreOf, type StatsScope } from './common.ts';
@@ -23,6 +29,12 @@ import {
   offsetSweeper,
   weekdayOfDay,
 } from './tz.ts';
+
+/**
+ * True (1) for a game of `player_games pg` whose time of day is unknown: from a PGN or the
+ * reference DB (online games always carry a time) and stored at exactly 00:00:00.000 UTC.
+ */
+export const DATE_ONLY_SQL = `(pg.opp_source_kind IN ('pgn', 'fide') AND pg.ended_at % ${DAY_MS} = 0)`;
 
 /** Running counts of one bucket. */
 interface Counter {
@@ -83,26 +95,35 @@ export function localActivity(
   const segs = offsetSegments(tz, span.lo, span.hi);
   const width = bucketSizeFor(segs);
   const bucket = floorToSql('pg.ended_at', width);
-  const rows = scope.db.all<{ b: number; games: number; w: number; d: number }>(
-    `SELECT ${bucket.sql} AS b, COUNT(*) AS games, SUM(pg.outcome = 'w') AS w, SUM(pg.outcome = 'd') AS d
+  // A date-only game sits at a UTC midnight, which every bucket width divides: its bucket `b` is
+  // that midnight.
+  const rows = scope.db.all<{ b: number; dateOnly: number; games: number; w: number; d: number }>(
+    `SELECT ${bucket.sql} AS b, ${DATE_ONLY_SQL} AS dateOnly, COUNT(*) AS games, SUM(pg.outcome = 'w') AS w,
+            SUM(pg.outcome = 'd') AS d
        FROM ${PLAYER_GAMES_BY_PK} WHERE ${cond}
-      GROUP BY 1 ORDER BY 1`,
+      GROUP BY 1, 2 ORDER BY 1, 2`,
     [...bucket.params, ...params],
   );
 
   const offsetOf = offsetSweeper(tz, segs, span.hi);
   for (const r of rows) {
-    // The first bucket may start before the first game: take the offset where its games are.
-    const local = r.b + offsetOf(Math.max(r.b, span.lo));
-    const day = floorDiv(local, DAY_MS);
-    const hour = Math.floor(mod(local, DAY_MS) / HOUR_MS);
+    let day: number;
+    let hour: number | null = null;
+    if (r.dateOnly) day = floorDiv(r.b, DAY_MS);
+    else {
+      // The first bucket may start before the first game: take the offset where its games are.
+      const local = r.b + offsetOf(Math.max(r.b, span.lo));
+      day = floorDiv(local, DAY_MS);
+      hour = Math.floor(mod(local, DAY_MS) / HOUR_MS);
+    }
     const weekday = weekdayOfDay(day);
     let c = out.days.get(day);
     if (!c) {
       c = counter();
       out.days.set(day, c);
     }
-    for (const target of [c, out.byHour[hour]!, out.byWeekday[weekday]!, out.grid[weekday]![hour]!]) {
+    const targets = hour === null ? [c, out.byWeekday[weekday]!] : [c, out.byHour[hour]!, out.byWeekday[weekday]!, out.grid[weekday]![hour]!];
+    for (const target of targets) {
       target.games += r.games;
       target.w += r.w;
       target.d += r.d;

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ActivityStats, Outcome } from '@outpost/shared/api';
 import { API_ROUTES } from '@outpost/shared/api';
-import { insertGame } from '../src/chess/store.ts';
+import { insertGame, pgnSourceKey } from '../src/chess/store.ts';
 import {
   bucketSizeFor,
   isoDateOfDay,
@@ -192,6 +192,38 @@ describe('GET /api/profiles/:slug/activity', () => {
     const weighted = a.byHour.reduce((s, c) => s + (c.score ?? 0) * c.games, 0);
     expect(weighted).toBeCloseTo(pts, 2);
     expect(a.byHour.every(c => (c.games === 0) === (c.score === null))).toBe(true);
+  });
+
+  it('keeps date-only PGN games on their written date and out of the hour charts', async () => {
+    const dbId = t.db.run("INSERT INTO databases (name, kind, created_at) VALUES ('OTB', 'games', 0)").lastInsertRowid;
+    const src = createSource(t.db, { kind: 'pgn', key: pgnSourceKey(dbId, 'Otb Player'), databaseId: dbId });
+    createProfile(t.db, { slug: 'otb', ownerUserId: null, sources: [{ id: src }] });
+    const otb = (originId: string, endedAt: number, result: '1-0' | '0-1', black = 'Rival') =>
+      insertGame(
+        t.db,
+        testGame({ origin: 'pgn', originId: `${dbId}:${originId}`, databaseId: dbId, white: { name: 'Otb Player' }, black: { name: black }, result, startedAt: endedAt, endedAt, timeClass: 'unknown', rated: false }),
+      );
+    otb('d1', Date.UTC(2024, 2, 10), '1-0'); // [Date "2024.03.10"], a Sunday, no time
+    otb('d2', Date.UTC(2024, 2, 10), '0-1', 'Other');
+    otb('t1', Date.UTC(2024, 2, 11, 2, 30), '1-0'); // [UTCTime "02:30:00"]: New York 22:30 on the 10th (EDT)
+    for (const tz of ['UTC', 'America/New_York', 'Pacific/Kiritimati']) {
+      const a = await activity(tz, '', 'otb');
+      expect(a.byHour.reduce((s, c) => s + c.games, 0), tz).toBe(1);
+      expect(a.grid.flat().reduce((s, c) => s + c.games, 0), tz).toBe(1);
+      expect(a.byWeekday.reduce((s, c) => s + c.games, 0), tz).toBe(3);
+      expect(a.days[0], tz).toEqual({ date: '2024-03-10', games: tz === 'America/New_York' ? 3 : 2, score: tz === 'America/New_York' ? 0.6667 : 0.5 });
+    }
+    const ny = await activity('America/New_York', '', 'otb');
+    expect(ny.days).toHaveLength(1);
+    expect(ny.byHour[22]).toEqual({ games: 1, score: 1 });
+    expect(ny.byWeekday[6]).toEqual({ games: 3, score: 0.6667 });
+    const utc = await activity('UTC', '', 'otb');
+    expect(utc.days.map(d => [d.date, d.games])).toEqual([
+      ['2024-03-10', 2],
+      ['2024-03-11', 1],
+    ]);
+    expect(utc.byHour[2]!.games).toBe(1);
+    expect(utc.byHour[0]!.games).toBe(0);
   });
 
   it('applies the filters', async () => {
