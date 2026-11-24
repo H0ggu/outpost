@@ -1,6 +1,6 @@
 {
   "name": "@outpost/web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Outpost web app: React SPA (index.html) and the vendored lila analysis board (studio.html).",

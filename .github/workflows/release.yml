@@ -40,6 +40,10 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+        env:
+          # Hosted runners are about 2x slower than a desktop; the 300 ms stats budget (stats-perf)
+          # still catches full-table scans and other regressions at 1 s.
+          OUTPOST_PERF_BUDGET_MS: 1000
       - run: npm run build
 
   image:
