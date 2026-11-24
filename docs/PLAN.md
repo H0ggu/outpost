@@ -397,7 +397,7 @@ Follow `docs/research/lila-ui-extraction.md`, option A.
   - PGN import and the duplicate check
   - zstd broadcast import on a tiny fixture
 - **Integration:** live smoke test against real APIs (small accounts, limited months). Playwright screenshots of every page at desktop and phone width.
-- **Docker:** `docker compose build && up`, then health check `GET /api/health`.
+- **Docker:** `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` (local build) or the released image (`docker compose pull && docker compose up -d`, published by `.github/workflows/release.yml`), then health check `GET /api/health`.
 
 ## 12. Delivery order
 1. Scaffold: workspaces, configs, DB plus `001_init.sql`, app skeleton, shared contract types, vendoring script and assets, theme CSS, route and page stubs.

@@ -12,15 +12,28 @@ the lila analysis board). See `NOTICE.md`. Not affiliated with Lichess or Chess.
 
 ## Quick start (Docker)
 
+The server needs only `docker-compose.yml`, a `.env` and a `data` folder: the image is pulled from
+GitHub's container registry (`ghcr.io/h0ggu/outpost`, linux/amd64 and linux/arm64).
+
 ```sh
 cp .env.example .env          # set PUBLIC_ORIGIN, LICHESS_TOKEN and CHESSCOM_CONTACT
 mkdir -p data                 # on Linux: sudo chown 1000:1000 data (the container runs as uid 1000)
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker compose logs outpost   # copy the setup token, then open PUBLIC_ORIGIN/setup
 ```
 
 One container, one port (8080 by default), one data folder (`./data`: SQLite database, Stockfish NNUE
 cache, uploads). Health check: `GET /api/health`.
+
+- **Updating:** `docker compose pull && docker compose up -d`. Pin a release with `OUTPOST_VERSION=0.1.0`
+  (or `0.1` for its patch releases) in `.env`; the default is the latest release.
+- **Private image:** while the repository is private, its image is too. Log the server in once with a
+  GitHub personal access token (classic) that has only the `read:packages` scope:
+  `echo <token> | docker login ghcr.io -u <github-user> --password-stdin`.
+- **Building from source instead:** `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`.
+- **Releasing:** bump `version` in `package.json`, commit, then `gh release create v<version> --generate-notes`.
+  `.github/workflows/release.yml` runs the checks and publishes `:<version>`, `:<major>.<minor>` and `:latest`.
 
 Outpost doesn't care how it is reached. Open the port directly on your network, or put any reverse proxy
 or tunnel in front of it (Caddy, nginx, Traefik, a VPN…) — then set `PUBLIC_ORIGIN` to the address users

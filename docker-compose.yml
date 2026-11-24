@@ -1,10 +1,15 @@
 # Outpost — one service, one port. Copy .env.example to .env and set PUBLIC_ORIGIN first.
 # Networking is up to you: publish the port directly, or put any reverse proxy in front
 # (then set TRUSTED_PROXIES). Data lives in ./data (SQLite, NNUE cache, uploads).
+#
+# This pulls the released image (built by .github/workflows/release.yml for amd64 and arm64):
+#   docker compose pull && docker compose up -d
+# OUTPOST_VERSION in .env picks a release (e.g. 0.1.0 or 0.1); default: the latest release.
+# To build from this checkout instead:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 services:
   outpost:
-    build: .
-    image: outpost:local
+    image: ghcr.io/h0ggu/outpost:${OUTPOST_VERSION:-latest}
     restart: unless-stopped
     env_file:
       - path: .env

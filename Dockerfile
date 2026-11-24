@@ -1,16 +1,25 @@
 # syntax=docker/dockerfile:1
 # Outpost: one container, one port (docs/PLAN.md §0.2, §11).
-#   docker compose build && docker compose up -d
+# Released images are built by .github/workflows/release.yml (linux/amd64 + linux/arm64) and pulled
+# by docker-compose.yml; to build locally instead:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 # The server runs TypeScript directly with Node's type stripping; only the web app is built.
 
-FROM node:26-slim AS base
+# The build and dependency stages run on the builder's own platform: their output (web/dist and a
+# node_modules without native addons) is the same for every target, so a multi-platform build only
+# runs the cheap runtime stage under emulation.
+FROM --platform=$BUILDPLATFORM node:26-slim AS buildbase
 WORKDIR /app
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_AUDIT=false
 
+# The runtime stage's base, for the target platform.
+FROM node:26-slim AS base
+WORKDIR /app
+
 # Workspace manifests only, so dependency layers are cached until they change.
-FROM base AS manifests
+FROM buildbase AS manifests
 COPY package.json package-lock.json .npmrc ./
 COPY shared/package.json shared/
 COPY server/package.json server/
